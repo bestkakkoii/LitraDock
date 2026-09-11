@@ -9,7 +9,8 @@ namespace Literature.Service;
 public sealed class SourceRequestHandler(
     PgStore store,
     HttpMessageHandler inner,
-    string provider = "ncbi"
+    string provider = "ncbi",
+    TimeProvider clock = null
 ) : DelegatingHandler(inner)
 {
     protected override async Task<HttpResponseMessage> SendAsync(
@@ -58,7 +59,8 @@ public sealed class SourceRequestHandler(
             if (provider == "ncbi")
             {
                 var eastern = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");
-                var local = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, eastern);
+                var scheduleUtc = (clock ?? TimeProvider.System).GetUtcNow().UtcDateTime;
+                var local = TimeZoneInfo.ConvertTimeFromUtc(scheduleUtc, eastern);
                 var day = local.ToString(
                     "yyyy-MM-dd",
                     System.Globalization.CultureInfo.InvariantCulture
@@ -77,23 +79,26 @@ public sealed class SourceRequestHandler(
                         day
                     )
                 );
-                if (
-                    local.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday)
-                    && local.Hour >= 5
-                    && local.Hour < 21
-                    && used >= 100
-                )
+                // 大批次開始之前即採離峰 admission；不是先發一百次再稱整批符合離峰政策。
+                var largeBatch = (bool)
+                    await PgStore.Scalar(
+                        db,
+                        "SELECT EXISTS(SELECT 1 FROM ld_batches b WHERE b.state IN ('queued','running') AND (SELECT count(*) FROM ld_items i WHERE i.library_id=b.library_id AND i.batch_id=b.batch_id)>100)"
+                    );
+                var resume = SourceSchedule.NcbiResume(scheduleUtc, largeBatch, used);
+                if (resume.HasValue)
                 {
-                    var resume = TimeZoneInfo.ConvertTimeToUtc(local.Date.AddHours(21), eastern);
                     await PgStore.Exec(
                         db,
                         "UPDATE ld_source_budget SET next_at=GREATEST(next_at,@p0) WHERE name=@p1",
-                        resume,
+                        resume.Value,
                         provider
                     );
                     throw new SourceException(
                         "rate_wait",
-                        "NCBI daytime request allowance reached; larger work resumes by explicit retry after 21:00 US Eastern or on weekends."
+                        largeBatch
+                            ? "A batch exceeding 100 items requires off-peak NCBI admission; retry after 21:00 US Eastern or on weekends."
+                            : "NCBI daytime request allowance reached; retry after 21:00 US Eastern or on weekends."
                     );
                 }
                 await PgStore.Exec(

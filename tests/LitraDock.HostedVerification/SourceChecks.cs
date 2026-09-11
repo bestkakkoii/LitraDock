@@ -46,6 +46,50 @@ public static class SourceChecks
 
     public static async Task Run(Action<bool, string> check)
     {
+        foreach (
+            var (utc, expected) in new[]
+            {
+                ("2026-09-11T08:59:00Z", false),
+                ("2026-09-11T09:00:00Z", true),
+                ("2026-09-12T00:59:00Z", true),
+                ("2026-09-12T01:00:00Z", false),
+                ("2026-09-12T16:00:00Z", false),
+                ("2026-01-05T09:59:00Z", false),
+                ("2026-01-05T10:00:00Z", true),
+                ("2026-03-09T09:00:00Z", true),
+                ("2026-11-02T10:00:00Z", true),
+            }
+        )
+        {
+            var instant = DateTimeOffset.Parse(utc).UtcDateTime;
+            var resume = SourceSchedule.NcbiResume(instant, true, 0);
+            check(
+                resume.HasValue == expected
+                    && (
+                        !resume.HasValue
+                        || TimeZoneInfo
+                            .ConvertTimeFromUtc(
+                                resume.Value,
+                                TimeZoneInfo.FindSystemTimeZoneById("America/New_York")
+                            )
+                            .Hour == 21
+                    ),
+                "NCBI off-peak admission timezone boundary " + utc
+            );
+        }
+        check(
+            SourceSchedule.NcbiResume(
+                DateTimeOffset.Parse("2026-09-11T12:00:00Z").UtcDateTime,
+                false,
+                99
+            ) == null
+                && SourceSchedule.NcbiResume(
+                    DateTimeOffset.Parse("2026-09-11T12:00:00Z").UtcDateTime,
+                    false,
+                    100
+                ) != null,
+            "Small-batch daytime allowance stops exactly at100 requests"
+        );
         var sensitive = System.Text.Json.JsonSerializer.Serialize(
             new
             {

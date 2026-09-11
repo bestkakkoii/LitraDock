@@ -12,7 +12,8 @@ public sealed partial class PgStore
         Guid library,
         string scope,
         bool selectedOnly = false,
-        bool csv = false
+        bool csv = false,
+        Action snapshotCheckpoint = null
     )
     {
         await using var db = await Data.OpenConnectionAsync();
@@ -61,6 +62,7 @@ public sealed partial class PgStore
                 JsonSerializer.Deserialize<Article>(ExportPrivacy.Text((string)r["metadata"]))
             )
             .ToArray();
+        snapshotCheckpoint?.Invoke();
         var sheets = new Dictionary<string, List<string[]>>();
         sheets["Records"] =
         [

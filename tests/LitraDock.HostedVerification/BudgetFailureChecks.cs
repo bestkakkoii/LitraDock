@@ -6,6 +6,77 @@ using Npgsql;
 // 只在已明確授權的合成 PG 測試庫安裝短暫 fault trigger；finally 移除，不修改正式 schema。
 public static class BudgetFailureChecks
 {
+    public static async Task LargeBatchAdmission(
+        PgStore store,
+        string connection,
+        Action<bool, string> check
+    )
+    {
+        await using var db = new NpgsqlConnection(connection);
+        await db.OpenAsync();
+        async Task Reset()
+        {
+            await using var reset = new NpgsqlCommand(
+                "UPDATE ld_source_budget SET next_at=now() WHERE name='ncbi'",
+                db
+            );
+            await reset.ExecuteNonQueryAsync();
+        }
+        await Reset();
+        var sent = false;
+        var time = DateTimeOffset.Parse("2026-09-11T12:00:00Z");
+        using var client = new HttpMessageInvoker(
+            new SourceRequestHandler(
+                store,
+                new FaultHeaders(
+                    () =>
+                    {
+                        sent = true;
+                        return Task.CompletedTask;
+                    },
+                    new TrackedContent()
+                ),
+                "ncbi",
+                new FixedTime(time)
+            )
+        );
+        var rejected = false;
+        try
+        {
+            try
+            {
+                using var response = await client.SendAsync(
+                    new(HttpMethod.Get, "https://pmc.ncbi.nlm.nih.gov/api/oai/v1/mh/"),
+                    CancellationToken.None
+                );
+            }
+            catch (SourceException error)
+            {
+                rejected = error.State == "rate_wait" && error.Message.Contains("off-peak");
+            }
+            await using var read = new NpgsqlCommand(
+                "SELECT next_at FROM ld_source_budget WHERE name='ncbi'",
+                db
+            );
+            check(
+                rejected
+                    && !sent
+                    && (DateTime)await read.ExecuteScalarAsync()
+                        == SourceSchedule.NcbiResume(time.UtcDateTime, true, 0),
+                "Actual PG large planned batch is admitted off-peak before any NCBI request and persists exact next event"
+            );
+        }
+        finally
+        {
+            await Reset();
+        }
+    }
+
+    private sealed class FixedTime(DateTimeOffset time) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => time;
+    }
+
     public static async Task Run(PgStore store, string connection, Action<bool, string> check)
     {
         await using var db = new NpgsqlConnection(connection);

@@ -202,6 +202,21 @@ public static class HostedSourceChecks
         }
         using (var zip = new ZipArchive(new MemoryStream(selected)))
         {
+            var allText = zip
+                .Entries.Select(entry =>
+                {
+                    using var reader = new StreamReader(entry.Open());
+                    return reader.ReadToEnd();
+                })
+                .ToArray();
+            check(
+                !items
+                    .Where(i => i.GetProperty("search_id").GetString() != id)
+                    .Any(i =>
+                        allText.Any(text => text.Contains(i.GetProperty("search_id").GetString()))
+                    ),
+                "Every selected-only workbook detail excludes all six unselected canonical IDs"
+            );
             var xml = System.Xml.Linq.XDocument.Load(
                 zip.GetEntry("xl/worksheets/sheet1.xml").Open()
             );
@@ -245,6 +260,69 @@ public static class HostedSourceChecks
             "Complete UTF-8 CSV detail bundle generated from same scope"
         );
         await File.WriteAllBytesAsync(Path.Combine(output, "synthetic-complete.xlsx"), report);
+        var originalMetadata = (string)
+            await Sql(
+                "SELECT metadata FROM ld_records WHERE library_id=@p0 AND search_id=@p1",
+                library,
+                id
+            );
+        var changed = JsonSerializer.Deserialize<Article>(originalMetadata);
+        changed.Title = "CONCURRENT_EXPORT_NEW_TITLE";
+        var eventId = "EVENT-" + Guid.NewGuid().ToString("N");
+        var consistent = await store.ExportComplete(
+            library,
+            scope,
+            true,
+            false,
+            () =>
+            {
+                Sql(
+                        "UPDATE ld_records SET metadata=@p2,title=@p3 WHERE library_id=@p0 AND search_id=@p1",
+                        library,
+                        id,
+                        JsonSerializer.Serialize(changed),
+                        changed.Title
+                    )
+                    .GetAwaiter()
+                    .GetResult();
+                Sql(
+                        "INSERT INTO ld_events VALUES(@p0,@p1,@p2,'concurrent_export_marker','Concurrent export commit','2026-09-12T00:00:00Z')",
+                        library,
+                        eventId,
+                        manualJob
+                    )
+                    .GetAwaiter()
+                    .GetResult();
+            }
+        );
+        string ArchiveText(byte[] bytes)
+        {
+            using var zip = new ZipArchive(new MemoryStream(bytes));
+            return string.Join(
+                "\n",
+                zip.Entries.Select(entry =>
+                {
+                    using var reader = new StreamReader(entry.Open());
+                    return reader.ReadToEnd();
+                })
+            );
+        }
+        var frozenText = ArchiveText(consistent);
+        var freshText = ArchiveText(await store.ExportComplete(library, scope, true));
+        check(
+            !frozenText.Contains("CONCURRENT_EXPORT_NEW_TITLE")
+                && !frozenText.Contains("concurrent_export_marker")
+                && freshText.Contains("CONCURRENT_EXPORT_NEW_TITLE")
+                && freshText.Contains("concurrent_export_marker"),
+            "Actual concurrent PostgreSQL writes remain outside one report snapshot and appear together in next export"
+        );
+        await Sql(
+            "UPDATE ld_records SET metadata=@p2,title=@p3 WHERE library_id=@p0 AND search_id=@p1",
+            library,
+            id,
+            originalMetadata,
+            JsonSerializer.Deserialize<Article>(originalMetadata).Title
+        );
         var privateId = items[2].GetProperty("search_id").GetString();
         var privateItem = items[2].GetProperty("item_id").GetString();
         var privateArticle = await store.Article(library, privateId);
@@ -429,6 +507,7 @@ public static class HostedSourceChecks
         );
         var scaleScope = await store.Scope(library, scaleRun, null, "");
         var scaleBatch = await store.Batch(library, scaleScope, false, Naming.DefaultTemplate);
+        await BudgetFailureChecks.LargeBatchAdmission(store, connection, check);
         await store.Control(library, scaleBatch, "paused");
         await store.Control(library, scaleBatch, "resume");
         await store.Control(library, scaleBatch, "cancelled");
