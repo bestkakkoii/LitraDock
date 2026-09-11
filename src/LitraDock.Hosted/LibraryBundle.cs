@@ -23,38 +23,32 @@ public sealed record BundleManifest(
 
 public sealed partial class PgStore
 {
-    // 已完成後續嘗試所消耗的共用暫存不再是歷史嘗試的必要輸入；保留所有歷程列與發布證據。
+    // 共用暫存可經由「待確認→確認→另一批次恢復」消耗；每一步都要求同一記錄、雜湊與保留發布證據。
     private static bool ConsumedHistoricalInput(JsonObject tables, JsonNode input)
     {
-        var job = input["job_id"].GetValue<string>();
         var original = tables["ld_jobs"]
             .AsArray()
-            .Single(x => x["job_id"].GetValue<string>() == job);
+            .Single(x => x["job_id"].GetValue<string>() == input["job_id"].GetValue<string>());
         var search = original["search_id"]?.GetValue<string>();
         var hash = input["hash"].GetValue<string>();
-        // 另一批次可恢復同一待發布原始檔；僅在保留的發布、完成工作、檔案關聯與來源證據全部一致時視為已消耗。
-        if (
-            tables["ld_publications"]
-                .AsArray()
-                .Any(x =>
-                    x["job_id"].GetValue<string>() == job
-                    && x["state"].GetValue<string>() == "reconciled"
-                    && x["hash"].GetValue<string>() == hash
-                )
-            && tables["ld_article_files"]
-                .AsArray()
-                .Any(x =>
-                    x["search_id"].GetValue<string>() == search
-                    && x["hash"].GetValue<string>() == hash
-                )
-            && tables["ld_object_provenance"]
+        bool ProvedPublication(JsonNode attempt)
+        {
+            var job = attempt["job_id"].GetValue<string>();
+            if (
+                attempt["search_id"]?.GetValue<string>() != search
+                || !tables["ld_article_files"]
+                    .AsArray()
+                    .Any(x =>
+                        x["search_id"].GetValue<string>() == search
+                        && x["hash"].GetValue<string>() == hash
+                    )
+            )
+                return false;
+            return tables["ld_object_provenance"]
                 .AsArray()
                 .Any(proof =>
                     proof["search_id"].GetValue<string>() == search
                     && proof["hash"].GetValue<string>() == hash
-                    && JsonNode
-                        .Parse(proof["details"].GetValue<string>())["recoveredFromJob"]
-                        ?.GetValue<string>() == job
                     && tables["ld_jobs"]
                         .AsArray()
                         .Any(next =>
@@ -62,32 +56,45 @@ public sealed partial class PgStore
                             && next["state"].GetValue<string>() == "completed"
                             && next["search_id"]?.GetValue<string>() == search
                         )
+                    && (
+                        proof["job_id"].GetValue<string>() == job
+                        || (
+                            JsonNode
+                                .Parse(proof["details"].GetValue<string>())["recoveredFromJob"]
+                                ?.GetValue<string>() == job
+                            && tables["ld_publications"]
+                                .AsArray()
+                                .Any(p =>
+                                    p["job_id"].GetValue<string>() == job
+                                    && p["hash"].GetValue<string>() == hash
+                                    && p["state"].GetValue<string>() == "reconciled"
+                                )
+                        )
+                    )
+                );
+        }
+        if (ProvedPublication(original))
+            return true;
+        if (
+            tables["ld_items"]
+                .AsArray()
+                .Any(x =>
+                    x["last_job_id"]?.GetValue<string>() == input["job_id"].GetValue<string>()
                 )
         )
-            return true;
-        if (tables["ld_items"].AsArray().Any(x => x["last_job_id"]?.GetValue<string>() == job))
             return false;
         return tables["ld_manual_inputs"]
             .AsArray()
             .Any(other =>
                 other["stage_token"].GetValue<string>() == input["stage_token"].GetValue<string>()
-                && other["hash"].GetValue<string>() == input["hash"].GetValue<string>()
-                && tables["ld_jobs"]
-                    .AsArray()
-                    .Any(next =>
-                        next["job_id"].GetValue<string>() == other["job_id"].GetValue<string>()
-                        && next["state"].GetValue<string>() == "completed"
-                        && next["search_id"]?.GetValue<string>()
-                            == original["search_id"]?.GetValue<string>()
-                    )
-                && tables["ld_object_provenance"]
-                    .AsArray()
-                    .Any(proof =>
-                        proof["job_id"].GetValue<string>() == other["job_id"].GetValue<string>()
-                        && proof["hash"].GetValue<string>() == input["hash"].GetValue<string>()
-                        && proof["search_id"].GetValue<string>()
-                            == original["search_id"]?.GetValue<string>()
-                    )
+                && other["hash"].GetValue<string>() == hash
+                && ProvedPublication(
+                    tables["ld_jobs"]
+                        .AsArray()
+                        .Single(x =>
+                            x["job_id"].GetValue<string>() == other["job_id"].GetValue<string>()
+                        )
+                )
             );
     }
 

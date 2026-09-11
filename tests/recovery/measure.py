@@ -23,7 +23,7 @@ while True:
             continue
         try:
             name = (directory / 'comm').read_text().strip()
-            if not (name in {'dotnet', 'node', 'postgres'} or name.startswith(('chrome', 'chromium'))):
+            if not (name in {'dotnet', 'node', 'postgres', 'pg_dump', 'pg_restore'} or name.startswith(('chrome', 'chromium'))):
                 continue
             rss = int((directory / 'statm').read_text().split()[1]) * page
             current[name] = current.get(name, 0) + rss
@@ -47,6 +47,6 @@ output.write_text(json.dumps({
     'aggregateObservedRssPeakBytes': total_peak,
     'categoryRssPeaksBytes': peaks,
     'exitCode': child.returncode,
-    'scope': 'Host-visible dotnet, PostgreSQL, Node and Chromium process RSS; shared pages can be counted repeatedly; includes compiler processes if present; excludes kernel, filesystem cache, unrelated processes and between-sample peaks. No production capacity extrapolation.'
+    'scope': 'Host-visible dotnet, PostgreSQL server/dump/restore, Node and Chromium process RSS; shared pages can be counted repeatedly; includes compiler processes if present; excludes kernel, filesystem cache, unrelated processes and between-sample peaks. No production capacity extrapolation.'
 }, indent=2), encoding='utf-8')
 sys.exit(child.returncode or 0)
