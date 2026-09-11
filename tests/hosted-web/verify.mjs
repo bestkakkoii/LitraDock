@@ -288,6 +288,12 @@ try {
   await page.locator('[data-action="cancelled"]').click();
   await waitStatus(page, "cancelled");
   check(true, "Resume then cancel remains visible and durable");
+  check(
+    (await page.locator("#batches option:checked").textContent()).endsWith(
+      " cancelled",
+    ),
+    "Selected batch label agrees with fresh durable cancelled progress",
+  );
   await page.screenshot({
     path: path.join(output, "browser-wide.png"),
     fullPage: true,

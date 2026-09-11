@@ -140,9 +140,23 @@ async function page() {
   $("next").disabled = offset + 50 >= p.total;
   $("previous").disabled = offset === 0;
 }
+let progressGeneration = 0;
 async function progress() {
   if (!batch) return;
+  const generation = ++progressGeneration,
+    requestedBatch = batch,
+    requestedLibrary = library;
   const r = await json(base() + "batches/" + batch + "?offset=" + itemOffset);
+  if (
+    generation !== progressGeneration ||
+    requestedBatch !== batch ||
+    requestedLibrary !== library
+  )
+    return;
+  const currentOption = Array.from($("batches").options).find(
+    (option) => option.value === batch,
+  );
+  if (currentOption) currentOption.textContent = batch + " " + r.state;
   $("status").textContent =
     r.state + ": " + r.counts.map((c) => `${c.state} ${c.count}`).join("; ");
   $("itemCounts").textContent = `Items starting ${itemOffset + 1}`;
