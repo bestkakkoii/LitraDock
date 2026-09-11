@@ -23,6 +23,39 @@ public sealed record BundleManifest(
 
 public sealed partial class PgStore
 {
+    // 已完成後續嘗試所消耗的共用暫存不再是歷史嘗試的必要輸入；保留所有歷程列與發布證據。
+    private static bool ConsumedHistoricalInput(JsonObject tables, JsonNode input)
+    {
+        var job = input["job_id"].GetValue<string>();
+        if (tables["ld_items"].AsArray().Any(x => x["last_job_id"]?.GetValue<string>() == job))
+            return false;
+        var original = tables["ld_jobs"]
+            .AsArray()
+            .Single(x => x["job_id"].GetValue<string>() == job);
+        return tables["ld_manual_inputs"]
+            .AsArray()
+            .Any(other =>
+                other["stage_token"].GetValue<string>() == input["stage_token"].GetValue<string>()
+                && other["hash"].GetValue<string>() == input["hash"].GetValue<string>()
+                && tables["ld_jobs"]
+                    .AsArray()
+                    .Any(next =>
+                        next["job_id"].GetValue<string>() == other["job_id"].GetValue<string>()
+                        && next["state"].GetValue<string>() == "completed"
+                        && next["search_id"]?.GetValue<string>()
+                            == original["search_id"]?.GetValue<string>()
+                    )
+                && tables["ld_object_provenance"]
+                    .AsArray()
+                    .Any(proof =>
+                        proof["job_id"].GetValue<string>() == other["job_id"].GetValue<string>()
+                        && proof["hash"].GetValue<string>() == input["hash"].GetValue<string>()
+                        && proof["search_id"].GetValue<string>()
+                            == original["search_id"]?.GetValue<string>()
+                    )
+            );
+    }
+
     public const long BundleLimit = 256L * 1024 * 1024;
     public const int MetadataLimit = 32 * 1024 * 1024;
     internal static readonly string[] BundleTables =
@@ -124,7 +157,10 @@ public sealed partial class PgStore
                     var token = row["stage_token"].GetValue<string>();
                     if (!Guid.TryParseExact(token, "N", out _))
                         throw new IOException("Invalid retained staging identifier.");
-                    if (job["state"].GetValue<string>() != "completed")
+                    if (
+                        job["state"].GetValue<string>() != "completed"
+                        && !ConsumedHistoricalInput(tables, row)
+                    )
                         requested["staging/" + token + ".part"] = row["hash"].GetValue<string>();
                 }
                 foreach (var pair in requested)
@@ -285,6 +321,12 @@ public sealed partial class PgStore
                 )
             )
                 throw new IOException("Unsupported original path or executable entry.");
+            if (
+                item.Path.StartsWith("objects/", StringComparison.Ordinal)
+                && !Path.GetFileNameWithoutExtension(item.Path)
+                    .Equals(item.Hash, StringComparison.OrdinalIgnoreCase)
+            )
+                throw new IOException("Object path and manifest hash disagree.");
             var bytes = ReadEntry(entry, NcbiTransport.MaximumBytes);
             if (!Artifacts.Hash(bytes).Equals(item.Hash, StringComparison.OrdinalIgnoreCase))
                 throw new IOException("Original hash mismatch.");
@@ -337,7 +379,13 @@ public sealed partial class PgStore
                     .Where(c => c is not ("library_id" or "lease_token" or "lease_until"))
                     .Order()
                     .ToArray();
-                foreach (var node in array)
+                foreach (
+                    var node in (
+                        table == "ld_records"
+                            ? array.OrderBy(x => x["ordinal"].GetValue<long>())
+                            : array.AsEnumerable()
+                    )
+                )
                 {
                     TimeBound();
                     var row = node.AsObject();
@@ -369,9 +417,13 @@ public sealed partial class PgStore
                     }
                     if (table == "ld_retry" && row["status"].GetValue<string>() == "pending")
                         row["status"] = "paused";
+                    var insertColumns = string.Join(
+                        ",",
+                        columns.Where(c => table != "ld_records" || c != "ordinal")
+                    );
                     await Exec(
                         db,
-                        $"INSERT INTO {table} SELECT * FROM jsonb_populate_record(NULL::{table},@p0::jsonb)",
+                        $"INSERT INTO {table}({insertColumns}) SELECT {insertColumns} FROM jsonb_populate_record(NULL::{table},@p0::jsonb)",
                         row.ToJsonString()
                     );
                 }
@@ -383,7 +435,37 @@ public sealed partial class PgStore
                 );
                 if (article.SearchId != row["search_id"].GetValue<string>())
                     throw new IOException("Canonical metadata identity differs from record key.");
+                foreach (
+                    var identifier in new[]
+                    {
+                        ("pmid", article.Pmid),
+                        ("doi", Metadata.NormalizeDoi(article.Doi)),
+                        ("pmcid", article.Pmcid),
+                    }
+                )
+                {
+                    var index = tables["ld_identifiers"]
+                        .AsArray()
+                        .Where(x =>
+                            x["search_id"].GetValue<string>() == article.SearchId
+                            && x["kind"].GetValue<string>() == identifier.Item1
+                        )
+                        .ToArray();
+                    if (
+                        identifier.Item2.Length == 0
+                            ? index.Length != 0
+                            : index.Length != 1
+                                || index[0]["value"].GetValue<string>() != identifier.Item2
+                    )
+                        throw new IOException("Identifier index and canonical metadata disagree.");
+                }
             }
+            if (
+                tables["ld_identifiers"]
+                    .AsArray()
+                    .Any(x => x["kind"].GetValue<string>() is not ("pmid" or "doi" or "pmcid"))
+            )
+                throw new IOException("Unsupported identifier kind for this schema.");
             foreach (var row in tables["ld_files"].AsArray())
             {
                 if (
@@ -425,11 +507,18 @@ public sealed partial class PgStore
                         )["metadata"]
                         .GetValue<string>()
                 );
-                OriginalValidation.Validate(
-                    ReadEntry(entry, NcbiTransport.MaximumBytes),
-                    article,
-                    true
-                );
+                var originalBytes = ReadEntry(entry, NcbiTransport.MaximumBytes);
+                var validated = OriginalValidation.Validate(originalBytes, article, true);
+                var declared = manifest.Files.Single(x => x.Path == relative);
+                if (
+                    !validated.Hash.Equals(hash, StringComparison.OrdinalIgnoreCase)
+                    || !declared.Hash.Equals(hash, StringComparison.OrdinalIgnoreCase)
+                    || OriginalValidation.Kind(originalBytes) != f["kind"].GetValue<string>()
+                    || validated.Bytes != f["bytes"].GetValue<long>()
+                )
+                    throw new IOException(
+                        "Original bytes, manifest, file row and artifact kind disagree."
+                    );
             }
             foreach (var row in tables["ld_manual_inputs"].AsArray())
             {
@@ -439,7 +528,10 @@ public sealed partial class PgStore
                     .Single(x =>
                         x["job_id"].GetValue<string>() == row["job_id"].GetValue<string>()
                     );
-                if (job["state"].GetValue<string>() != "completed")
+                if (
+                    job["state"].GetValue<string>() != "completed"
+                    && !ConsumedHistoricalInput(tables, row)
+                )
                 {
                     var relative = "staging/" + row["stage_token"].GetValue<string>() + ".part";
                     if (
@@ -468,10 +560,6 @@ public sealed partial class PgStore
                 db,
                 "UPDATE ld_batches b SET state='paused' WHERE b.library_id=@p0 AND b.state NOT IN ('paused','cancelled') AND EXISTS(SELECT 1 FROM ld_items i WHERE i.library_id=b.library_id AND i.batch_id=b.batch_id AND i.state='paused')",
                 id
-            );
-            await Exec(
-                db,
-                "SELECT setval(pg_get_serial_sequence('ld_records','ordinal'),GREATEST((SELECT last_value FROM ld_records_ordinal_seq),COALESCE((SELECT max(ordinal) FROM ld_records),1)))"
             );
             checkpoint?.Invoke("validated");
             Directory.CreateDirectory(stage);

@@ -272,10 +272,21 @@ public static class RecoveryChecks
             "accepted-manuscript",
             originals
         );
+        await store.Control(library, versionItem.GetProperty("batch").GetString(), "paused");
+        await store.Control(library, versionItem.GetProperty("batch").GetString(), "resume");
         await worker.ExecuteClaim(await store.ClaimNext(), CancellationToken.None);
         check(
             (await store.Files(library, id)).Count == 2,
             "Distinct valid version survives as second immutable original"
+        );
+        check(
+            Convert.ToInt32(
+                await Sql(
+                    "SELECT count(*) FROM ld_manual_inputs m JOIN ld_jobs j USING(library_id,job_id) WHERE m.library_id=@p0 AND j.state='paused'",
+                    library
+                )
+            ) > 0,
+            "Real manual pause/resume retains historical input row after consumed stage publication"
         );
         var pendingItem = JsonSerializer.SerializeToElement(await store.ManualItem(library, id));
         await store.QueueManual(
@@ -315,15 +326,16 @@ public static class RecoveryChecks
             check(
                 (string)
                     await Sql(
-                        $"SELECT coalesce(jsonb_agg(x ORDER BY x::text),'[]'::jsonb)::text FROM (SELECT to_jsonb(t)-'library_id' x FROM {table} t WHERE library_id=@p0) q",
+                        $"SELECT coalesce(jsonb_agg(x ORDER BY x::text),'[]'::jsonb)::text FROM (SELECT to_jsonb(t)-'library_id'-'ordinal' x FROM {table} t WHERE library_id=@p0) q",
                         library
                     )
                     == (string)
                         await Sql(
-                            $"SELECT coalesce(jsonb_agg(x ORDER BY x::text),'[]'::jsonb)::text FROM (SELECT to_jsonb(t)-'library_id' x FROM {table} t WHERE library_id=@p0) q",
+                            $"SELECT coalesce(jsonb_agg(x ORDER BY x::text),'[]'::jsonb)::text FROM (SELECT to_jsonb(t)-'library_id'-'ordinal' x FROM {table} t WHERE library_id=@p0) q",
                             restored
                         ),
-                "Independent SQL row equivalence after relocation: " + table
+                "Independent SQL semantic row equivalence (target allocation ordinal excluded): "
+                    + table
             );
         check(
             Convert.ToInt32(
@@ -463,6 +475,15 @@ public static class RecoveryChecks
         await Reject(
             () => Task.Run(() => originals.Admit(library, OriginalStore.LibraryLimit)),
             "Aggregate library capacity accounts for existing/staged/retained content"
+        );
+        await BundleAttackChecks.Run(
+            store,
+            sourceConnection,
+            output,
+            other,
+            archive,
+            originals,
+            check
         );
         var backup = Path.Combine(output, "operator-backup");
         var dumpTool = Environment.GetEnvironmentVariable("LITRADOCK_PG_DUMP") ?? "pg_dump";

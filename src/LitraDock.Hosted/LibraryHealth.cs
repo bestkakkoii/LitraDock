@@ -25,7 +25,7 @@ public sealed partial class PgStore
             ] = (string)file["hash"];
         var manual = await Rows(
             db,
-            "SELECT m.stage_token,m.hash FROM ld_manual_inputs m JOIN ld_jobs j USING(library_id,job_id) WHERE m.library_id=@p0 AND j.state<>'completed' LIMIT 10001",
+            "SELECT m.stage_token,m.hash FROM ld_manual_inputs m JOIN ld_jobs j USING(library_id,job_id) JOIN ld_items i ON i.library_id=m.library_id AND i.last_job_id=m.job_id WHERE m.library_id=@p0 AND j.state<>'completed' LIMIT 10001",
             library
         );
         if (manual.Count > 10000)
@@ -189,6 +189,26 @@ public sealed partial class PgStore
             processed,
             scannedBytes = scanned,
             physicalBytes,
+            pendingJobs = await Scalar(
+                db,
+                "SELECT count(*) FROM ld_jobs WHERE library_id=@p0 AND state IN ('queued','running','scheduled')",
+                library
+            ),
+            manualInputHistoryRows = await Scalar(
+                db,
+                "SELECT count(*) FROM ld_manual_inputs WHERE library_id=@p0",
+                library
+            ),
+            recordMetadataBytes = await Scalar(
+                db,
+                "SELECT coalesce(sum(octet_length(metadata)),0) FROM ld_records WHERE library_id=@p0",
+                library
+            ),
+            declaredOriginalBytes = await Scalar(
+                db,
+                "SELECT coalesce(sum(bytes),0) FROM ld_files WHERE library_id=@p0",
+                library
+            ),
             libraryLimit = OriginalStore.LibraryLimit,
             items = rows,
         };

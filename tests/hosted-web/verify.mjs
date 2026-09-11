@@ -211,7 +211,7 @@ try {
     document.getElementById("manualStatus").textContent.includes("retained"),
   );
   await page.locator("#manualClose").click();
-  await waitStatus(page, "completed 3");
+  await waitStatus(page, "completed 4");
   check(
     true,
     "Browser upload continues same canonical item with validated XML",
@@ -317,7 +317,11 @@ try {
   const restoredDetails=await restoredRecords.json();
   check(restoredDetails.article.searchId===id && restoredDetails.files.length>0,"Restored browser record preserves stable canonical identity and file relations");
   const restoredOriginal=await context.request.get(origin+"/api/libraries/"+restoredLibrary+"/records/"+id+"/files/"+restoredDetails.files[0].hash);
-  check(restoredOriginal.ok() && (await restoredOriginal.body()).length>0,"Relocated original download uses restored library association");
+  check(restoredOriginal.ok() && (await restoredOriginal.body()).equals(Buffer.from(xml)),"Relocated original download uses restored library association");
+  await stop(server);server=launch();await ready();await page.reload();
+  await page.locator("#libraries").selectOption(restoredLibrary);
+  const afterRestart=await context.request.get(origin+"/api/libraries/"+restoredLibrary+"/records/"+id+"/files/"+restoredDetails.files[0].hash);
+  check(afterRestart.ok() && (await afterRestart.body()).equals(Buffer.from(xml)),"Actual API process restart retains relocated original bytes and user authorization");
   const csrfRejected=await context.request.post(origin+"/api/restore",{headers:{Origin:origin,"Content-Type":"application/octet-stream"},data:await fs.readFile(bundlePath)});
   check(csrfRejected.status()===403,"Actual restore upload fails without session CSRF capability");
   await page.screenshot({
