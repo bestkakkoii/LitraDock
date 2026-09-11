@@ -27,7 +27,21 @@ public sealed class SourceRequestHandler(PgStore store, HttpMessageHandler inner
         if (delay > TimeSpan.Zero)
             await Task.Delay(delay, cancellationToken);
         var started = DateTime.UtcNow;
-        var response = await base.SendAsync(request, cancellationToken);
+        HttpResponseMessage response;
+        try
+        {
+            response = await base.SendAsync(request, cancellationToken);
+        }
+        catch
+        {
+            await PgStore.Exec(
+                db,
+                "UPDATE ld_source_budget SET next_at=@p0 WHERE name='ncbi'",
+                DateTime.UtcNow.AddSeconds(2)
+            );
+            await tx.CommitAsync();
+            throw;
+        }
         var until = started.AddMilliseconds(400);
         if (
             response.StatusCode

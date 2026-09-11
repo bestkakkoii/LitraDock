@@ -13,6 +13,28 @@ var output = Path.GetFullPath(args.ElementAtOrDefault(1) ?? ".litradock/hosted-t
 Directory.CreateDirectory(output);
 var checks = new List<string>();
 var watch = Stopwatch.StartNew();
+string engineVersion = null;
+if (args.FirstOrDefault() == "--source-probe")
+{
+    if (Environment.GetEnvironmentVariable("LITRADOCK_ALLOW_EPHEMERAL_TEST") != "yes")
+        throw new InvalidOperationException("Explicit synthetic test authority required.");
+    await using var probeStore = new PgStore(
+        Environment.GetEnvironmentVariable("LITRADOCK_PG_TEST_CONNECTION")
+    );
+    var probeTimes = new System.Collections.Concurrent.ConcurrentBag<long>();
+    using var probeClient = new HttpMessageInvoker(
+        new SourceRequestHandler(probeStore, new HeaderFixture(probeTimes))
+    );
+    using var response = await probeClient.SendAsync(
+        new HttpRequestMessage(HttpMethod.Get, "https://example.invalid/process-probe"),
+        CancellationToken.None
+    );
+    await File.WriteAllTextAsync(
+        Path.Combine(output, "source-probe.json"),
+        JsonSerializer.Serialize(probeTimes.ToArray())
+    );
+    return;
+}
 void Check(bool value, string name)
 {
     if (!value)
@@ -37,6 +59,12 @@ if (args.FirstOrDefault() == "--postgres")
     await using var store = new PgStore(connection);
     await store.Migrate();
     await store.VerifySchema();
+    await using (var versionDb = new NpgsqlConnection(connection))
+    {
+        await versionDb.OpenAsync();
+        await using var query = new NpgsqlCommand("SELECT version()", versionDb);
+        engineVersion = (string)await query.ExecuteScalarAsync();
+    }
     var times = new System.Collections.Concurrent.ConcurrentBag<long>();
     using (
         var firstClient = new HttpMessageInvoker(
@@ -91,6 +119,56 @@ if (args.FirstOrDefault() == "--postgres")
         catch (SourceException) { }
     }
     Check(times.Count == 3, "Persisted Retry-After prevents another handler from reaching source");
+    await using (var reset = new NpgsqlConnection(connection))
+    {
+        await reset.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "UPDATE ld_source_budget SET next_at=now() WHERE name='ncbi'",
+            reset
+        );
+        await command.ExecuteNonQueryAsync();
+    }
+    async Task<long> Probe(int index)
+    {
+        var path = Path.Combine(output, "probe-" + index);
+        var start = new ProcessStartInfo(Environment.ProcessPath)
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        if (Path.GetFileNameWithoutExtension(Environment.ProcessPath) == "dotnet")
+            start.ArgumentList.Add(System.Reflection.Assembly.GetExecutingAssembly().Location);
+        start.ArgumentList.Add("--source-probe");
+        start.ArgumentList.Add(path);
+        using var process = Process.Start(start);
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        try
+        {
+            await process.WaitForExitAsync(deadline.Token);
+        }
+        catch
+        {
+            process.Kill(true);
+            throw;
+        }
+        if (process.ExitCode != 0)
+            throw new Exception("Synthetic source process failed: " + await stderr);
+        await stdout;
+        return JsonSerializer
+            .Deserialize<long[]>(
+                await File.ReadAllTextAsync(Path.Combine(path, "source-probe.json"))
+            )
+            .Single();
+    }
+    var processTimes = (await Task.WhenAll(Probe(1), Probe(2))).OrderBy(x => x).ToArray();
+    Check(
+        processTimes[1] - processTimes[0] >= 350,
+        "Two actual processes obey shared PostgreSQL source pacing with synthetic handlers"
+    );
     var password = PgStore.Token();
     var login = "test-" + Guid.NewGuid().ToString("N");
     var a = await store.CreateAccount(login, password);
@@ -236,20 +314,68 @@ if (args.FirstOrDefault() == "--postgres")
     var crashInfo = Artifacts.ValidateXml(crashResponse.Bytes, crashArticle);
     await store.PreparePublication(crash, crashInfo, crashResponse);
     originals.Publish(library, crashInfo.Hash, originals.Stage(crash, crashResponse.Bytes));
+    var stagedClaim = await store.ClaimNext();
+    var stagedArticle = await store.Article(library, stagedClaim.SearchId);
+    var stagedResponse = await source.FetchFullTextAsync(stagedArticle, CancellationToken.None);
+    stagedResponse.Bytes = Encoding.UTF8.GetBytes(
+        Encoding
+            .UTF8.GetString(stagedResponse.Bytes)
+            .Replace("Synthetic 測試 β", "Retained staged legitimate version")
+    );
+    var stagedInfo = Artifacts.ValidateXml(stagedResponse.Bytes, stagedArticle);
+    await store.PreparePublication(stagedClaim, stagedInfo, stagedResponse);
+    var retainedStage = originals.Stage(stagedClaim, stagedResponse.Bytes);
     await store.PauseClaim(crash);
     Check(
         !await store.Associated(library, crash.SearchId, crashInfo.Hash)
             && originals.Read(library, crashInfo.Hash).Length > 0,
         "Interrupted file publication retains bytes without false committed association"
     );
-    await store.Control(library, crashBatch, "resume");
+    await using var reopenedStore = new PgStore(connection);
+    await reopenedStore.Control(library, crashBatch, "resume");
     var noSource = new UnavailableFixture();
-    var recovery = new HostedWorker(store, originals, noSource);
+    var recovery = new HostedWorker(reopenedStore, originals, noSource);
     for (var i = 0; i < 2; i++)
-        await recovery.ExecuteClaim(await store.ClaimNext(), CancellationToken.None);
+        await recovery.ExecuteClaim(await reopenedStore.ClaimNext(), CancellationToken.None);
     Check(
         await store.Associated(library, crash.SearchId, crashInfo.Hash) && noSource.Fetches == 0,
         "Reopened publication reconciles valid version without refetch when source unavailable"
+    );
+    Check(
+        await store.Associated(library, stagedClaim.SearchId, stagedInfo.Hash)
+            && !File.Exists(retainedStage)
+            && noSource.Fetches == 0,
+        "Prepared staging recovers without refetch and removes only verified duplicate staging"
+    );
+    var corruptBatch = await store.Batch(library, scope, true, Naming.DefaultTemplate);
+    var corruptClaim = await store.ClaimNext();
+    var corruptArticle = await store.Article(library, corruptClaim.SearchId);
+    var corruptResponse = await source.FetchFullTextAsync(corruptArticle, CancellationToken.None);
+    corruptResponse.Bytes = Encoding.UTF8.GetBytes(
+        Encoding
+            .UTF8.GetString(corruptResponse.Bytes)
+            .Replace("Synthetic 測試 β", "Corrupt retained candidate fixture")
+    );
+    var corruptInfo = Artifacts.ValidateXml(corruptResponse.Bytes, corruptArticle);
+    await store.PreparePublication(corruptClaim, corruptInfo, corruptResponse);
+    originals.Publish(
+        library,
+        corruptInfo.Hash,
+        originals.Stage(corruptClaim, corruptResponse.Bytes)
+    );
+    File.WriteAllText(originals.ObjectPath(library, corruptInfo.Hash), "corrupt retained evidence");
+    await store.PauseClaim(corruptClaim);
+    await store.Control(library, corruptBatch, "resume");
+    for (var i = 0; i < 2; i++)
+        await recovery.ExecuteClaim(await store.ClaimNext(), CancellationToken.None);
+    Check(
+        JsonSerializer
+            .SerializeToElement(await store.BatchStatus(library, corruptBatch, 0))
+            .GetProperty("state")
+            .GetString() == "completed"
+            && noSource.Fetches == 0
+            && !await store.Associated(library, corruptClaim.SearchId, corruptInfo.Hash),
+        "Corrupt prepared candidate retains failure evidence and permits verified good-original skip"
     );
     var other = await store.CreateLibrary(b, "Other library");
     Check(
@@ -295,6 +421,17 @@ if (args.FirstOrDefault() == "--postgres")
     legacy.ControlBatch(paused, "paused");
     var imported = await store.ImportStoppedCopy(a, "Imported", legacyRoot, originals);
     var importedArticle = await store.Article(imported, legacyRun.Articles[0].SearchId);
+    var preservedRows = await Literature.Verification.MigrationAudit.Compare(
+        connection,
+        legacy.DatabasePath,
+        imported
+    );
+    Check(
+        preservedRows > 0,
+        "All15 source tables preserve exact raw rows, IDs, nulls, multilingual metadata and provenance: "
+            + preservedRows
+            + " rows"
+    );
     Check(
         importedArticle.Title == legacyRun.Articles[0].Title
             && importedArticle.Pmid == legacyRun.Articles[0].Pmid
@@ -310,6 +447,27 @@ if (args.FirstOrDefault() == "--postgres")
             .Equals(legacy.ReadTable("files").Rows[0]["hash"]),
         "Imported original hashes/associations remain queryable"
     );
+    await using (var db = new NpgsqlConnection(connection))
+    {
+        await db.OpenAsync();
+        await using var countCommand = new NpgsqlCommand("SELECT count(*) FROM ld_libraries", db);
+        var beforeCount = await countCommand.ExecuteScalarAsync();
+        var legacyPath = legacy.FilePaths(importedArticle.SearchId).Single();
+        var originalBytes = File.ReadAllBytes(legacyPath);
+        File.WriteAllText(legacyPath, "corrupt import fixture");
+        try
+        {
+            await store.ImportStoppedCopy(a, "Rejected corrupt copy", legacyRoot, originals);
+            throw new Exception("Corrupt import accepted");
+        }
+        catch (IOException) { }
+        Check(
+            Equals(beforeCount, await countCommand.ExecuteScalarAsync())
+                && File.ReadAllText(legacyPath) == "corrupt import fixture",
+            "Corrupt import rolls back destination rows without changing rejected source bytes"
+        );
+        File.WriteAllBytes(legacyPath, originalBytes);
+    }
     await HttpNegativeTests(
         connection,
         otherLogin,
@@ -459,6 +617,26 @@ else if (args.FirstOrDefault() == "--static")
             Artifacts.Hash(File.ReadAllBytes(path)) == before,
             "Unsupported SQLite version rejected without source migration"
         );
+        using (
+            var sourceLock = new FileStream(
+                Path.Combine(v1, "web-host.lock"),
+                FileMode.OpenOrCreate,
+                FileAccess.ReadWrite,
+                FileShare.None
+            )
+        )
+        {
+            try
+            {
+                await noDatabase.ImportStoppedCopy(Guid.NewGuid(), "active", v1, originals);
+                throw new Exception("Active source accepted");
+            }
+            catch (IOException) { }
+        }
+        Check(
+            Artifacts.Hash(File.ReadAllBytes(path)) == before,
+            "Active-source lock rejects import before schema inspection or mutation"
+        );
     }
     var workbook = HostedExport.Write(
         new[]
@@ -514,6 +692,11 @@ await File.WriteAllTextAsync(
             mode = args[0],
             passed = checks.Count,
             elapsedMs = watch.ElapsedMilliseconds,
+            engineVersion,
+            runtime = Environment.Version.ToString(),
+            os = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
+            processorCount = Environment.ProcessorCount,
+            peakWorkingSetBytes = Process.GetCurrentProcess().PeakWorkingSet64,
             checks,
         }
     )
@@ -584,6 +767,44 @@ static async Task HttpNegativeTests(
             await Task.Delay(100);
         }
         check(ready, "Actual hosted HTTP process requires authentication");
+        async Task RejectPublicRoot(string root, string expected)
+        {
+            Directory.CreateDirectory(root);
+            start.ArgumentList.Add("--webroot");
+            start.ArgumentList.Add(root);
+            using var invalid = Process.Start(start);
+            var stdout = invalid.StandardOutput.ReadToEndAsync();
+            var stderr = invalid.StandardError.ReadToEndAsync();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            try
+            {
+                await invalid.WaitForExitAsync(timeout.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                invalid.Kill(true);
+                await invalid.WaitForExitAsync();
+            }
+            var error = await stderr;
+            await stdout;
+            start.ArgumentList.RemoveAt(start.ArgumentList.Count - 1);
+            start.ArgumentList.RemoveAt(start.ArgumentList.Count - 1);
+            check(
+                invalid.ExitCode != 0 && error.Contains(expected),
+                "Actual host startup rejects unsafe webroot: " + expected
+            );
+        }
+        await RejectPublicRoot(start.Environment["LITRADOCK_OBJECTS"], "separate directory trees");
+        if (OperatingSystem.IsLinux())
+        {
+            var publicRoot = Path.Combine(output, "linked-webroot");
+            Directory.CreateDirectory(publicRoot);
+            Directory.CreateSymbolicLink(
+                Path.Combine(publicRoot, "private"),
+                start.Environment["LITRADOCK_OBJECTS"]
+            );
+            await RejectPublicRoot(publicRoot, "Linked public content");
+        }
         var response = await client.PostAsJsonAsync("/api/login", new { login, password });
         response.EnsureSuccessStatusCode();
         var csrf = (await response.Content.ReadFromJsonAsync<JsonElement>())

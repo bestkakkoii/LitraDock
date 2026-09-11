@@ -94,6 +94,18 @@ public sealed class OriginalStore(string root)
         return path;
     }
 
+    public string RetainedStage(Guid library, string token)
+    {
+        if (!Guid.TryParseExact(token, "N", out var id))
+            throw new IOException("Invalid retained staging identifier.");
+        var directory = Path.Combine(Root, library.ToString("N"), "staging");
+        VerifyNoLinks(directory);
+        var path = Path.Combine(directory, id.ToString("N") + ".part");
+        if (File.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+            throw new IOException("Linked staging files are not supported.");
+        return path;
+    }
+
     public void Publish(Guid library, string hash, string stage)
     {
         var target = ObjectPath(library, hash);
@@ -153,10 +165,49 @@ public sealed partial class PgStore
         foreach (var row in candidates)
         {
             var hash = (string)row["hash"];
-            if (!File.Exists(originals.ObjectPath(claim.Library, hash)))
+            byte[] bytes;
+            ArtifactInfo info;
+            string retained = null;
+            try
+            {
+                if (File.Exists(originals.ObjectPath(claim.Library, hash)))
+                    bytes = originals.Read(claim.Library, hash);
+                else
+                {
+                    var saved = JsonSerializer.Deserialize<JsonElement>((string)row["info"]);
+                    if (!saved.TryGetProperty("stage", out var token))
+                        continue;
+                    retained = originals.RetainedStage(claim.Library, token.GetString());
+                    if (!File.Exists(retained))
+                        continue;
+                    bytes = Artifacts.ReadBoundedFile(retained);
+                    if (Artifacts.Hash(bytes) != hash)
+                        throw new IOException(
+                            "Retained staging hash mismatch; evidence preserved."
+                        );
+                }
+                info = Artifacts.ValidateXml(bytes, article);
+            }
+            catch (Exception error)
+                when (error
+                        is IOException
+                            or SourceException
+                            or System.Xml.XmlException
+                            or JsonException
+                )
+            {
+                await using var failed = await db.BeginTransactionAsync();
+                await Fence(db, claim);
+                await Event(
+                    db,
+                    claim.Library,
+                    claim.Job,
+                    "recovery_validation_failed",
+                    Artifacts.SafeMessage(error) + "; retained publication " + row["job_id"]
+                );
+                await failed.CommitAsync();
                 continue;
-            var bytes = originals.Read(claim.Library, hash);
-            var info = Artifacts.ValidateXml(bytes, article);
+            }
             var response = new SourceResponse
             {
                 Bytes = bytes,
@@ -183,6 +234,8 @@ public sealed partial class PgStore
                     + row["job_id"]
             );
             await tx.CommitAsync();
+            if (retained != null)
+                File.Delete(retained);
             return true;
         }
         return false;
@@ -223,7 +276,7 @@ public sealed partial class PgStore
             claim.Library,
             claim.Job,
             info.Hash,
-            JsonSerializer.Serialize(info),
+            JsonSerializer.Serialize(new { artifact = info, stage = claim.Lease.ToString("N") }),
             response.OriginalUri,
             response.FinalUri
         );
