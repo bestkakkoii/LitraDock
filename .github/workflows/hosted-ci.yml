@@ -58,6 +58,17 @@ jobs:
           dotnet run --project tests/LitraDock.HostedVerification -c Release --no-build -- --postgres .litradock/postgres 2>&1 | tee evidence/postgres.log
           cp .litradock/postgres/result.json evidence/postgres-result.json
           cp .litradock/postgres/source-scale.json evidence/source-scale.json
+      - name: Actual unattended recovery and PostgreSQL object-pair restore drill
+        env:
+          LITRADOCK_PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          set -euo pipefail
+          chmod +x tests/recovery/pg_dump.sh tests/recovery/pg_restore.sh
+          export LITRADOCK_PG_DUMP="$PWD/tests/recovery/pg_dump.sh"
+          export LITRADOCK_PG_RESTORE="$PWD/tests/recovery/pg_restore.sh"
+          python3 tests/recovery/measure.py evidence/recovery-resources.json -- dotnet run --project tests/LitraDock.HostedVerification -c Release --no-build -- --recovery .litradock/recovery 2>&1 | tee evidence/recovery.log
+          cp .litradock/recovery/result.json evidence/recovery-result.json
+          cp .litradock/recovery/recovery-scale.json evidence/recovery-scale.json
       - name: Actual Chromium hosted workflow with test-only sources
         run: |
           set -euo pipefail
@@ -76,7 +87,7 @@ jobs:
           dotnet build tests/LitraDock.HostedBrowserHost -c Release --no-restore 2>&1 | tee evidence/browser-build.log
           npm ci --prefix tests/hosted-web 2>&1 | tee evidence/browser-npm.log
           tests/hosted-web/node_modules/.bin/playwright install --with-deps chromium 2>&1 | tee evidence/browser-install.log
-          node tests/hosted-web/verify.mjs .litradock/hosted-browser 2>&1 | tee evidence/browser.log
+          python3 tests/recovery/measure.py evidence/browser-resources.json -- node tests/hosted-web/verify.mjs .litradock/hosted-browser 2>&1 | tee evidence/browser.log
       - name: Retain bounded synthetic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

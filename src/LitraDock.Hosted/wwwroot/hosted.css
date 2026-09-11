@@ -122,3 +122,5 @@ select {
     max-width: 94vw;
   }
 }
+
+#recoveryStatus, #nextEvents { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 35vh; overflow: auto; }

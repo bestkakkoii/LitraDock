@@ -53,12 +53,14 @@ originals.VerifyWebRoot(
 );
 if (args.Contains("--migrate"))
 {
+    await using var maintenance = await ResourceAdmission.Enter(store, maintenance: true);
     await store.Migrate();
     Console.WriteLine("Hosted schema verified.");
     return;
 }
 if (args.Contains("--create-account"))
 {
+    await using var maintenance = await ResourceAdmission.Enter(store, maintenance: true);
     var login = builder.Configuration["LITRADOCK_INITIAL_LOGIN"];
     var password = builder.Configuration["LITRADOCK_INITIAL_PASSWORD"];
     if (login == null || password == null)
@@ -68,9 +70,39 @@ if (args.Contains("--create-account"))
     Console.WriteLine("Account created: " + await store.CreateAccount(login, password));
     return;
 }
+if (args.Contains("--operator-restore"))
+{
+    await OperatorRecovery.Restore(
+        store,
+        connection,
+        originals,
+        builder.Configuration["LITRADOCK_RECOVERY_PATH"]
+            ?? throw new InvalidOperationException("Configure the private recovery path."),
+        builder.Configuration["LITRADOCK_PG_RESTORE"] ?? "pg_restore"
+    );
+    Console.WriteLine(
+        "Operator database/object pair restored; sessions revoked and unfinished work paused."
+    );
+    return;
+}
 await store.VerifySchema();
+await store.VerifyOperational();
+if (args.Contains("--operator-backup"))
+{
+    await OperatorRecovery.Backup(
+        store,
+        connection,
+        originals,
+        builder.Configuration["LITRADOCK_RECOVERY_PATH"]
+            ?? throw new InvalidOperationException("Configure a new private recovery destination."),
+        builder.Configuration["LITRADOCK_PG_DUMP"] ?? "pg_dump"
+    );
+    Console.WriteLine("Operator database/object pair backup completed.");
+    return;
+}
 if (args.Contains("--import"))
 {
+    await using var maintenance = await ResourceAdmission.Enter(store, maintenance: true);
     var copy = builder.Configuration["LITRADOCK_IMPORT_COPY"];
     if (
         copy == null
@@ -234,7 +266,32 @@ app.Use(
         }
         try
         {
+            await using var admission = context.Request.Path.StartsWithSegments("/api")
+                ? await ResourceAdmission.Enter(
+                    store,
+                    heavy: context
+                        .Request.Path.Value.Split('/')
+                        .Any(x =>
+                            x
+                                is "export"
+                                    or "csv"
+                                    or "files"
+                                    or "manual"
+                                    or "bundle"
+                                    or "restore"
+                                    or "health"
+                        )
+                )
+                : null;
             await next();
+        }
+        catch (ResourceBusyException)
+        {
+            context.Response.StatusCode = 429;
+            context.Response.Headers.RetryAfter = "2";
+            await context.Response.WriteAsJsonAsync(
+                new { error = "Service resource capacity is in use; retry shortly." }
+            );
         }
         catch (KeyNotFoundException)
         {
@@ -436,6 +493,84 @@ app.MapPost(
     (Guid library, string id) => store.ManualItem(library, id)
 );
 app.MapGet("/api/sources", () => SourceAcquisition.Capabilities);
+app.MapGet(
+    "/api/libraries/{library:guid}/next-events",
+    (Guid library) => store.NextEvents(library)
+);
+app.MapPost(
+    "/api/libraries/{library:guid}/health",
+    (Guid library, HealthPage input) => store.InspectHealth(library, originals, input.Offset)
+);
+app.MapPost(
+    "/api/libraries/{library:guid}/bundle",
+    async (Guid library) =>
+    {
+        var path = await store.ExportBundle(library, originals);
+        return Results.File(
+            new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.None,
+                65536,
+                FileOptions.DeleteOnClose
+            ),
+            "application/zip",
+            "private-library.zip"
+        );
+    }
+);
+app.MapPost(
+        "/api/restore",
+        async (HttpContext context) =>
+        {
+            originals.Admit(Guid.Empty, PgStore.BundleLimit * 2);
+            context.Features.Get<IHttpMaxRequestBodySizeFeature>().MaxRequestBodySize =
+                PgStore.BundleLimit;
+            if (context.Request.ContentLength > PgStore.BundleLimit)
+                return Results.StatusCode(413);
+            var root = Path.Combine(originals.Root, "incoming-transfers");
+            Directory.CreateDirectory(root);
+            var path = Path.Combine(root, Guid.NewGuid().ToString("N") + ".bundle");
+            await using (
+                var output = new FileStream(
+                    path,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None
+                )
+            )
+            {
+                var buffer = new byte[65536];
+                int n;
+                long total = 0;
+                while (
+                    (n = await context.Request.Body.ReadAsync(buffer, context.RequestAborted)) > 0
+                )
+                {
+                    total += n;
+                    if (total > PgStore.BundleLimit)
+                        return Results.StatusCode(413);
+                    await output.WriteAsync(buffer.AsMemory(0, n), context.RequestAborted);
+                }
+                output.Flush(true);
+            }
+            var id = await store.ImportBundle(
+                ((Session)context.Items["session"]).Account,
+                path,
+                originals
+            );
+            File.Delete(path); // 已完成的專屬傳輸暫存可刪；原始檔與失敗證據不在此路徑。
+            return Results.Ok(
+                new
+                {
+                    id,
+                    message = "Library restored under your account; unfinished work is paused.",
+                }
+            );
+        }
+    )
+    .WithMetadata(new ManualUpload());
 app.MapPost(
     "/api/libraries/{library:guid}/records/{id}/manual/{item}/confirm",
     async (Guid library, string id, string item) =>
@@ -450,6 +585,7 @@ app.MapPost(
                 return Results.StatusCode(429);
             try
             {
+                originals.Admit(library, NcbiTransport.MaximumBytes * 2L);
                 context.Features.Get<IHttpMaxRequestBodySizeFeature>().MaxRequestBodySize =
                     NcbiTransport.MaximumBytes;
                 if (context.Request.ContentLength > NcbiTransport.MaximumBytes)
@@ -512,3 +648,5 @@ record Control(string Action);
 record ManualUpload;
 
 record ExportOptions(bool SelectedOnly);
+
+record HealthPage(int Offset);

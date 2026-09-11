@@ -1,3 +1,5 @@
+Recovery development candidate: schema3 adds persisted automatic continuation, aggregate resource admission, bounded file health, private full-library ZIP transfer and a separate operator database/object recovery command. These changes are under active disposable PostgreSQL and browser verification; consult exact CI results before relying on them. Bundles contain unencrypted private metadata/originals, create a new owned library and pause unfinished work; they never restore accounts or sessions. Keep separate backups and do not use this preview for a production cutover.
+
 # LitraDock — hosted literature workflow preview
 
 This snapshot contains application code and synthetic tests for review. It has no original development/commissioning history, private libraries or acquired papers. Project source is provided under GNU AGPL-3.0-only; see LICENSE. This does not grant rights to scholarly articles, trademarks or external services. Third-party components retain their own notices.

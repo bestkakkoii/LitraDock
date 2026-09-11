@@ -155,15 +155,18 @@ try {
   await page.locator("#workspace").waitFor({ state: "visible" });
   await page.locator("#libraries").selectOption(library);
   await page.locator("#batches").selectOption(batch);
+  await waitStatus(page, "scheduled 1");
+  await page.locator("details").evaluate(node=>node.open=true);
+  await page.waitForFunction(()=>document.getElementById("nextEvents").textContent.includes("next eligible"));
+  check(true,"Browser shows persisted automatic next eligible event after browser closure");
   await waitStatus(page, "completed_with_errors");
   check(
-    (await page.locator("#status").textContent()).includes("completed 2"),
-    "Acquisition continues after entire browser closes and reopens",
+    (await page.locator("#status").textContent()).includes("completed 3"),
+    "Acquisition and automatic cooldown continuation complete without Retry after browser closes and reopens",
   );
   for (const outcome of [
     "unavailable",
     "needs_login",
-    "rate_wait",
     "failed",
     "challenge",
   ])
@@ -294,6 +297,28 @@ try {
     ),
     "Selected batch label agrees with fresh durable cancelled progress",
   );
+  await page.locator("details").evaluate(node=>node.open=true);
+  await page.locator("#health").click();
+  await page.waitForFunction(()=>document.getElementById("recoveryStatus").textContent.includes('"physicalBytes"'));
+  check(true,"Actual browser performs bounded file-health reconciliation");
+  const bundleDownload=page.waitForEvent("download");
+  await page.locator("#bundle").click();
+  const bundle=await bundleDownload;
+  const bundlePath=path.join(output,"private-library.zip");
+  await bundle.saveAs(bundlePath);
+  check((await fs.stat(bundlePath)).size>0,"Actual authorized browser downloads complete private library bundle");
+  await page.locator("#bundleFile").setInputFiles(bundlePath);
+  await page.locator("#restoreBundle").click();
+  await page.waitForFunction(()=>document.getElementById("recoveryStatus").textContent.includes("Library restored under your account"),{},{timeout:60000});
+  const restoredLibrary=await page.locator("#libraries").inputValue();
+  check(restoredLibrary!==library,"Browser restore creates a distinct owned library without replacing source");
+  const restoredRecords=await context.request.get(origin+"/api/libraries/"+restoredLibrary+"/records/"+id);
+  const restoredDetails=await restoredRecords.json();
+  check(restoredDetails.article.searchId===id && restoredDetails.files.length>0,"Restored browser record preserves stable canonical identity and file relations");
+  const restoredOriginal=await context.request.get(origin+"/api/libraries/"+restoredLibrary+"/records/"+id+"/files/"+restoredDetails.files[0].hash);
+  check(restoredOriginal.ok() && (await restoredOriginal.body()).length>0,"Relocated original download uses restored library association");
+  const csrfRejected=await context.request.post(origin+"/api/restore",{headers:{Origin:origin,"Content-Type":"application/octet-stream"},data:await fs.readFile(bundlePath)});
+  check(csrfRejected.status()===403,"Actual restore upload fails without session CSRF capability");
   await page.screenshot({
     path: path.join(output, "browser-wide.png"),
     fullPage: true,

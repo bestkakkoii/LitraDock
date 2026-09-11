@@ -27,12 +27,12 @@ public static class HostedSourceChecks
             return await command.ExecuteScalarAsync();
         }
         check(
-            Convert.ToInt32(await Sql("SELECT max(version) FROM ld_schema")) == 2,
-            "Actual schema2 upgrade and prior schema1 marker retained"
+            Convert.ToInt32(await Sql("SELECT max(version) FROM ld_schema")) == 3,
+            "Actual schema3 upgrade and prior schema1 marker retained"
         );
         check(
-            Convert.ToInt32(await Sql("SELECT count(*) FROM ld_schema")) == 2,
-            "Migration retains both version markers"
+            Convert.ToInt32(await Sql("SELECT count(*) FROM ld_schema")) == 3,
+            "Migration retains all three version markers"
         );
         var account = await store.CreateAccount(
             "sources-" + Guid.NewGuid().ToString("N"),
@@ -51,8 +51,8 @@ public static class HostedSourceChecks
         var status = JsonSerializer.SerializeToElement(await store.BatchStatus(library, batch, 0));
         var items = status.GetProperty("items").EnumerateArray().ToArray();
         check(
-            status.GetProperty("state").GetString() == "completed_with_errors" && items.Length == 7,
-            "Mixed batch settles with all seven durable items"
+            status.GetProperty("state").GetString() == "running" && items.Length == 7,
+            "Mixed batch retains all seven durable items while safe cooldown is scheduled"
         );
         foreach (
             var state in new[]
@@ -60,7 +60,7 @@ public static class HostedSourceChecks
                 "completed",
                 "unavailable",
                 "needs_login",
-                "rate_wait",
+                "scheduled",
                 "failed",
                 "challenge",
                 "unsupported",
@@ -70,6 +70,7 @@ public static class HostedSourceChecks
                 items.Any(i => i.GetProperty("state").GetString() == state),
                 "Durable mixed outcome " + state
             );
+        await store.Control(library, batch, "paused");
         var item = items[1].GetProperty("item_id").GetString();
         var id = items[1].GetProperty("search_id").GetString();
         var article = await store.Article(library, id);
@@ -134,7 +135,7 @@ public static class HostedSourceChecks
                 && Directory
                     .GetFiles(Path.Combine(originals.Root, library.ToString("N"), "objects"))
                     .Length == 2
-                && (await store.Provenance(library, id)).Count == 2,
+                && (await store.Provenance(library, id)).Count == 3,
             "Duplicate manual bytes keep one identical object and distinct attempts"
         );
         var version = SourceChecks.Pdf(article, "Second legitimate version");
@@ -156,7 +157,7 @@ public static class HostedSourceChecks
                     library,
                     item
                 ) == "needs_review"
-                && (await store.Files(library, id)).Count == 2,
+                && (await store.Files(library, id)).Count == 3,
             "Uncertain PDF retained for review without an original association or false completion"
         );
         await store.ConfirmManual(library, id, item);

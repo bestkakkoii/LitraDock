@@ -182,9 +182,7 @@ public sealed class SourceAcquisition(PubMedSource metadata, HttpClient ncbi, Ht
             }
             catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
             {
-                failures.Add(
-                    new SourceException("failed", "Source attempt timed out; retry explicitly.")
-                );
+                failures.Add(new SourceException("transient", "Source attempt timed out."));
             }
             catch (System.Xml.XmlException)
             {
@@ -196,17 +194,18 @@ public sealed class SourceAcquisition(PubMedSource metadata, HttpClient ncbi, Ht
             {
                 failures.Add(
                     new SourceException(
-                        "failed",
+                        "transient",
                         "Source network or TLS failed; certificate validation retained."
                     )
                 );
             }
         }
         var state =
-            failures.Any(f => f.State == "rate_wait") ? "rate_wait"
-            : failures.Any(f => f.State == "needs_login") ? "needs_login"
+            failures.Any(f => f.State == "needs_login") ? "needs_login"
             : failures.Any(f => f.State == "challenge") ? "challenge"
+            : failures.Any(f => f.State == "rate_wait") ? "rate_wait"
             : failures.Any(f => f.State == "failed") ? "failed"
+            : failures.Any(f => f.State == "transient") ? "transient"
             : "unavailable";
         throw new SourceException(
             state,
@@ -307,7 +306,7 @@ public sealed class SourceAcquisition(PubMedSource metadata, HttpClient ncbi, Ht
                     ?? TimeSpan.FromSeconds(2 * (retries + 1));
                 if (retries++ >= 2 || delay > TimeSpan.FromSeconds(10))
                     throw new SourceException(
-                        status == 429 ? "rate_wait" : "failed",
+                        status == 429 ? "rate_wait" : "transient",
                         "Source cooldown or retry budget reached; retry later."
                     );
                 progress?.Invoke(

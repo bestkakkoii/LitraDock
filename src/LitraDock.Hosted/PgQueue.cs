@@ -128,7 +128,7 @@ public sealed partial class PgStore
             );
             await Exec(
                 db,
-                "UPDATE ld_batches b SET state=CASE WHEN EXISTS(SELECT 1 FROM ld_items i WHERE i.library_id=b.library_id AND i.batch_id=b.batch_id AND i.state<>'completed') THEN 'completed_with_errors' ELSE 'completed' END WHERE b.library_id=@p0 AND b.batch_id=(SELECT batch_id FROM ld_items WHERE library_id=@p0 AND item_id=@p1) AND b.state='running' AND NOT EXISTS(SELECT 1 FROM ld_jobs j JOIN ld_items i ON i.library_id=j.library_id AND i.item_id=j.item_id WHERE i.library_id=b.library_id AND i.batch_id=b.batch_id AND j.state IN ('queued','running'))",
+                "UPDATE ld_batches b SET state=CASE WHEN EXISTS(SELECT 1 FROM ld_items i WHERE i.library_id=b.library_id AND i.batch_id=b.batch_id AND i.state<>'completed') THEN 'completed_with_errors' ELSE 'completed' END WHERE b.library_id=@p0 AND b.batch_id=(SELECT batch_id FROM ld_items WHERE library_id=@p0 AND item_id=@p1) AND b.state='running' AND NOT EXISTS(SELECT 1 FROM ld_jobs j JOIN ld_items i ON i.library_id=j.library_id AND i.item_id=j.item_id WHERE i.library_id=b.library_id AND i.batch_id=b.batch_id AND j.state IN ('queued','running','scheduled'))",
                 claim.Library,
                 claim.Item
             );
@@ -202,14 +202,14 @@ public sealed partial class PgStore
     {
         await Exec(
             db,
-            "UPDATE ld_jobs j SET state='paused',lease_token=NULL,lease_until=NULL,reason=@p2 FROM ld_items i WHERE j.library_id=@p0 AND i.library_id=j.library_id AND i.item_id=j.item_id AND i.batch_id=@p1 AND j.state IN ('queued','running')",
+            "UPDATE ld_jobs j SET state='paused',lease_token=NULL,lease_until=NULL,reason=@p2 FROM ld_items i WHERE j.library_id=@p0 AND i.library_id=j.library_id AND i.item_id=j.item_id AND i.batch_id=@p1 AND j.state IN ('queued','running','scheduled')",
             library,
             batch,
             reason
         );
         await Exec(
             db,
-            "UPDATE ld_items SET state='paused',reason=@p2 WHERE library_id=@p0 AND batch_id=@p1 AND state IN ('queued','running','waiting','downloading','validating','publishing','resolving','redirecting')",
+            "UPDATE ld_items SET state='paused',reason=@p2 WHERE library_id=@p0 AND batch_id=@p1 AND state IN ('queued','running','waiting','downloading','validating','publishing','resolving','redirecting','scheduled')",
             library,
             batch,
             reason
@@ -246,14 +246,14 @@ public sealed partial class PgStore
                 throw new InvalidOperationException("Settled batches have no active work to stop.");
             await Exec(
                 db,
-                "UPDATE ld_jobs j SET state=@p2,lease_token=NULL,lease_until=NULL,reason='Explicit batch control.' FROM ld_items i WHERE j.library_id=@p0 AND i.library_id=j.library_id AND i.item_id=j.item_id AND i.batch_id=@p1 AND j.state IN ('queued','running')",
+                "UPDATE ld_jobs j SET state=@p2,lease_token=NULL,lease_until=NULL,reason='Explicit batch control.' FROM ld_items i WHERE j.library_id=@p0 AND i.library_id=j.library_id AND i.item_id=j.item_id AND i.batch_id=@p1 AND j.state IN ('queued','running','scheduled')",
                 library,
                 batch,
                 action
             );
             await Exec(
                 db,
-                "UPDATE ld_items SET state=@p2,reason='Explicit batch control.' WHERE library_id=@p0 AND batch_id=@p1 AND state IN ('queued','running','waiting','downloading','validating','publishing','resolving','redirecting','paused')",
+                "UPDATE ld_items SET state=@p2,reason='Explicit batch control.' WHERE library_id=@p0 AND batch_id=@p1 AND state IN ('queued','running','waiting','downloading','validating','publishing','resolving','redirecting','paused','scheduled')",
                 library,
                 batch,
                 action
@@ -263,7 +263,7 @@ public sealed partial class PgStore
         {
             var items = await Rows(
                 db,
-                "SELECT item_id,search_id,last_job_id FROM ld_items WHERE library_id=@p0 AND batch_id=@p1 AND state IN ('paused','cancelled','failed','unavailable','needs_login','rate_wait','challenge','unsupported')",
+                "SELECT item_id,search_id,last_job_id FROM ld_items WHERE library_id=@p0 AND batch_id=@p1 AND state IN ('paused','cancelled','failed','unavailable','needs_login','rate_wait','challenge','unsupported','scheduled','missing_file')",
                 library,
                 batch
             );
@@ -304,6 +304,13 @@ public sealed partial class PgStore
             library,
             batch,
             action is "retry" or "resume" ? "queued" : action
+        );
+        await Exec(
+            db,
+            "UPDATE ld_retry r SET status=@p2 FROM ld_items i WHERE r.library_id=@p0 AND i.library_id=r.library_id AND i.batch_id=@p1 AND r.job_id IN (SELECT job_id FROM ld_jobs WHERE library_id=@p0 AND item_id=i.item_id) AND r.status IN ('pending','paused')",
+            library,
+            batch,
+            action == "paused" ? "paused" : "superseded"
         );
         await Event(db, library, null, action, "Batch " + batch);
         await tx.CommitAsync();

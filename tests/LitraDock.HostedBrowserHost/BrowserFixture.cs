@@ -6,6 +6,7 @@ namespace Literature.Verification;
 // 僅測試專案以編譯常數掛入；正式 Hosted 專案無執行時 fixture 開關。
 public sealed class BrowserFixture : ICheckpointSource, IProgressSource
 {
+    private int rateAttempts;
     public string Name => "Synthetic browser fixture; no live source traffic";
 
     public Task SearchAsync(SearchSnapshot snapshot, CancellationToken token) =>
@@ -52,7 +53,7 @@ public sealed class BrowserFixture : ICheckpointSource, IProgressSource
         progress?.Invoke("waiting", "Synthetic wait; no external request.");
         await Task.Delay(150, token);
         var n = int.Parse(article.Pmid) - 77000000;
-        if (n is >= 1 and <= 5)
+        if (n is >= 1 and <= 5 && (n != 3 || Interlocked.Increment(ref rateAttempts) == 1))
             throw new SourceException(
                 new[]
                 {

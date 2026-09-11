@@ -11,26 +11,25 @@ public sealed class HostedWorker(PgStore store, OriginalStore originals, ILitera
         {
             try
             {
-                await store.RecoverExpired();
+                await using var admission = await ResourceAdmission.Enter(store, heavy: true);
+                await store.RecoverScheduledWork();
+                await store.AdvanceSchedule();
                 var claim = await store.ClaimNext();
-                if (claim == null)
-                {
-                    await Task.Delay(500, stoppingToken);
-                    continue;
-                }
-                await ExecuteClaim(claim, stoppingToken);
+                if (claim != null)
+                    await ExecuteClaim(claim, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
+            catch (ResourceBusyException) { }
             catch (Exception)
             {
                 Console.Error.WriteLine(
                     "Worker operation failed; durable lease recovery will retain unfinished work."
                 );
-                await Task.Delay(1000, stoppingToken);
             }
+            await Task.Delay(500, stoppingToken);
         }
     }
 
@@ -79,6 +78,7 @@ public sealed class HostedWorker(PgStore store, OriginalStore originals, ILitera
             }
             else
             {
+                originals.Admit(claim.Library, NcbiTransport.MaximumBytes * 2L);
                 var article = await store.Article(claim.Library, claim.SearchId);
                 var manual = await store.ManualInput(claim);
                 if (
@@ -184,7 +184,11 @@ public sealed class HostedWorker(PgStore store, OriginalStore originals, ILitera
         {
             try
             {
-                await store.PauseClaim(claim);
+                await store.Schedule(
+                    claim,
+                    "interrupted",
+                    "Worker stopped; durable automatic continuation retained."
+                );
             }
             catch (OperationCanceledException) { }
         }
@@ -192,11 +196,15 @@ public sealed class HostedWorker(PgStore store, OriginalStore originals, ILitera
         {
             try
             {
-                await store.Finish(
-                    claim,
-                    (error as SourceException)?.State ?? "failed",
-                    Artifacts.SafeMessage(error)
-                );
+                var state = (error as SourceException)?.State ?? "failed";
+                if (state is "rate_wait" or "transient" || error is HttpRequestException)
+                    await store.Schedule(
+                        claim,
+                        state == "rate_wait" ? state : "transient",
+                        Artifacts.SafeMessage(error)
+                    );
+                else
+                    await store.Finish(claim, state, Artifacts.SafeMessage(error));
             }
             catch (OperationCanceledException) { }
         }

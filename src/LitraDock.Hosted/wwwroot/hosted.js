@@ -385,6 +385,8 @@ setInterval(
     if (csrf && library) {
       await catalog();
       await progress();
+      const events=await json(base()+"next-events");
+      $("nextEvents").textContent=events.length ? events.map(x=>`${x.job_id}: ${x.status} · next eligible ${x.next_at} · automatic attempt ${x.number}`).join("\n") : "No automatic continuation is pending.";
     }
   }),
   2000,
@@ -465,4 +467,27 @@ $("manualConfirm").onclick = safe(async () => {
   $("manualStatus").textContent =
     "Your identity confirmation is recorded; durable publication is queued.";
   await progress();
+});
+
+let healthOffset=0;
+$("health").onclick=safe(async()=>{
+  $("recoveryStatus").textContent="Checking bounded file-health page; originals remain untouched.";
+  const result=await json(base()+"health",{offset:healthOffset});
+  healthOffset=result.nextOffset;
+  $("recoveryStatus").textContent=JSON.stringify(result,null,2);
+});
+$("bundle").onclick=safe(async()=>{
+  $("recoveryStatus").textContent="Preparing private bundle; completion is not yet confirmed.";
+  await download(base()+"bundle",{},"private-library.zip");
+  $("recoveryStatus").textContent="Private bundle downloaded. Missing files are declared in its manifest and prevent restore.";
+});
+$("restoreBundle").onclick=safe(async()=>{
+  const file=$("bundleFile").files[0];
+  if(!file || file.size>256*1024*1024) throw new Error("Choose a private bundle up to 256 MiB.");
+  $("recoveryStatus").textContent="Validating and restoring into a new library; existing libraries remain unchanged.";
+  const response=await fetch("/api/restore",{method:"POST",headers:{"Content-Type":"application/octet-stream","X-CSRF":csrf},body:file});
+  if(!response.ok) {$("recoveryStatus").textContent="Restore did not complete; existing libraries remain unchanged.";throw new Error(await response.text());}
+  const result=await response.json(); library=result.id; scope="";batch="";healthOffset=0;
+  $("records").replaceChildren();$("progress").replaceChildren();$("counts").textContent="Choose a restored scope.";$("status").textContent="Restored library; unfinished work is paused.";
+  await libraries();await catalog();$("recoveryStatus").textContent=result.message;
 });

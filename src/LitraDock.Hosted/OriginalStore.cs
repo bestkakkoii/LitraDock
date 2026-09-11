@@ -4,7 +4,7 @@ using LitraDock.Core;
 namespace Literature.Service;
 
 // 私人原始檔僅以文庫 UUID 與內容雜湊定址；URL 不接受使用者提供的作業系統路徑。
-public sealed class OriginalStore(string root)
+public sealed partial class OriginalStore(string root)
 {
     public string Root { get; } = Path.GetFullPath(root);
 

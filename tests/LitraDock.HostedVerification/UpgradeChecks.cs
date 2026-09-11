@@ -33,7 +33,9 @@ public static class UpgradeChecks
         await store.Finish(claim, "completed", "Synthetic schema1 baseline");
         var scope = await store.Scope(library, run, null, "");
         var batch = await store.Batch(library, scope, false, Naming.DefaultTemplate);
-        await store.Control(library, batch, "paused");
+        await Sql(
+            "UPDATE ld_jobs SET state='paused'; UPDATE ld_items SET state='paused'; UPDATE ld_batches SET state='paused'"
+        );
         await using var tablesCommand = new NpgsqlCommand(
             "SELECT tablename FROM pg_tables WHERE schemaname='public' AND tablename LIKE 'ld_%' ORDER BY tablename",
             db
@@ -60,11 +62,11 @@ public static class UpgradeChecks
                                 + table
                                 + " t) q"
                         ),
-                "Populated PostgreSQL v1-to-v2 preserves exact rows: " + table
+                "Populated PostgreSQL v1-to-v3 preserves exact rows: " + table
             );
         check(
-            Convert.ToInt32(await Sql("SELECT max(version) FROM ld_schema")) == 2,
-            "Populated hosted migration completes schema2 without altering paused identity graph"
+            Convert.ToInt32(await Sql("SELECT max(version) FROM ld_schema")) == 3,
+            "Populated hosted migration completes schema3 without altering paused identity graph"
         );
     }
 }

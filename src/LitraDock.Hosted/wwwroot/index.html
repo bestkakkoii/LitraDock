@@ -42,6 +42,16 @@
           ><button id="libraryNext">Next libraries</button
           ><span id="libraryCounts"></span>
         </div>
+        <details>
+          <summary>Library recovery and private transfer</summary>
+          <p>Transfer includes all records, raw private metadata, history and available originals. It is unencrypted. Restore creates a new owned library and pauses unfinished work; it does not replace an existing library.</p>
+          <button id="bundle">Download private library bundle</button>
+          <input id="bundleFile" type="file" accept=".zip,.bundle" />
+          <button id="restoreBundle">Restore as new library</button>
+          <button id="health">Check next file-health page</button>
+          <pre id="recoveryStatus" aria-live="polite"></pre>
+          <pre id="nextEvents" aria-live="polite"></pre>
+        </details>
         <div>
           <label
             >PubMed query or identifier <input id="query" size="44" /></label
