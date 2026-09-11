@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using Literature.Service;
+using Npgsql;
 
 public static class GateProcessChecks
 {
@@ -104,6 +105,19 @@ public static class GateProcessChecks
             await WaitFile(Path.Combine(root, "killed", "body-start"));
             killed.Kill(true);
             await killed.WaitForExitAsync();
+            await using var db = new NpgsqlConnection(
+                Environment.GetEnvironmentVariable("LITRADOCK_PG_TEST_CONNECTION")
+            );
+            await db.OpenAsync();
+            await using var nextQuery = new NpgsqlCommand(
+                "SELECT next_at FROM ld_source_budget WHERE name='europepmc'",
+                db
+            );
+            var nextAt = (DateTime)await nextQuery.ExecuteScalarAsync();
+            check(
+                nextAt > DateTime.UtcNow.AddSeconds(3),
+                "Killed body leaves a future five-second Retry-After committed in PostgreSQL before survivor starts"
+            );
             using var survivor = Start("survivor", false);
             try
             {
@@ -126,7 +140,7 @@ public static class GateProcessChecks
             check(
                 survivor.ExitCode == 0
                     && !File.Exists(Path.Combine(root, "killed", "completed"))
-                    && resumed - began >= 900,
+                    && resumed >= new DateTimeOffset(nextAt).ToUnixTimeMilliseconds() - 50,
                 "Killing process during body releases actual PG gate, retains cooldown and creates no false completion"
             );
         }
@@ -145,10 +159,18 @@ public static class GateProcessChecks
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken token
-        ) =>
-            Task.FromResult(
-                new HttpResponseMessage(HttpStatusCode.OK) { Content = new Body(path, hold) }
-            );
+        )
+        {
+            var response = new HttpResponseMessage(
+                hold ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK
+            )
+            {
+                Content = new Body(path, hold),
+            };
+            if (hold)
+                response.Headers.RetryAfter = new(TimeSpan.FromSeconds(5));
+            return Task.FromResult(response);
+        }
     }
 
     private sealed class Body(string path, bool hold) : HttpContent
@@ -166,7 +188,8 @@ public static class GateProcessChecks
         {
             var begin = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             await File.WriteAllTextAsync(Path.Combine(path, "body-start"), begin.ToString());
-            await Task.Delay(hold ? 20000 : 350);
+            // 1500ms 超過 Europe 的1000ms時槽；只鎖 headers 的退化版本必定重疊。
+            await Task.Delay(hold ? 20000 : 1500);
             await stream.WriteAsync("synthetic"u8.ToArray());
             await File.AppendAllTextAsync(
                 Path.Combine(path, "periods.jsonl"),

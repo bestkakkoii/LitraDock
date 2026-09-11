@@ -57,7 +57,9 @@ public sealed partial class PgStore
                 library
             )
         )
-            .Select(r => JsonSerializer.Deserialize<Article>((string)r["metadata"]))
+            .Select(r =>
+                JsonSerializer.Deserialize<Article>(ExportPrivacy.Text((string)r["metadata"]))
+            )
             .ToArray();
         var sheets = new Dictionary<string, List<string[]>>();
         sheets["Records"] =
@@ -145,10 +147,12 @@ public sealed partial class PgStore
                 .AddRange(
                     rows.Select(r =>
                         r.Values.Select(v =>
-                                Convert.ToString(
-                                    v,
-                                    System.Globalization.CultureInfo.InvariantCulture
-                                ) ?? ""
+                                ExportPrivacy.Text(
+                                    Convert.ToString(
+                                        v,
+                                        System.Globalization.CultureInfo.InvariantCulture
+                                    ) ?? ""
+                                )
                             )
                             .ToArray()
                     )
@@ -203,6 +207,19 @@ public sealed partial class PgStore
             "Search Results",
             "SELECT x.* FROM ld_results x JOIN export_members USING(search_id) WHERE x.library_id=@p0 AND @p1 IS NOT NULL LIMIT 10001"
         );
+        sheets["Export Notes"] =
+        [
+            new[] { "Projection", "Original preservation" },
+            new[]
+            {
+                "Shareable metadata removes URL credentials, non-public query strings and fragments, including URLs nested in raw XML/JSON. Ordered metadata chunks otherwise retain complete fields.",
+                "Private canonical metadata and original file bytes remain unchanged. This report is not a portable backup.",
+            },
+        ];
+        foreach (var rows in sheets.Values)
+        foreach (var row in rows)
+            for (var column = 0; column < row.Length; column++)
+                row[column] = ExportPrivacy.Text(row[column]);
         return ScopedWorkbook.Write(sheets, csv);
     }
 }

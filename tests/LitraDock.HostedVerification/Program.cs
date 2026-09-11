@@ -527,6 +527,25 @@ if (args.FirstOrDefault() == "--postgres")
         "Imported original hashes/associations remain queryable"
     );
     var concurrentWrite = false;
+    using (
+        var configure = new Microsoft.Data.Sqlite.SqliteConnection(
+            new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+            {
+                DataSource = legacy.DatabasePath,
+                Mode = Microsoft.Data.Sqlite.SqliteOpenMode.ReadWrite,
+                Pooling = false,
+            }.ConnectionString
+        )
+    )
+    {
+        configure.Open();
+        using var wal = configure.CreateCommand();
+        wal.CommandText = "PRAGMA journal_mode=WAL";
+        Check(
+            (string)wal.ExecuteScalar() == "wal",
+            "Synthetic copied SQLite uses explicit WAL for concurrent-writer snapshot test"
+        );
+    }
     var consistentImport = await store.ImportStoppedCopy(
         a,
         "Concurrent snapshot fixture",

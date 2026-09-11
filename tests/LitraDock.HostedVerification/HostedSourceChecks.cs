@@ -245,15 +245,71 @@ public static class HostedSourceChecks
             "Complete UTF-8 CSV detail bundle generated from same scope"
         );
         await File.WriteAllBytesAsync(Path.Combine(output, "synthetic-complete.xlsx"), report);
+        var privateId = items[2].GetProperty("search_id").GetString();
+        var privateItem = items[2].GetProperty("item_id").GetString();
+        var privateArticle = await store.Article(library, privateId);
+        var sensitiveXml = Encoding.UTF8.GetBytes(
+            Encoding
+                .UTF8.GetString(SourceChecks.Xml(privateArticle))
+                .Replace(
+                    "</article-meta>",
+                    "<ext-link href='https://user:SYNTHETIC_PASSWORD@example.invalid/article?token=SYNTHETIC_SECRET_MARKER&amp;expires=soon#private'>Source</ext-link></article-meta>"
+                )
+        );
+        await store.QueueManual(
+            library,
+            privateId,
+            privateItem,
+            sensitiveXml,
+            "",
+            "published",
+            originals
+        );
+        await worker.ExecuteClaim(await store.ClaimNext(), CancellationToken.None);
+        foreach (var csvProjection in new[] { false, true })
+        {
+            var exported = await store.ExportComplete(library, scope, false, csvProjection);
+            using var zip = new ZipArchive(new MemoryStream(exported));
+            var texts = zip
+                .Entries.Select(entry =>
+                {
+                    using var text = new StreamReader(entry.Open());
+                    return text.ReadToEnd();
+                })
+                .ToArray();
+            check(
+                !texts.Any(text =>
+                    text.Contains("SYNTHETIC_SECRET_MARKER") || text.Contains("SYNTHETIC_PASSWORD")
+                ) && texts.Any(text => text.Contains("example.invalid/article")),
+                "Actual PG manual metadata export removes inline URL secrets from every archive entry; CSV="
+                    + csvProjection
+            );
+        }
+        check(
+            originals.Read(library, Artifacts.Hash(sensitiveXml)).SequenceEqual(sensitiveXml)
+                && (await store.Article(library, privateId)).FullTextMetadataXml.Contains(
+                    "SYNTHETIC_SECRET_MARKER"
+                ),
+            "Shareable export redaction preserves exact private original and canonical full-text metadata"
+        );
         // 真正於物件移動之後拋出錯誤，確認資料庫回滾後重開能只使用保留物件恢復。
         var manualItem = JsonSerializer.SerializeToElement(await store.ManualItem(library, id));
         var recoveryBatch = manualItem.GetProperty("batch").GetString();
         var recoveryItem = manualItem.GetProperty("item").GetString();
-        var recoveryPdf = SourceChecks.Pdf(article, "Interrupted association");
-        await store.QueueManual(library, id, recoveryItem, recoveryPdf, "", "published", originals);
+        var recoveryPdf = SourceChecks.Pdf(mismatch, "Interrupted user-confirmed association");
+        await store.QueueManual(
+            library,
+            id,
+            recoveryItem,
+            recoveryPdf,
+            "https://example.invalid/confirmed-manuscript",
+            "accepted-manuscript",
+            originals
+        );
+        await store.ConfirmManual(library, id, recoveryItem);
         var claim = await store.ClaimNext();
         var input = await store.ManualInput(claim);
-        var info = OriginalValidation.Validate(recoveryPdf, article);
+        var info = OriginalValidation.Validate(recoveryPdf, article, true);
         var response = new SourceResponse
         {
             Bytes = recoveryPdf,
@@ -313,7 +369,13 @@ public static class HostedSourceChecks
             "Foreign-library reconciliation cannot discover or copy another library prepared original"
         );
         await store.PauseClaim(claim);
-        await store.Control(library, recoveryBatch, "resume");
+        var independentBatch = await store.Batch(
+            library,
+            manualItem.GetProperty("scope").GetString(),
+            false,
+            Naming.DefaultTemplate
+        );
+        var beforeRecoveryFetches = source.Fetches;
         await using (var reopened = new PgStore(connection))
             await new HostedWorker(reopened, originals, source).ExecuteClaim(
                 await reopened.ClaimNext(),
@@ -323,6 +385,22 @@ public static class HostedSourceChecks
             await store.Associated(library, id, info.Hash)
                 && !File.Exists(originals.RetainedStage(library, (string)input["stage_token"])),
             "Reopened worker reconciles interrupted manual publication"
+        );
+        var recoveredEvidence = await store.Provenance(library, id);
+        check(
+            source.Fetches == beforeRecoveryFetches
+                && await store.IsUserConfirmed(library, id, info.Hash)
+                && recoveredEvidence.Any(row =>
+                    (string)row["hash"] == info.Hash
+                    && ((string)row["details"]).Contains("user_upload")
+                    && ((string)row["details"]).Contains("recoveredFromJob")
+                    && ((string)row["details"]).Contains("accepted-manuscript")
+                    && ((string)row["details"]).Contains(
+                        "https://example.invalid/confirmed-manuscript"
+                    )
+                    && !((string)row["details"]).Contains("public_http")
+                ),
+            "Different ordinary batch preserves recovered manual identity confirmation and original attribution"
         );
         var staleDenied = false;
         try
@@ -401,10 +479,13 @@ public static class HostedSourceChecks
             "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?synthetic=slow"
         );
         await started.Task;
-        using var blocked = new HttpClient(
-            new SourceRequestHandler(store, new SlowHandler(new(), new()))
+        var secondStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
         );
-        using var cancellation = new CancellationTokenSource(80);
+        using var blocked = new HttpClient(
+            new SourceRequestHandler(store, new SlowHandler(secondStarted, new()))
+        );
+        using var cancellation = new CancellationTokenSource(550);
         var cancelled = false;
         try
         {
@@ -418,8 +499,8 @@ public static class HostedSourceChecks
             cancelled = true;
         }
         check(
-            cancelled && !finished.Task.IsCompleted,
-            "Real cancellation token interrupts source gate wait while another body is active"
+            cancelled && !finished.Task.IsCompleted && !secondStarted.Task.IsCompleted,
+            "Cancellation after pacing expiry still blocks second body while first body owns shared gate"
         );
         using var result = await firstTask;
         check(
@@ -473,6 +554,7 @@ public static class HostedSourceChecks
 
     private sealed class MixedSource(int count = 7) : ILiteratureSource
     {
+        public int Fetches;
         public string Name => "Synthetic mixed source states";
 
         public Task SearchAsync(SearchSnapshot snapshot, CancellationToken token)
@@ -497,6 +579,7 @@ public static class HostedSourceChecks
 
         public Task<SourceResponse> FetchFullTextAsync(Article article, CancellationToken token)
         {
+            Fetches++;
             var index = int.Parse(article.Pmid) - 88000000;
             if (index != 0)
                 throw new SourceException(

@@ -46,6 +46,17 @@ public static class SourceChecks
 
     public static async Task Run(Action<bool, string> check)
     {
+        var sensitive = System.Text.Json.JsonSerializer.Serialize(
+            new
+            {
+                RawXml = "<ext-link href='https://user:SECRET@example.invalid/paper?token=SECRET#SECRET'>title</ext-link>",
+            }
+        );
+        var shareable = ExportPrivacy.Text(sensitive);
+        check(
+            !shareable.Contains("SECRET") && shareable.Contains("example.invalid/paper"),
+            "Shareable metadata projection redacts credentials and temporary URLs nested in XML/JSON"
+        );
         var longUnicode = new string('a', 29999) + "😀繁體中文" + new string('b', 4000);
         var workbook = ScopedWorkbook.Write(
             new() { ["Records"] = [new[] { "Title" }, new[] { longUnicode }] },

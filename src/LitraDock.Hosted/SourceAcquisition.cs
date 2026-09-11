@@ -204,7 +204,8 @@ public sealed class SourceAcquisition(PubMedSource metadata, HttpClient ncbi, Ht
         }
         var state =
             failures.Any(f => f.State == "rate_wait") ? "rate_wait"
-            : failures.Any(f => f.State == "needs_login" || f.State == "challenge") ? "needs_login"
+            : failures.Any(f => f.State == "needs_login") ? "needs_login"
+            : failures.Any(f => f.State == "challenge") ? "challenge"
             : failures.Any(f => f.State == "failed") ? "failed"
             : "unavailable";
         throw new SourceException(

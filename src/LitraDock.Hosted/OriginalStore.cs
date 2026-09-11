@@ -176,6 +176,7 @@ public sealed partial class PgStore
             byte[] bytes;
             ArtifactInfo info;
             string retained = null;
+            Dictionary<string, object> priorManual = null;
             try
             {
                 if (File.Exists(originals.ObjectPath(claim.Library, hash)))
@@ -194,7 +195,7 @@ public sealed partial class PgStore
                             "Retained staging hash mismatch; evidence preserved."
                         );
                 }
-                var priorManual = (
+                priorManual = (
                     await Rows(
                         db,
                         "SELECT * FROM ld_manual_inputs WHERE library_id=@p0 AND job_id=@p1",
@@ -232,7 +233,31 @@ public sealed partial class PgStore
             };
             await PreparePublication(claim, info, response);
             var stage = originals.Stage(claim, bytes);
-            await Publish(claim, article, info, response, originals, stage);
+            var provenance = System.Text.Json.Nodes.JsonNode.Parse(
+                priorManual?["provenance"] as string
+                    ?? JsonSerializer.Serialize(
+                        new
+                        {
+                            method = "retained_object",
+                            source = response.OriginalUri,
+                            final = response.FinalUri,
+                            hash = info.Hash,
+                            license = info.License,
+                            validation = info.Validation,
+                        }
+                    )
+            );
+            provenance["recoveredFromJob"] = (string)row["job_id"];
+            provenance["recoveredAt"] = DateTime.UtcNow.ToString("o");
+            await Publish(
+                claim,
+                article,
+                info,
+                response,
+                originals,
+                stage,
+                recoveredProvenance: provenance.ToJsonString()
+            );
             await using var tx = await db.BeginTransactionAsync();
             await Fence(db, claim);
             await Exec(
@@ -252,6 +277,18 @@ public sealed partial class PgStore
             await tx.CommitAsync();
             if (retained != null)
                 File.Delete(retained);
+            if (priorManual != null)
+            {
+                var originalInput = originals.RetainedStage(
+                    claim.Library,
+                    (string)priorManual["stage_token"]
+                );
+                if (
+                    File.Exists(originalInput)
+                    && Artifacts.Hash(Artifacts.ReadBoundedFile(originalInput)) == hash
+                )
+                    File.Delete(originalInput);
+            }
             return true;
         }
         return false;
@@ -311,7 +348,8 @@ public sealed partial class PgStore
         SourceResponse response,
         OriginalStore originals,
         string stage,
-        Action<PublicationPoint> fault = null
+        Action<PublicationPoint> fault = null,
+        string recoveredProvenance = null
     )
     {
         await using var db = await Data.OpenConnectionAsync();
@@ -351,7 +389,8 @@ public sealed partial class PgStore
                 claim.Job
             ) as string;
         var details =
-            manualProvenance
+            recoveredProvenance
+            ?? manualProvenance
             ?? JsonSerializer.Serialize(
                 new
                 {
