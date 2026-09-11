@@ -82,7 +82,7 @@ public sealed partial class PgStore : IAsyncDisposable
         await using var db = await Data.OpenConnectionAsync();
         await using var tx = await db.BeginTransactionAsync();
         await Exec(db, "SELECT pg_advisory_xact_lock(724913001)");
-        if (await Scalar(db, "SELECT to_regclass('public.ld_schema')") is DBNull or null)
+        if (await Scalar(db, "SELECT to_regclass('public.ld_schema')::text") is DBNull or null)
         {
             using var stream = typeof(PgStore).Assembly.GetManifestResourceStream(
                 "LitraDock.Hosted.migrations.001.sql"

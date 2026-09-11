@@ -51,7 +51,30 @@ public static class HostedExport
         var data = new XElement(sheet + "sheetData");
         var links = new XElement(sheet + "hyperlinks");
         var relationships = new XElement(pkg + "Relationships");
-        var rows = new List<string[]> { ExcelExport.LeadingHeaders };
+        var rows = new List<string[]>
+        {
+            ExcelExport
+                .LeadingHeaders.Concat(
+                    new[]
+                    {
+                        "Journal",
+                        "Publication date",
+                        "Article number",
+                        "Pages (source)",
+                        "Publication types",
+                        "Abstract",
+                        "DOI URL",
+                        "PMID URL",
+                        "PMCID URL",
+                        "Retrieval state",
+                        "Retrieved at",
+                        "Equal contribution",
+                        "License",
+                        "Availability note",
+                    }
+                )
+                .ToArray(),
+        };
         rows.AddRange(
             records.Select(a =>
                 new[]
@@ -64,6 +87,20 @@ public static class HostedExport
                     a.Pmid,
                     a.Pmcid,
                     a.OriginalUri,
+                    a.Journal,
+                    a.PublicationDate,
+                    a.ArticleNumber,
+                    a.Pages,
+                    a.PublicationTypes,
+                    a.Abstract,
+                    a.DoiUri,
+                    a.OriginalUri,
+                    a.PmcUri,
+                    a.RetrievalState,
+                    a.RetrievedAt,
+                    a.EqualContribution,
+                    a.License,
+                    "Historical retrieval state; original bytes are hash-verified on download. Consult task history for unresolved attempts.",
                 }
             )
         );
@@ -71,7 +108,7 @@ public static class HostedExport
         {
             var row = new XElement(sheet + "row", new XAttribute("r", r + 1));
             data.Add(row);
-            for (var c = 0; c < 8; c++)
+            for (var c = 0; c < rows[r].Length; c++)
             {
                 var value = rows[r][c] ?? "";
                 if (value.Length > 32767)

@@ -1,4 +1,6 @@
 CREATE TABLE ld_schema(version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE ld_source_budget(name text PRIMARY KEY,next_at timestamptz NOT NULL);
+INSERT INTO ld_source_budget VALUES('ncbi',now());
 CREATE TABLE ld_accounts(account_id uuid PRIMARY KEY, login text NOT NULL UNIQUE, password_hash text NOT NULL, enabled boolean NOT NULL DEFAULT true);
 CREATE TABLE ld_sessions(token_hash text PRIMARY KEY, account_id uuid NOT NULL REFERENCES ld_accounts, csrf text NOT NULL, expires_at timestamptz NOT NULL);
 CREATE INDEX ld_session_expiry ON ld_sessions(expires_at);

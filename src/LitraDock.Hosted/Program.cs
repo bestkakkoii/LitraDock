@@ -77,7 +77,17 @@ builder.WebHost.ConfigureKestrel(options =>
 builder.Logging.ClearProviders();
 builder.Services.AddSingleton(store);
 builder.Services.AddSingleton(originals);
-using var transport = new NcbiTransport();
+using var transport = new NcbiTransport(
+    new SourceRequestHandler(
+        store,
+        new HttpClientHandler
+        {
+            AllowAutoRedirect = false,
+            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
+            UseCookies = false,
+        }
+    )
+);
 builder.Services.AddSingleton<ILiteratureSource>(new PubMedSource(transport));
 builder.Services.AddHostedService<HostedWorker>();
 builder.Services.AddRateLimiter(options =>
