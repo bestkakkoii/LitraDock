@@ -203,7 +203,7 @@ public static class SourceChecks
                 && result.Bytes.SequenceEqual(xml),
             "Unavailable PMC falls back to validated Europe PMC XML"
         );
-        var root = "https://pmc.ncbi.nlm.nih.gov/api/oai/start";
+        var root = "https://pmc.ncbi.nlm.nih.gov/api/oai/v1/mh/?verb=Identify";
         foreach (
             var scenario in new[]
             {

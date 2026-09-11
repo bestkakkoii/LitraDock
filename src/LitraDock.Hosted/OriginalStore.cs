@@ -164,7 +164,7 @@ public sealed partial class PgStore
         await using var db = await Data.OpenConnectionAsync();
         var candidates = await Rows(
             db,
-            "SELECT p.* FROM ld_publications p JOIN ld_jobs j USING(library_id,job_id) WHERE p.library_id=@p0 AND j.search_id=@p1 AND p.state='prepared' AND p.job_id<>@p2 AND (@p3 IS NULL OR p.hash=@p3) ORDER BY j.created_at LIMIT 100",
+            "SELECT p.* FROM ld_publications p JOIN ld_jobs j USING(library_id,job_id) WHERE p.library_id=@p0 AND j.search_id=@p1 AND p.state='prepared' AND p.job_id<>@p2 AND (@p3::text IS NULL OR p.hash=@p3) ORDER BY j.created_at LIMIT 100",
             claim.Library,
             claim.SearchId,
             claim.Job,

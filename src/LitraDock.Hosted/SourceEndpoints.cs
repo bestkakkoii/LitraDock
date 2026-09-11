@@ -17,16 +17,19 @@ public static class SourceEndpoints
         return uri.Host switch
         {
             "eutils.ncbi.nlm.nih.gov"
-                when uri.AbsolutePath.StartsWith("/entrez/eutils/", StringComparison.Ordinal) =>
-                "ncbi",
+                when uri.AbsolutePath
+                    is "/entrez/eutils/esearch.fcgi"
+                        or "/entrez/eutils/efetch.fcgi" => "ncbi",
             "pmc.ncbi.nlm.nih.gov"
-                when uri.AbsolutePath.StartsWith("/api/oai/", StringComparison.Ordinal)
-                    || uri.AbsolutePath.StartsWith("/tools/idconv/", StringComparison.Ordinal) =>
+                when uri.AbsolutePath is "/api/oai/v1/mh/" or "/tools/idconv/api/v1/articles/" =>
                 "ncbi",
             "www.ebi.ac.uk"
-                when uri.AbsolutePath.StartsWith(
-                    "/europepmc/webservices/rest/",
-                    StringComparison.Ordinal
+                when (
+                    uri.AbsolutePath == "/europepmc/webservices/rest/search"
+                    || System.Text.RegularExpressions.Regex.IsMatch(
+                        uri.AbsolutePath,
+                        "^/europepmc/webservices/rest/PMC[0-9]+/fullTextXML$"
+                    )
                 ) => "europepmc",
             _ => throw new SourceException(
                 "unsupported",

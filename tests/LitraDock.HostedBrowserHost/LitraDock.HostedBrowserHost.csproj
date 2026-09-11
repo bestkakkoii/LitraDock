@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>14</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <DefineConstants>$(DefineConstants);HOSTED_BROWSER_FIXTURE</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Remove="Microsoft.NETFramework.ReferenceAssemblies" />
+    <ProjectReference Include="../../src/LitraDock.Hosted/LitraDock.Hosted.csproj" />
+    <Compile Include="../../src/LitraDock.Hosted/Program.cs" Link="Program.cs" />
+  </ItemGroup>
+</Project>

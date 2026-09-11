@@ -110,7 +110,7 @@ public sealed class SourceRequestHandler(
                 until,
                 provider
             );
-            HttpResponseMessage response;
+            HttpResponseMessage response = null;
             try
             {
                 response = await base.SendAsync(request, cancellationToken);
@@ -155,6 +155,7 @@ public sealed class SourceRequestHandler(
             }
             catch
             {
+                response?.Dispose();
                 await PgStore.Exec(
                     db,
                     "UPDATE ld_source_budget SET next_at=GREATEST(next_at,@p0) WHERE name=@p1",

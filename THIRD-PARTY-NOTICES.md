@@ -4,6 +4,7 @@ Project source is GNU AGPL-3.0-only (LICENSE). Dependency licenses apply to thei
 
 | Component | Version | Evidence / terms |
 | --- | --- | --- |
+| Playwright | 1.63.0 | Apache-2.0, browser automation test dependency; downloaded Chromium and OS libraries have separate notices; https://github.com/microsoft/playwright/blob/v1.63.0/LICENSE; no browser binary in source snapshot |
 | PdfPig | 0.1.14 | Apache-2.0; installed NuGet nuspec points to commit 88172af1c4d4f440949f59c94966c3880e3f6032; https://github.com/UglyToad/PdfPig/blob/88172af1c4d4f440949f59c94966c3880e3f6032/LICENSE; PDF parser dependency, original-paper rights remain separate |
 | Npgsql | 10.0.3 | PostgreSQL License, installed NuGet nuspec and upstream LICENSE; https://github.com/npgsql/npgsql/blob/v10.0.3/LICENSE |
 | Microsoft.Data.Sqlite / Core | 10.0.12 | MIT, installed NuGet nuspec; https://github.com/dotnet/efcore/blob/v10.0.12/LICENSE.txt |

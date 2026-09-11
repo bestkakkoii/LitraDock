@@ -326,7 +326,7 @@ public static class HostedSourceChecks
             new SourceRequestHandler(store, new SlowHandler(started, finished))
         );
         var firstTask = first.GetAsync(
-            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/synthetic-slow"
+            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?synthetic=slow"
         );
         await started.Task;
         using var blocked = new HttpClient(
@@ -337,7 +337,7 @@ public static class HostedSourceChecks
         try
         {
             await blocked.GetAsync(
-                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/synthetic-cancel",
+                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?synthetic=cancel",
                 cancellation.Token
             );
         }

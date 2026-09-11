@@ -28,7 +28,7 @@ if (args.FirstOrDefault() == "--source-probe")
     using var response = await probeClient.SendAsync(
         new HttpRequestMessage(
             HttpMethod.Get,
-            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/synthetic-process-probe"
+            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?synthetic=process-probe"
         ),
         CancellationToken.None
     );
@@ -84,14 +84,14 @@ if (args.FirstOrDefault() == "--postgres")
             firstClient.SendAsync(
                 new HttpRequestMessage(
                     HttpMethod.Get,
-                    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/synthetic-one"
+                    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?synthetic=one"
                 ),
                 CancellationToken.None
             ),
             secondClient.SendAsync(
                 new HttpRequestMessage(
                     HttpMethod.Get,
-                    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/synthetic-two"
+                    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?synthetic=two"
                 ),
                 CancellationToken.None
             )
@@ -110,7 +110,7 @@ if (args.FirstOrDefault() == "--postgres")
         await limited.SendAsync(
             new HttpRequestMessage(
                 HttpMethod.Get,
-                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/synthetic-limited"
+                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?synthetic=limited"
             ),
             CancellationToken.None
         );
@@ -125,7 +125,7 @@ if (args.FirstOrDefault() == "--postgres")
             await blocked.SendAsync(
                 new HttpRequestMessage(
                     HttpMethod.Get,
-                    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/synthetic-blocked"
+                    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?synthetic=blocked"
                 ),
                 CancellationToken.None
             );
@@ -194,7 +194,7 @@ if (args.FirstOrDefault() == "--postgres")
             await failing.SendAsync(
                 new HttpRequestMessage(
                     HttpMethod.Get,
-                    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/synthetic-failure"
+                    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?synthetic=failure"
                 ),
                 CancellationToken.None
             );
@@ -284,6 +284,10 @@ if (args.FirstOrDefault() == "--postgres")
         await worker.ExecuteClaim(c, CancellationToken.None);
     }
     var status = JsonSerializer.SerializeToElement(await store.BatchStatus(library, batch, 0));
+    Console.WriteLine(
+        "SYNTHETIC_BATCH_DIAGNOSTIC "
+            + JsonSerializer.Serialize(await store.BatchStatus(library, batch, 0))
+    );
     Check(
         status.GetProperty("items").GetArrayLength() == 2
             && status.GetProperty("state").GetString() == "completed",

@@ -127,9 +127,13 @@ using var europe = new HttpClient(
 {
     Timeout = TimeSpan.FromSeconds(90),
 };
+#if HOSTED_BROWSER_FIXTURE
+builder.Services.AddSingleton<ILiteratureSource>(new Literature.Verification.BrowserFixture());
+#else
 builder.Services.AddSingleton<ILiteratureSource>(
     new SourceAcquisition(new PubMedSource(transport), ncbi, europe)
 );
+#endif
 builder.Services.AddHostedService<HostedWorker>();
 builder.Services.AddRateLimiter(options =>
 {
