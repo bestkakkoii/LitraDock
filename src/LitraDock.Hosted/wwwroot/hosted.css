@@ -1,1 +1,91 @@
-:root{font-family:system-ui,sans-serif;background:#eff4f6;color:#153444}body{margin:0}header{background:#173c4d;color:white;padding:16px 24px;position:sticky;top:0;z-index:2}h1{margin:0}main{padding:20px}button,input,select{font:inherit;padding:8px;margin:4px;max-width:90vw}button{cursor:pointer;background:#dceef3;border:1px solid #729cac;border-radius:4px}section,form{background:white;padding:16px;border:1px solid #d1dde2}label{display:inline-block}.records{overflow:auto;max-height:40vh}table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:8px;text-align:left;border-bottom:1px solid #dce5e8;vertical-align:top}th{position:sticky;top:0;background:#edf5f7}td:nth-child(2){max-width:140px;overflow-wrap:anywhere}td:nth-child(3){min-width:200px}a{color:#08698c}#error{color:#a12620}pre{white-space:pre-wrap;max-height:260px;overflow:auto}dialog{max-width:80vw;max-height:80vh}dialog p{white-space:pre-wrap}
+:root {
+  font-family: system-ui, sans-serif;
+  background: #eff4f6;
+  color: #153444;
+}
+body {
+  margin: 0;
+}
+header {
+  background: #173c4d;
+  color: white;
+  padding: 16px 24px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+h1 {
+  margin: 0;
+}
+main {
+  padding: 20px;
+}
+button,
+input,
+select {
+  font: inherit;
+  padding: 8px;
+  margin: 4px;
+  max-width: 90vw;
+}
+button {
+  cursor: pointer;
+  background: #dceef3;
+  border: 1px solid #729cac;
+  border-radius: 4px;
+}
+section,
+form {
+  background: white;
+  padding: 16px;
+  border: 1px solid #d1dde2;
+}
+label {
+  display: inline-block;
+}
+.records {
+  overflow: auto;
+  max-height: 40vh;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+th,
+td {
+  padding: 8px;
+  text-align: left;
+  border-bottom: 1px solid #dce5e8;
+  vertical-align: top;
+}
+th {
+  position: sticky;
+  top: 0;
+  background: #edf5f7;
+}
+td:nth-child(2) {
+  max-width: 140px;
+  overflow-wrap: anywhere;
+}
+td:nth-child(3) {
+  min-width: 200px;
+}
+a {
+  color: #08698c;
+}
+#error {
+  color: #a12620;
+}
+pre {
+  white-space: pre-wrap;
+  max-height: 260px;
+  overflow: auto;
+}
+dialog {
+  max-width: 80vw;
+  max-height: 80vh;
+}
+dialog p {
+  white-space: pre-wrap;
+}

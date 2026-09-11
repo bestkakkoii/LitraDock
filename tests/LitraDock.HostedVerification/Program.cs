@@ -169,6 +169,41 @@ if (args.FirstOrDefault() == "--postgres")
         processTimes[1] - processTimes[0] >= 350,
         "Two actual processes obey shared PostgreSQL source pacing with synthetic handlers"
     );
+    foreach (var cancelled in new[] { false, true })
+    {
+        using var failing = new HttpMessageInvoker(
+            new SourceRequestHandler(store, new FailureFixture(cancelled))
+        );
+        try
+        {
+            await failing.SendAsync(
+                new HttpRequestMessage(HttpMethod.Get, "https://example.invalid/failure"),
+                CancellationToken.None
+            );
+            throw new Exception("Failure fixture returned success");
+        }
+        catch (Exception error) when (error is IOException or OperationCanceledException) { }
+        await using var audit = new NpgsqlConnection(connection);
+        await audit.OpenAsync();
+        await using var query = new NpgsqlCommand(
+            "SELECT next_at>now()+interval '1 second' FROM ld_source_budget WHERE name='ncbi'",
+            audit
+        );
+        var cooldown = (bool)await query.ExecuteScalarAsync();
+        query.CommandText = "SELECT pg_try_advisory_lock(724913003)";
+        var released = (bool)await query.ExecuteScalarAsync();
+        if (released)
+        {
+            query.CommandText = "SELECT pg_advisory_unlock(724913003)";
+            await query.ExecuteNonQueryAsync();
+        }
+        Check(
+            cooldown && released,
+            cancelled
+                ? "Post-dispatch cancellation retains shared cooldown and releases source gate"
+                : "Post-dispatch I/O failure retains committed shared cooldown"
+        );
+    }
     var password = PgStore.Token();
     var login = "test-" + Guid.NewGuid().ToString("N");
     var a = await store.CreateAccount(login, password);
@@ -963,5 +998,18 @@ sealed class UnavailableFixture : ILiteratureSource
     {
         Fetches++;
         throw new SourceException("unavailable", "Synthetic unavailable source");
+    }
+}
+
+sealed class FailureFixture(bool cancelled) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken
+    )
+    {
+        if (cancelled)
+            throw new OperationCanceledException("Synthetic post-dispatch cancellation");
+        throw new IOException("Synthetic post-dispatch I/O failure");
     }
 }
