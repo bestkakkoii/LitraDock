@@ -12,7 +12,8 @@ public sealed partial class PgStore
         Guid owner,
         string name,
         string copiedRoot,
-        OriginalStore originals
+        OriginalStore originals,
+        Action<string> snapshotCheckpoint = null
     )
     {
         var copyRoot = Path.GetFullPath(copiedRoot);
@@ -94,6 +95,7 @@ public sealed partial class PgStore
                     "Import history limit exceeded; no truncation permitted."
                 );
             tables[table] = rows;
+            snapshotCheckpoint?.Invoke(table);
         }
         if (tables["articles"].Count > 10000)
             throw new ArgumentException("Import limit is 10000 records; source remains unchanged.");

@@ -147,12 +147,28 @@ async function progress() {
   $("itemNext").disabled =
     itemOffset + 100 >= r.counts.reduce((n, c) => n + c.count, 0);
   $("itemPrevious").disabled = itemOffset === 0;
-  $("progress").textContent = r.items
-    .map(
-      (i) =>
-        `${i.rank}. ${i.search_id} ${i.state} (attempts ${i.attempts})\n${i.reason}\n${i.planned_name}`,
-    )
-    .join("\n\n");
+  $("progress").replaceChildren();
+  for (const i of r.items) {
+    const row = document.createElement("section");
+    row.className = "acquisition-item";
+    const label = document.createElement("p");
+    label.textContent = `${i.rank}. ${i.search_id}: ${i.state} · attempts ${i.attempts} · ${i.reason} · ${i.planned_name}`;
+    row.append(label);
+    const open = document.createElement("button");
+    open.textContent = "Record and source links";
+    open.onclick = safe(() => detail(i.search_id));
+    row.append(open);
+    if (!["queued", "running"].includes(r.state)) {
+      const upload = document.createElement("button");
+      upload.textContent =
+        i.state === "needs_review"
+          ? "Review retained original"
+          : "Continue with original";
+      upload.onclick = safe(() => openManual(i.search_id, i.item_id, i.state));
+      row.append(upload);
+    }
+    $("progress").append(row);
+  }
 }
 async function download(path, body, name) {
   const blob = await (await api(path, body)).blob(),
@@ -179,11 +195,26 @@ async function detail(id) {
       download(
         base() + `records/${id}/files/${f.hash}`,
         undefined,
-        id + ".xml",
+        id + (f.kind === "Original PDF" ? ".pdf" : ".xml"),
       ),
     );
     $("article").append(b);
   }
+  const manualButton = document.createElement("button");
+  manualButton.textContent = "Upload an original to this record";
+  manualButton.onclick = safe(async () => {
+    const saved = await json(base() + `records/${id}/manual-item`, {});
+    scope = saved.scope;
+    batch = saved.batch;
+    $("detail").close();
+    await catalog();
+    await progress();
+    openManual(id, saved.item, "paused");
+  });
+  $("article").append(manualButton);
+  const provenance = document.createElement("pre");
+  provenance.textContent = JSON.stringify(r.provenance, null, 2);
+  $("article").append(provenance);
   $("detail").showModal();
 }
 $("close").onclick = () => $("detail").close();
@@ -264,7 +295,11 @@ $("selectAll").onclick = safe(async () => {
   await page();
 });
 $("export").onclick = safe(() =>
-  download(base() + `scopes/${scope}/export`, {}, "LitraDock.xlsx"),
+  download(
+    base() + `scopes/${scope}/export`,
+    { selectedOnly: $("exportSelected").checked },
+    "LitraDock.xlsx",
+  ),
 );
 $("acquire").onclick = safe(async () => {
   batch = (
@@ -328,3 +363,68 @@ setInterval(
   }),
   2000,
 );
+
+$("csv").onclick = safe(() =>
+  download(
+    base() + `scopes/${scope}/csv`,
+    { selectedOnly: $("exportSelected").checked },
+    "literature-csv.zip",
+  ),
+);
+let manualRecord = "",
+  manualItem = "",
+  manualLibrary = "";
+function openManual(record, item, state) {
+  manualRecord = record;
+  manualItem = item;
+  manualLibrary = library;
+  $("manualIdentity").textContent = record + " · " + item;
+  $("manualFile").value = "";
+  $("manualStatus").textContent = "";
+  $("manualConfirmed").checked = false;
+  $("identityReview").hidden = state !== "needs_review";
+  $("manualDialog").showModal();
+}
+$("manualClose").onclick = () => $("manualDialog").close();
+$("manualUpload").onclick = safe(async () => {
+  const file = $("manualFile").files[0];
+  if (!file || file.size > 32 * 1024 * 1024)
+    throw new Error("Choose an original up to 32 MiB.");
+  $("manualStatus").textContent = "Uploading and validating; not complete yet.";
+  const r = await fetch(
+    `/api/libraries/${manualLibrary}/records/${manualRecord}/manual/${manualItem}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-CSRF": csrf,
+        "X-Original-Source": $("manualSource").value,
+        "X-Original-Version": $("manualVersion").value,
+      },
+      body: file,
+    },
+  );
+  if (!r.ok) throw new Error(await r.text());
+  $("manualStatus").textContent = (await r.json()).message;
+  await progress();
+  const status = await json(
+    base() + "batches/" + batch + "?offset=" + itemOffset,
+  );
+  $("identityReview").hidden =
+    status.items.find((i) => i.item_id === manualItem)?.state !==
+    "needs_review";
+});
+$("manualConfirm").onclick = safe(async () => {
+  if (!$("manualConfirmed").checked)
+    throw new Error(
+      "Review and explicitly confirm the record relationship first.",
+    );
+  await json(
+    `libraries/${manualLibrary}/records/${manualRecord}/manual/${manualItem}/confirm`,
+    {},
+  );
+  $("identityReview").hidden = true;
+  $("manualStatus").textContent =
+    "Your identity confirmation is recorded; durable publication is queued.";
+  await progress();
+});

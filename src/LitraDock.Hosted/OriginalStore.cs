@@ -58,7 +58,7 @@ public sealed class OriginalStore(string root)
         }
     }
 
-    public string ObjectPath(Guid library, string hash)
+    public string ObjectPath(Guid library, string hash, string kind = null)
     {
         if (hash.Length != 64 || hash.Any(c => !Uri.IsHexDigit(c)))
             throw new ArgumentException("Invalid content hash.");
@@ -66,8 +66,10 @@ public sealed class OriginalStore(string root)
             Root,
             library.ToString("N"),
             "objects",
-            hash.ToLowerInvariant() + ".xml"
+            hash.ToLowerInvariant() + (kind == OriginalValidation.PdfKind ? ".pdf" : ".xml")
         );
+        if (kind == null && !File.Exists(path) && File.Exists(Path.ChangeExtension(path, ".pdf")))
+            path = Path.ChangeExtension(path, ".pdf");
         VerifyNoLinks(Path.GetDirectoryName(path));
         if (File.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
             throw new IOException("Linked original files are not supported.");
@@ -108,7 +110,11 @@ public sealed class OriginalStore(string root)
 
     public void Publish(Guid library, string hash, string stage)
     {
-        var target = ObjectPath(library, hash);
+        var target = ObjectPath(
+            library,
+            hash,
+            OriginalValidation.Kind(Artifacts.ReadBoundedFile(stage))
+        );
         Directory.CreateDirectory(Path.GetDirectoryName(target));
         if (File.Exists(target))
         {
@@ -151,16 +157,18 @@ public sealed partial class PgStore
     public async Task<bool> RecoverPublication(
         Claim claim,
         Article article,
-        OriginalStore originals
+        OriginalStore originals,
+        string requiredHash = null
     )
     {
         await using var db = await Data.OpenConnectionAsync();
         var candidates = await Rows(
             db,
-            "SELECT p.* FROM ld_publications p JOIN ld_jobs j USING(library_id,job_id) WHERE p.library_id=@p0 AND j.search_id=@p1 AND p.state='prepared' AND p.job_id<>@p2 ORDER BY j.created_at LIMIT 100",
+            "SELECT p.* FROM ld_publications p JOIN ld_jobs j USING(library_id,job_id) WHERE p.library_id=@p0 AND j.search_id=@p1 AND p.state='prepared' AND p.job_id<>@p2 AND (@p3 IS NULL OR p.hash=@p3) ORDER BY j.created_at LIMIT 100",
             claim.Library,
             claim.SearchId,
-            claim.Job
+            claim.Job,
+            requiredHash
         );
         foreach (var row in candidates)
         {
@@ -186,7 +194,15 @@ public sealed partial class PgStore
                             "Retained staging hash mismatch; evidence preserved."
                         );
                 }
-                info = Artifacts.ValidateXml(bytes, article);
+                var priorManual = (
+                    await Rows(
+                        db,
+                        "SELECT * FROM ld_manual_inputs WHERE library_id=@p0 AND job_id=@p1",
+                        claim.Library,
+                        row["job_id"]
+                    )
+                ).SingleOrDefault();
+                info = OriginalValidation.Validate(bytes, article, IdentityConfirmed(priorManual));
             }
             catch (Exception error)
                 when (error
@@ -289,7 +305,8 @@ public sealed partial class PgStore
         ArtifactInfo info,
         SourceResponse response,
         OriginalStore originals,
-        string stage
+        string stage,
+        Action<PublicationPoint> fault = null
     )
     {
         await using var db = await Data.OpenConnectionAsync();
@@ -297,13 +314,17 @@ public sealed partial class PgStore
         await Fence(db, claim);
         originals.Publish(claim.Library, info.Hash, stage);
         originals.Read(claim.Library, info.Hash);
+        fault?.Invoke(PublicationPoint.AfterPublish);
         await Exec(
             db,
-            "INSERT INTO ld_files VALUES(@p0,@p1,@p2,'PMC source XML',@p3) ON CONFLICT(library_id,hash) DO NOTHING",
+            "INSERT INTO ld_files VALUES(@p0,@p1,@p2,@p4,@p3) ON CONFLICT(library_id,hash) DO NOTHING",
             claim.Library,
             info.Hash,
             info.Bytes,
-            info.Validation
+            info.Validation,
+            Path.GetExtension(info.RelativePath) == ".pdf"
+                ? OriginalValidation.PdfKind
+                : OriginalValidation.XmlKind
         );
         await Exec(
             db,
@@ -316,6 +337,42 @@ public sealed partial class PgStore
             response.FinalUri,
             info.License
         );
+        fault?.Invoke(PublicationPoint.DuringAttach);
+        var manualProvenance =
+            await Scalar(
+                db,
+                "SELECT provenance FROM ld_manual_inputs WHERE library_id=@p0 AND job_id=@p1",
+                claim.Library,
+                claim.Job
+            ) as string;
+        var details =
+            manualProvenance
+            ?? JsonSerializer.Serialize(
+                new
+                {
+                    method = "public_http",
+                    provider = response.OriginalUri.Contains("ebi.ac.uk", StringComparison.Ordinal)
+                        ? "europepmc"
+                        : "pmc",
+                    source = response.OriginalUri,
+                    final = response.FinalUri,
+                    retrievedAt = DateTime.UtcNow.ToString("o"),
+                    license = info.License,
+                    validation = info.Validation,
+                    hash = info.Hash,
+                    locations = SourceAcquisition.Locations(article),
+                    version = "Source-supplied version; see preserved metadata",
+                }
+            );
+        await Exec(
+            db,
+            "INSERT INTO ld_object_provenance VALUES(@p0,@p1,@p2,@p3,@p4) ON CONFLICT DO NOTHING",
+            claim.Library,
+            claim.Job,
+            article.SearchId,
+            info.Hash,
+            details
+        );
         var current = JsonSerializer.Deserialize<Article>(
             (string)
                 await Scalar(
@@ -325,10 +382,14 @@ public sealed partial class PgStore
                     article.SearchId
                 )
         );
-        current.FullTextMetadataXml = info.MetadataXml;
-        current.ArticleNumber = info.ArticleNumber;
-        current.EqualContribution = info.EqualContribution;
-        current.License = info.License;
+        if (!string.IsNullOrEmpty(info.MetadataXml))
+            current.FullTextMetadataXml = info.MetadataXml;
+        if (!string.IsNullOrEmpty(info.ArticleNumber))
+            current.ArticleNumber = info.ArticleNumber;
+        if (!string.IsNullOrEmpty(info.EqualContribution))
+            current.EqualContribution = info.EqualContribution;
+        if (!string.IsNullOrEmpty(info.MetadataXml))
+            current.License = info.License;
         current.RetrievalState = "completed";
         await Exec(
             db,

@@ -263,7 +263,7 @@ public sealed partial class PgStore
         {
             var items = await Rows(
                 db,
-                "SELECT item_id,search_id FROM ld_items WHERE library_id=@p0 AND batch_id=@p1 AND state IN ('paused','cancelled','failed','unavailable','needs_login')",
+                "SELECT item_id,search_id,last_job_id FROM ld_items WHERE library_id=@p0 AND batch_id=@p1 AND state IN ('paused','cancelled','failed','unavailable','needs_login','rate_wait','challenge','unsupported')",
                 library,
                 batch
             );
@@ -281,6 +281,13 @@ public sealed partial class PgStore
                     job,
                     item["item_id"],
                     item["search_id"]
+                );
+                await Exec(
+                    db,
+                    "INSERT INTO ld_manual_inputs SELECT library_id,@p2,stage_token,hash,kind,provenance FROM ld_manual_inputs WHERE library_id=@p0 AND job_id=@p1",
+                    library,
+                    item["last_job_id"],
+                    job
                 );
                 await Exec(
                     db,

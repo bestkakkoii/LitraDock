@@ -80,7 +80,15 @@ public sealed class HostedWorker(PgStore store, OriginalStore originals, ILitera
             else
             {
                 var article = await store.Article(claim.Library, claim.SearchId);
-                if (await store.RecoverPublication(claim, article, originals))
+                var manual = await store.ManualInput(claim);
+                if (
+                    await store.RecoverPublication(
+                        claim,
+                        article,
+                        originals,
+                        manual?["hash"] as string
+                    )
+                )
                 {
                     await store.Finish(
                         claim,
@@ -89,13 +97,22 @@ public sealed class HostedWorker(PgStore store, OriginalStore originals, ILitera
                     );
                     return;
                 }
-                foreach (var file in await store.Files(claim.Library, claim.SearchId))
+                foreach (
+                    var file in manual == null
+                        ? await store.Files(claim.Library, claim.SearchId)
+                        : new List<Dictionary<string, object>>()
+                )
                 {
                     try
                     {
-                        Artifacts.ValidateXml(
+                        OriginalValidation.Validate(
                             originals.Read(claim.Library, (string)file["hash"]),
-                            article
+                            article,
+                            await store.IsUserConfirmed(
+                                claim.Library,
+                                claim.SearchId,
+                                (string)file["hash"]
+                            )
                         );
                         await store.Finish(
                             claim,
@@ -109,15 +126,35 @@ public sealed class HostedWorker(PgStore store, OriginalStore originals, ILitera
                     { }
                 }
                 await store.Progress(claim, "downloading", "Retrieving supported source XML.");
-                var response = source is IProgressSource progress
-                    ? await progress.FetchFullTextAsync(
-                        article,
-                        attempt.Token,
-                        (state, reason) =>
-                            store.Progress(claim, state, reason).GetAwaiter().GetResult()
-                    )
+                var response =
+                    manual != null
+                        ? new SourceResponse
+                        {
+                            Bytes = Artifacts.ReadBoundedFile(
+                                originals.RetainedStage(
+                                    claim.Library,
+                                    (string)manual["stage_token"]
+                                )
+                            ),
+                            OriginalUri = "",
+                            FinalUri = "",
+                            ContentType = "application/octet-stream",
+                        }
+                    : source is IProgressSource progress
+                        ? await progress.FetchFullTextAsync(
+                            article,
+                            attempt.Token,
+                            (state, reason) =>
+                                store.Progress(claim, state, reason).GetAwaiter().GetResult()
+                        )
                     : await source.FetchFullTextAsync(article, attempt.Token);
-                var info = Artifacts.ValidateXml(response.Bytes, article);
+                var info = OriginalValidation.Validate(
+                    response.Bytes,
+                    article,
+                    PgStore.IdentityConfirmed(manual)
+                );
+                if (manual != null && info.Hash != (string)manual["hash"])
+                    throw new IOException("Manual input hash changed; retained for review.");
                 await store.PreparePublication(claim, info, response);
                 var stage = originals.Stage(claim, response.Bytes);
                 await store.Progress(
@@ -127,6 +164,10 @@ public sealed class HostedWorker(PgStore store, OriginalStore originals, ILitera
                 );
                 await store.Publish(claim, article, info, response, originals, stage);
                 await store.Finish(claim, "completed", info.Validation);
+                if (manual != null)
+                    File.Delete(
+                        originals.RetainedStage(claim.Library, (string)manual["stage_token"])
+                    );
             }
         }
         catch (OperationCanceledException)

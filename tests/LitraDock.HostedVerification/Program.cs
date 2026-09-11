@@ -26,7 +26,10 @@ if (args.FirstOrDefault() == "--source-probe")
         new SourceRequestHandler(probeStore, new HeaderFixture(probeTimes))
     );
     using var response = await probeClient.SendAsync(
-        new HttpRequestMessage(HttpMethod.Get, "https://example.invalid/process-probe"),
+        new HttpRequestMessage(
+            HttpMethod.Get,
+            "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/synthetic-process-probe"
+        ),
         CancellationToken.None
     );
     await File.WriteAllTextAsync(
@@ -79,11 +82,17 @@ if (args.FirstOrDefault() == "--postgres")
     {
         await Task.WhenAll(
             firstClient.SendAsync(
-                new HttpRequestMessage(HttpMethod.Get, "https://example.invalid/one"),
+                new HttpRequestMessage(
+                    HttpMethod.Get,
+                    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/synthetic-one"
+                ),
                 CancellationToken.None
             ),
             secondClient.SendAsync(
-                new HttpRequestMessage(HttpMethod.Get, "https://example.invalid/two"),
+                new HttpRequestMessage(
+                    HttpMethod.Get,
+                    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/synthetic-two"
+                ),
                 CancellationToken.None
             )
         );
@@ -99,7 +108,10 @@ if (args.FirstOrDefault() == "--postgres")
         )
     )
         await limited.SendAsync(
-            new HttpRequestMessage(HttpMethod.Get, "https://example.invalid/limited"),
+            new HttpRequestMessage(
+                HttpMethod.Get,
+                "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/synthetic-limited"
+            ),
             CancellationToken.None
         );
     using (
@@ -111,7 +123,10 @@ if (args.FirstOrDefault() == "--postgres")
         try
         {
             await blocked.SendAsync(
-                new HttpRequestMessage(HttpMethod.Get, "https://example.invalid/blocked"),
+                new HttpRequestMessage(
+                    HttpMethod.Get,
+                    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/synthetic-blocked"
+                ),
                 CancellationToken.None
             );
             throw new Exception("Shared cooldown bypassed");
@@ -177,7 +192,10 @@ if (args.FirstOrDefault() == "--postgres")
         try
         {
             await failing.SendAsync(
-                new HttpRequestMessage(HttpMethod.Get, "https://example.invalid/failure"),
+                new HttpRequestMessage(
+                    HttpMethod.Get,
+                    "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/synthetic-failure"
+                ),
                 CancellationToken.None
             );
             throw new Exception("Failure fixture returned success");
@@ -532,6 +550,11 @@ if (args.FirstOrDefault() == "--postgres")
         output,
         Check
     );
+    await HostedSourceChecks.Run(store, connection, output, Check);
+}
+else if (args.FirstOrDefault() == "--sources")
+{
+    await SourceChecks.Run(Check);
 }
 else if (args.FirstOrDefault() == "--static")
 {

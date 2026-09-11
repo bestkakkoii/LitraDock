@@ -41,6 +41,11 @@
           "Microsoft.Extensions.Logging.Abstractions": "10.0.0"
         }
       },
+      "PdfPig": {
+        "type": "Transitive",
+        "resolved": "0.1.14",
+        "contentHash": "V2Anq0Yvyn3bGGG8WCQxqEAshG0KHIehB0QOotCz14vTkEk1PR3ErPOSmbnEsyOewhdF3G5XpQHywK2L50Xu+A=="
+      },
       "SQLitePCLRaw.bundle_e_sqlite3": {
         "type": "Transitive",
         "resolved": "2.1.12",
@@ -72,7 +77,8 @@
         "type": "Project",
         "dependencies": {
           "LitraDock.Modern": "[0.2.0-local, )",
-          "Npgsql": "[10.0.3, )"
+          "Npgsql": "[10.0.3, )",
+          "PdfPig": "[0.1.14, )"
         }
       },
       "litradock.modern": {

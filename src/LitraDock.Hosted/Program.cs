@@ -2,8 +2,42 @@ using System.Net;
 using System.Threading.RateLimiting;
 using Literature.Service;
 using LitraDock.Core;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.HttpOverrides;
 
+if (args.FirstOrDefault() == "--inspect-pdf")
+{
+    try
+    {
+        var input = System.Text.Json.JsonSerializer.Deserialize<PdfInspection.Input>(
+            Console.In.ReadToEnd()
+        );
+        if (input.Bytes.Length > NcbiTransport.MaximumBytes)
+            throw new SourceException("failed", "PDF exceeds size limit.");
+        Console.Write(
+            System.Text.Json.JsonSerializer.Serialize(
+                new PdfInspection.Output(
+                    OriginalValidation.ValidatePdf(input.Bytes, input.Article, input.Confirmed),
+                    null,
+                    null
+                )
+            )
+        );
+    }
+    catch (Exception error)
+    {
+        Console.Write(
+            System.Text.Json.JsonSerializer.Serialize(
+                new PdfInspection.Output(
+                    null,
+                    (error as SourceException)?.State ?? "failed",
+                    Artifacts.SafeMessage(error)
+                )
+            )
+        );
+    }
+    return;
+}
 var builder = WebApplication.CreateBuilder(args);
 var connection = builder.Configuration["LITRADOCK_POSTGRES"];
 var storage = builder.Configuration["LITRADOCK_OBJECTS"];
@@ -81,17 +115,21 @@ builder.Logging.ClearProviders();
 builder.Services.AddSingleton(store);
 builder.Services.AddSingleton(originals);
 using var transport = new NcbiTransport(
-    new SourceRequestHandler(
-        store,
-        new HttpClientHandler
-        {
-            AllowAutoRedirect = false,
-            AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
-            UseCookies = false,
-        }
-    )
+    new SourceRequestHandler(store, SourceEndpoints.CreateHandler())
 );
-builder.Services.AddSingleton<ILiteratureSource>(new PubMedSource(transport));
+using var ncbi = new HttpClient(new SourceRequestHandler(store, SourceEndpoints.CreateHandler()))
+{
+    Timeout = TimeSpan.FromSeconds(90),
+};
+using var europe = new HttpClient(
+    new SourceRequestHandler(store, SourceEndpoints.CreateHandler(), "europepmc")
+)
+{
+    Timeout = TimeSpan.FromSeconds(90),
+};
+builder.Services.AddSingleton<ILiteratureSource>(
+    new SourceAcquisition(new PubMedSource(transport), ncbi, europe)
+);
 builder.Services.AddHostedService<HostedWorker>();
 builder.Services.AddRateLimiter(options =>
 {
@@ -147,7 +185,13 @@ app.Use(
                 write
                 && (
                     context.Request.Headers.Origin != origin.GetLeftPart(UriPartial.Authority)
-                    || !context.Request.HasJsonContentType()
+                    || (
+                        !context.Request.HasJsonContentType()
+                        && !(
+                            context.GetEndpoint()?.Metadata.GetMetadata<ManualUpload>() != null
+                            && context.Request.ContentType == "application/octet-stream"
+                        )
+                    )
                 )
             )
             {
@@ -329,7 +373,13 @@ app.MapPost(
 app.MapGet(
     "/api/libraries/{library:guid}/records/{id}",
     async (Guid library, string id) =>
-        new { article = await store.Article(library, id), files = await store.Files(library, id) }
+        new
+        {
+            article = await store.Article(library, id),
+            files = await store.Files(library, id),
+            provenance = await store.Provenance(library, id),
+            locations = SourceAcquisition.Locations(await store.Article(library, id)),
+        }
 );
 app.MapGet(
     "/api/libraries/{library:guid}/records/{id}/files/{hash}",
@@ -337,18 +387,23 @@ app.MapGet(
     {
         if (!await store.Associated(library, id, hash))
             return Results.NotFound();
+        var bytes = originals.Read(library, hash);
+        var kind = OriginalValidation.Kind(bytes);
         return Results.File(
-            originals.Read(library, hash),
-            "application/xml",
-            Naming.Preview(await store.Article(library, id))
+            bytes,
+            kind == OriginalValidation.PdfKind ? "application/pdf" : "application/xml",
+            Path.ChangeExtension(
+                Naming.Preview(await store.Article(library, id)),
+                OriginalValidation.Extension(kind)
+            )
         );
     }
 );
 app.MapPost(
     "/api/libraries/{library:guid}/scopes/{scope}/export",
-    async (Guid library, string scope) =>
+    async (Guid library, string scope, ExportOptions input) =>
         Results.File(
-            await store.Export(library, scope),
+            await store.ExportComplete(library, scope, input.SelectedOnly),
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "LitraDock.xlsx"
         )
@@ -357,6 +412,74 @@ app.MapGet(
     "/api/libraries/{library:guid}/history",
     (Guid library, int? offset) => store.History(library, offset ?? 0)
 );
+app.MapPost(
+    "/api/libraries/{library:guid}/scopes/{scope}/csv",
+    async (Guid library, string scope, ExportOptions input) =>
+        Results.File(
+            await store.ExportComplete(library, scope, input.SelectedOnly, true),
+            "application/zip",
+            "literature-csv.zip"
+        )
+);
+app.MapPost(
+    "/api/libraries/{library:guid}/records/{id}/manual-item",
+    (Guid library, string id) => store.ManualItem(library, id)
+);
+app.MapGet("/api/sources", () => SourceAcquisition.Capabilities);
+app.MapPost(
+    "/api/libraries/{library:guid}/records/{id}/manual/{item}/confirm",
+    async (Guid library, string id, string item) =>
+        Results.Ok(new { job = await store.ConfirmManual(library, id, item), state = "queued" })
+);
+var uploadGate = new SemaphoreSlim(2, 2);
+app.MapPost(
+        "/api/libraries/{library:guid}/records/{id}/manual/{item}",
+        async (Guid library, string id, string item, HttpContext context) =>
+        {
+            if (!await uploadGate.WaitAsync(0, context.RequestAborted))
+                return Results.StatusCode(429);
+            try
+            {
+                context.Features.Get<IHttpMaxRequestBodySizeFeature>().MaxRequestBodySize =
+                    NcbiTransport.MaximumBytes;
+                if (context.Request.ContentLength > NcbiTransport.MaximumBytes)
+                    return Results.StatusCode(413);
+                using var bytes = new MemoryStream();
+                var chunk = new byte[65536];
+                int count;
+                while (
+                    (count = await context.Request.Body.ReadAsync(chunk, context.RequestAborted))
+                    != 0
+                )
+                {
+                    if (bytes.Length + count > NcbiTransport.MaximumBytes)
+                        return Results.StatusCode(413);
+                    bytes.Write(chunk, 0, count);
+                }
+                var job = await store.QueueManual(
+                    library,
+                    id,
+                    item,
+                    bytes.ToArray(),
+                    context.Request.Headers["X-Original-Source"].ToString(),
+                    context.Request.Headers["X-Original-Version"].ToString(),
+                    originals
+                );
+                return Results.Ok(
+                    new
+                    {
+                        job,
+                        message = "Manual input retained; inspect batch status for identity review or durable publication.",
+                    }
+                );
+            }
+            finally
+            {
+                uploadGate.Release();
+            }
+        }
+    )
+    .WithMetadata(new ManualUpload());
 Console.WriteLine(
     "Hosted service configured; database verified; private storage remains outside the web root."
 );
@@ -375,3 +498,7 @@ record Selection(string Id, bool Selected);
 record Batch(string Scope, bool SelectedOnly, string Template);
 
 record Control(string Action);
+
+record ManualUpload;
+
+record ExportOptions(bool SelectedOnly);

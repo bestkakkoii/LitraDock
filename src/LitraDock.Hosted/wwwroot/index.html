@@ -9,7 +9,7 @@
   <body>
     <header>
       <h1>LitraDock</h1>
-      <p>Private literature workspace · hosted foundation</p>
+      <p>Private literature workspace · source preview</p>
       <span id="status" aria-live="polite"></span>
     </header>
     <main>
@@ -81,6 +81,10 @@
           ><button id="next">Next 50</button
           ><button id="selectAll">Select entire scope</button
           ><button id="export">Export scope to Excel</button
+          ><button id="csv">Export scope to CSV bundle</button
+          ><label
+            ><input id="exportSelected" type="checkbox" />Export selected
+            only</label
           ><span id="counts"></span>
         </div>
         <div class="records">
@@ -107,7 +111,7 @@
         ><input
           id="template"
           value="{SearchId}_{Journal}_{FirstAuthor}_{Year}"
-        /><button id="acquire">Queue XML acquisition</button>
+        /><button id="acquire">Acquire available full text</button>
         <div>
           <label
             >Batch
@@ -119,17 +123,62 @@
         </div>
         <button id="itemPrevious">Previous items</button
         ><button id="itemNext">Next items</button><span id="itemCounts"></span>
-        <pre id="progress"></pre>
+        <div id="progress"></div>
         <p>
-          Originals retain their actual format; no PDF is invented.
-          Login-dependent sources, manual import and wider source discovery are
-          still under development.
+          Originals retain their actual format; no PDF is invented. Public PMC /
+          Europe PMC routes need no publisher account. Publisher login stays in
+          your browser; this service does not inherit institutional access. Use
+          manual original continuation for unsupported routes.
         </p>
         <button id="history">Load history (100 per page)</button
         ><button id="historyPrevious">Previous history</button
         ><button id="historyNext">Next history</button>
         <pre id="events"></pre>
       </section>
+      <dialog id="manualDialog">
+        <button id="manualClose">Close</button>
+        <h2>Continue with your original</h2>
+        <p id="manualIdentity"></p>
+        <p>
+          Upload only a file you are authorized to supply. Original PDF or
+          article XML, up to 32 MiB. The original bytes are retained; product
+          sign-in does not confer publisher access.
+        </p>
+        <label
+          >Original file
+          <input
+            type="file"
+            id="manualFile"
+            accept=".pdf,.xml,application/pdf,application/xml"
+        /></label>
+        <label
+          >Stable source URL (optional, no session query)
+          <input type="url" id="manualSource"
+        /></label>
+        <label
+          >Version
+          <select id="manualVersion">
+            <option value="unspecified">Unspecified</option>
+            <option value="published">Published version</option>
+            <option value="accepted-manuscript">Accepted manuscript</option>
+            <option value="preprint">Preprint</option>
+          </select></label
+        >
+        <button id="manualUpload">Validate and retain original</button>
+        <div id="identityReview" hidden>
+          <p>
+            Automatic identity was not established. Review the original title,
+            authors and identifiers yourself before confirming. This will be
+            recorded as a user-confirmed association, not machine verification.
+          </p>
+          <label
+            ><input id="manualConfirmed" type="checkbox" />I checked this file
+            and confirm it belongs to the displayed record.</label
+          >
+          <button id="manualConfirm">Confirm relationship and continue</button>
+        </div>
+        <p id="manualStatus" aria-live="polite"></p>
+      </dialog>
       <dialog id="detail">
         <button id="close">Close</button>
         <div id="article"></div>
