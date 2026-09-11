@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>14</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Remove="Microsoft.NETFramework.ReferenceAssemblies" />
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <ProjectReference Include="../LitraDock.Modern/LitraDock.Modern.csproj" />
+    <EmbeddedResource Include="migrations/*.sql" />
+  </ItemGroup>
+</Project>
