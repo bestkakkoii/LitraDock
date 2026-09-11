@@ -175,6 +175,10 @@ public sealed partial class PgStore
         }
     }
 
+    // 舊版原始 XML 種類名稱保持原值；只在驗證與副檔名判定時使用等價的標準種類。
+    private static string BundleKind(string kind) =>
+        kind == "Complete source XML" ? OriginalValidation.XmlKind : kind;
+
     public const long BundleLimit = 256L * 1024 * 1024;
     public const int MetadataLimit = 32 * 1024 * 1024;
     internal static readonly string[] BundleTables =
@@ -257,7 +261,7 @@ public sealed partial class PgStore
                 foreach (var row in tables["ld_files"].AsArray())
                 {
                     var hash = row["hash"].GetValue<string>();
-                    var kind = row["kind"].GetValue<string>();
+                    var kind = BundleKind(row["kind"].GetValue<string>());
                     if (kind is not (OriginalValidation.PdfKind or OriginalValidation.XmlKind))
                         throw new IOException("Unsupported artifact kind; no lossy transfer.");
                     requested[
@@ -611,7 +615,7 @@ public sealed partial class PgStore
             foreach (var row in tables["ld_files"].AsArray())
             {
                 if (
-                    row["kind"].GetValue<string>()
+                    BundleKind(row["kind"].GetValue<string>())
                     is not (OriginalValidation.XmlKind or OriginalValidation.PdfKind)
                 )
                     throw new IOException("Unsupported artifact kind.");
@@ -655,7 +659,8 @@ public sealed partial class PgStore
                 if (
                     !validated.Hash.Equals(hash, StringComparison.OrdinalIgnoreCase)
                     || !declared.Hash.Equals(hash, StringComparison.OrdinalIgnoreCase)
-                    || OriginalValidation.Kind(originalBytes) != f["kind"].GetValue<string>()
+                    || OriginalValidation.Kind(originalBytes)
+                        != BundleKind(f["kind"].GetValue<string>())
                     || validated.Bytes != f["bytes"].GetValue<long>()
                 )
                     throw new IOException(

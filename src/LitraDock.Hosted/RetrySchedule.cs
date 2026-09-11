@@ -106,12 +106,51 @@ public sealed partial class PgStore
         await Exec(db, "SELECT pg_advisory_xact_lock(724913002)");
         var rows = await Rows(
             db,
-            "SELECT r.*,j.kind,j.run_id,j.item_id,j.search_id FROM ld_retry r JOIN ld_jobs j USING(library_id,job_id) JOIN ld_libraries l USING(library_id) LEFT JOIN ld_items i ON i.library_id=j.library_id AND i.item_id=j.item_id LEFT JOIN ld_batches b ON b.library_id=i.library_id AND b.batch_id=i.batch_id WHERE r.status='pending' AND r.next_at<=now() AND j.state='scheduled' AND l.ready AND (j.kind='search' OR (i.last_job_id=j.job_id AND b.state IN ('queued','running'))) ORDER BY r.next_at,r.job_id LIMIT 100 FOR UPDATE OF r"
+            "SELECT r.*,j.kind,j.run_id,j.item_id,j.search_id FROM ld_retry r JOIN ld_jobs j USING(library_id,job_id) JOIN ld_libraries l USING(library_id) LEFT JOIN ld_items i ON i.library_id=j.library_id AND i.item_id=j.item_id LEFT JOIN ld_batches b ON b.library_id=i.library_id AND b.batch_id=i.batch_id WHERE r.status='pending' AND (r.next_at<=now() OR r.first_at<=now()-interval '72 hours') AND j.state='scheduled' AND l.ready AND (j.kind='search' OR (i.last_job_id=j.job_id AND b.state IN ('queued','running'))) ORDER BY r.next_at,r.job_id LIMIT 100 FOR UPDATE OF r"
         );
         foreach (var row in rows)
         {
             var library = (Guid)row["library_id"];
             var old = (string)row["job_id"];
+            if (DateTime.UtcNow - (DateTime)row["first_at"] >= TimeSpan.FromHours(72))
+            {
+                const string reason =
+                    "Automatic continuation time budget exhausted; inspect and retry explicitly.";
+                await Exec(
+                    db,
+                    "UPDATE ld_retry SET status='exhausted' WHERE library_id=@p0 AND job_id=@p1",
+                    library,
+                    old
+                );
+                await Exec(
+                    db,
+                    "UPDATE ld_jobs SET state='failed',reason=@p2 WHERE library_id=@p0 AND job_id=@p1",
+                    library,
+                    old,
+                    reason
+                );
+                await Exec(
+                    db,
+                    "UPDATE ld_items SET state='failed',reason=@p2 WHERE library_id=@p0 AND last_job_id=@p1",
+                    library,
+                    old,
+                    reason
+                );
+                await Exec(
+                    db,
+                    "UPDATE ld_runs SET state='failed',reason=@p2 WHERE library_id=@p0 AND run_id=@p1",
+                    library,
+                    row["run_id"],
+                    reason
+                );
+                await Event(db, library, old, "failed", reason);
+                await Exec(
+                    db,
+                    "UPDATE ld_batches b SET state='completed_with_errors' WHERE b.library_id=@p0 AND b.state IN ('queued','running') AND NOT EXISTS(SELECT 1 FROM ld_items i JOIN ld_jobs j ON j.library_id=i.library_id AND j.job_id=i.last_job_id WHERE i.library_id=b.library_id AND i.batch_id=b.batch_id AND j.state IN ('queued','running','scheduled'))",
+                    library
+                );
+                continue;
+            }
             var job = "JOB-" + Guid.NewGuid().ToString("N");
             await Exec(
                 db,

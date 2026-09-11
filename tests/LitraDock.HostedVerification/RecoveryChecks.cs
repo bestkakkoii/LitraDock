@@ -175,6 +175,25 @@ public static class RecoveryChecks
                 ) == 1,
             "Automatic attempt budget exhausts without resetting across successor jobs"
         );
+        await store.Batch(library, scope, true, Naming.DefaultTemplate);
+        var aged = await store.ClaimNext();
+        await store.Schedule(aged, "rate_wait", "Synthetic long provider cooldown");
+        await Sql(
+            "UPDATE ld_retry SET first_at=now()-interval '73 hours',next_at=now()+interval '1 hour' WHERE library_id=@p0 AND job_id=@p1",
+            library,
+            aged.Job
+        );
+        await store.AdvanceSchedule();
+        check(
+            await store.ClaimNext() == null
+                && (string)
+                    await Sql(
+                        "SELECT status FROM ld_retry WHERE library_id=@p0 AND job_id=@p1",
+                        library,
+                        aged.Job
+                    ) == "exhausted",
+            "Expired72-hour continuation stops before a delayed provider event without another request"
+        );
         var interrupted = await store.Batch(library, scope, true, Naming.DefaultTemplate);
         var lost = await store.ClaimNext();
         await Sql(
