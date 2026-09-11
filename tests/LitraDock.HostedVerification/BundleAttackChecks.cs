@@ -27,7 +27,7 @@ public static class BundleAttackChecks
         if (attack == "compression-bomb")
         {
             var expandedMetadata = Encoding.UTF8.GetBytes(
-                metadata.ToJsonString() + new string(' ', 2 * 1024 * 1024)
+                metadata.ToJsonString() + new string(' ', 16 * 1024 * 1024)
             );
             manifest["MetadataHash"] = Artifacts.Hash(expandedMetadata);
             zip.GetEntry("metadata.json").Delete();
@@ -181,6 +181,17 @@ public static class BundleAttackChecks
         {
             var path = Path.Combine(output, "attack-" + attack + ".zip");
             Rewrite(archive, path, attack);
+            if (attack == "compression-bomb")
+            {
+                using var archiveCheck = ZipFile.OpenRead(path);
+                var expanded = archiveCheck.GetEntry("metadata.json");
+                check(
+                    expanded.Length > 1024 * 1024
+                        && expanded.Length > expanded.CompressedLength * 100,
+                    "Compression-bomb fixture actually exceeds100:1 policy before importer test"
+                );
+            }
+
             bool rejected = false;
             try
             {
