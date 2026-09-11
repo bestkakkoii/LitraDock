@@ -69,6 +69,7 @@ jobs:
           python3 tests/recovery/measure.py evidence/recovery-resources.json -- dotnet run --project tests/LitraDock.HostedVerification -c Release --no-build -- --recovery .litradock/recovery 2>&1 | tee evidence/recovery.log
           cp .litradock/recovery/result.json evidence/recovery-result.json
           cp .litradock/recovery/recovery-scale.json evidence/recovery-scale.json
+          cp .litradock/recovery/recovery-library-scale.json evidence/recovery-library-scale.json
       - name: Actual Chromium hosted workflow with test-only sources
         env:
           LITRADOCK_PG_TEST_CONNECTION: Host=127.0.0.1;Port=5432;Database=litradock_ci_browser;Username=fixture;Password=synthetic-ci-only-password;SSL Mode=Disable

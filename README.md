@@ -1,10 +1,8 @@
-Recovery development candidate: schema3 adds persisted automatic continuation, aggregate resource admission, bounded file health, private full-library ZIP transfer and a separate operator database/object recovery command. These changes are under active disposable PostgreSQL and browser verification; consult exact CI results before relying on them. Bundles contain unencrypted private metadata/originals, create a new owned library and pause unfinished work; they never restore accounts or sessions. Keep separate backups and do not use this preview for a production cutover.
-
 # LitraDock — hosted literature workflow preview
 
 This snapshot contains application code and synthetic tests for review. It has no original development/commissioning history, private libraries or acquired papers. Project source is provided under GNU AGPL-3.0-only; see LICENSE. This does not grant rights to scholarly articles, trademarks or external services. Third-party components retain their own notices.
 
-The service uses ASP.NET Core10, PostgreSQL and private immutable originals outside the web root. It supports PubMed search, permitted PMC/Europe PMC XML acquisition, durable mixed-outcome batches, same-record manual originals and complete scoped Excel/CSV reports. See [source workflow and limits](SOURCES.md). It is not a production release; actual deployment/security/backup gates remain. Operator-created accounts have revocable sessions; self-registration/reset/email flows are not implemented.
+The service uses ASP.NET Core10, PostgreSQL and private immutable originals outside the web root. It supports PubMed search, permitted PMC/Europe PMC XML acquisition, durable mixed-outcome batches, same-record manual originals and complete scoped Excel/CSV reports. See [source workflow and limits](SOURCES.md) and [private library transfer and operator recovery](RECOVERY.md). It is not a production release; actual deployment/security/backup gates remain. Operator-created accounts have revocable sessions; self-registration/reset/email flows are not implemented.
 
 ```sh
 dotnet restore tests/LitraDock.HostedVerification --locked-mode

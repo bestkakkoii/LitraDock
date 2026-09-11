@@ -185,10 +185,19 @@ public sealed partial class PgStore
     public async Task<object> NextEvents(Guid library)
     {
         await using var db = await Data.OpenConnectionAsync();
-        return await Rows(
-            db,
-            "SELECT job_id,next_at,number,category,status FROM ld_retry WHERE library_id=@p0 AND status IN ('pending','paused') ORDER BY next_at LIMIT 100",
-            library
-        );
+        return new
+        {
+            total = await Scalar(
+                db,
+                "SELECT count(*) FROM ld_retry WHERE library_id=@p0 AND status IN ('pending','paused')",
+                library
+            ),
+            limit = 100,
+            items = await Rows(
+                db,
+                "SELECT job_id,next_at,number,category,status FROM ld_retry WHERE library_id=@p0 AND status IN ('pending','paused') ORDER BY next_at LIMIT 100",
+                library
+            ),
+        };
     }
 }

@@ -123,6 +123,22 @@ public static class RecoveryProcessChecks
                     throw new IOException("Import child exited before interruption checkpoint.");
                 await Task.Delay(30, deadline.Token);
             }
+            await using (var peer = new PgStore(connection))
+            {
+                bool refused = false;
+                try
+                {
+                    await using var conflicting = await ResourceAdmission.Enter(peer, heavy: true);
+                }
+                catch (ResourceBusyException)
+                {
+                    refused = true;
+                }
+                if (!refused)
+                    throw new IOException(
+                        "Separate import process did not hold aggregate admission."
+                    );
+            }
             child.Kill(true);
             await child.WaitForExitAsync(deadline.Token);
         }

@@ -386,7 +386,7 @@ setInterval(
       await catalog();
       await progress();
       const events=await json(base()+"next-events");
-      $("nextEvents").textContent=events.length ? events.map(x=>`${x.job_id}: ${x.status} · next eligible ${x.next_at} · automatic attempt ${x.number}`).join("\n") : "No automatic continuation is pending.";
+      $("nextEvents").textContent=events.total ? `Automatic events ${events.total}; showing first ${events.limit}.\n`+events.items.map(x=>`${x.job_id}: ${x.status} · next eligible ${x.next_at} · automatic attempt ${x.number}`).join("\n") : "No automatic continuation is pending.";
     }
   }),
   2000,

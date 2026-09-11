@@ -481,6 +481,24 @@ public static class HostedSourceChecks
                 ),
             "Different ordinary batch preserves recovered manual identity confirmation and original attribution"
         );
+        var crossBatchBundle = await store.ExportBundle(library, originals);
+        var crossBatchRestored = await store.ImportBundle(account, crossBatchBundle, originals);
+        check(
+            originals.Read(crossBatchRestored, info.Hash).SequenceEqual(recoveryPdf)
+                && (await store.Provenance(crossBatchRestored, id)).Any(row =>
+                    (string)row["hash"] == info.Hash
+                    && ((string)row["details"]).Contains("recoveredFromJob")
+                    && ((string)row["details"]).Contains("accepted-manuscript")
+                ),
+            "Cross-batch reconciled manual input exports and restores exact bytes and original attribution"
+        );
+        var retainedPause = JsonSerializer.SerializeToElement(
+            await store.BatchStatus(crossBatchRestored, recoveryBatch, 0)
+        );
+        check(
+            retainedPause.GetProperty("state").GetString() == "paused",
+            "Cross-batch portable restore preserves original deliberate pause"
+        );
         var staleDenied = false;
         try
         {

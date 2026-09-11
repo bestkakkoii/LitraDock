@@ -505,6 +505,21 @@ if (args.FirstOrDefault() == "--postgres")
     legacy.ControlBatch(paused, "paused");
     var imported = await store.ImportStoppedCopy(a, "Imported", legacyRoot, originals);
     var importedArticle = await store.Article(imported, legacyRun.Articles[0].SearchId);
+    var legacyBundle = await store.ExportBundle(imported, originals);
+    var legacyRestored = await store.ImportBundle(a, legacyBundle, originals);
+    Check(
+        await Literature.Verification.MigrationAudit.Compare(
+            connection,
+            legacy.DatabasePath,
+            legacyRestored
+        ) > 0
+            && JsonSerializer
+                .SerializeToElement(await store.BatchStatus(legacyRestored, paused, 0))
+                .GetProperty("state")
+                .GetString() == "paused",
+        "SQLite-origin portable restore preserves15 raw tables and legitimate never-attempted paused items"
+    );
+
     var preservedRows = await Literature.Verification.MigrationAudit.Compare(
         connection,
         legacy.DatabasePath,

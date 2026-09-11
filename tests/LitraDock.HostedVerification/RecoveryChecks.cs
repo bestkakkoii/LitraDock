@@ -485,6 +485,7 @@ public static class RecoveryChecks
             originals,
             check
         );
+        await RecoveryScaleChecks.Run(store, owner, originals, output, check);
         var backup = Path.Combine(output, "operator-backup");
         var dumpTool = Environment.GetEnvironmentVariable("LITRADOCK_PG_DUMP") ?? "pg_dump";
         var restoreTool =
@@ -519,6 +520,26 @@ public static class RecoveryChecks
             "Operator verifies original associations before clearing failed-backup startup guard"
         );
         var login = await store.Login("recovery-user", "Synthetic-recovery-password-2026");
+        await using (var writer = await ResourceAdmission.Enter(store))
+        {
+            await Sql(
+                "INSERT INTO ld_events VALUES(@p0,@p1,NULL,'writer-fixture','Protected writer committed before backup',@p2)",
+                library,
+                "EVENT-" + Guid.NewGuid().ToString("N"),
+                DateTime.UtcNow.ToString("o")
+            );
+            await Reject(
+                () =>
+                    OperatorRecovery.Backup(
+                        store,
+                        sourceConnection,
+                        originals,
+                        Path.Combine(output, "busy-backup"),
+                        dumpTool
+                    ),
+                "Backup refuses an actual protected writer after its durable event write"
+            );
+        }
         bool barrier = false;
         await OperatorRecovery.Backup(
             store,

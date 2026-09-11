@@ -27,11 +27,46 @@ public sealed partial class PgStore
     private static bool ConsumedHistoricalInput(JsonObject tables, JsonNode input)
     {
         var job = input["job_id"].GetValue<string>();
-        if (tables["ld_items"].AsArray().Any(x => x["last_job_id"]?.GetValue<string>() == job))
-            return false;
         var original = tables["ld_jobs"]
             .AsArray()
             .Single(x => x["job_id"].GetValue<string>() == job);
+        var search = original["search_id"]?.GetValue<string>();
+        var hash = input["hash"].GetValue<string>();
+        // 另一批次可恢復同一待發布原始檔；僅在保留的發布、完成工作、檔案關聯與來源證據全部一致時視為已消耗。
+        if (
+            tables["ld_publications"]
+                .AsArray()
+                .Any(x =>
+                    x["job_id"].GetValue<string>() == job
+                    && x["state"].GetValue<string>() == "reconciled"
+                    && x["hash"].GetValue<string>() == hash
+                )
+            && tables["ld_article_files"]
+                .AsArray()
+                .Any(x =>
+                    x["search_id"].GetValue<string>() == search
+                    && x["hash"].GetValue<string>() == hash
+                )
+            && tables["ld_object_provenance"]
+                .AsArray()
+                .Any(proof =>
+                    proof["search_id"].GetValue<string>() == search
+                    && proof["hash"].GetValue<string>() == hash
+                    && JsonNode
+                        .Parse(proof["details"].GetValue<string>())["recoveredFromJob"]
+                        ?.GetValue<string>() == job
+                    && tables["ld_jobs"]
+                        .AsArray()
+                        .Any(next =>
+                            next["job_id"].GetValue<string>() == proof["job_id"].GetValue<string>()
+                            && next["state"].GetValue<string>() == "completed"
+                            && next["search_id"]?.GetValue<string>() == search
+                        )
+                )
+        )
+            return true;
+        if (tables["ld_items"].AsArray().Any(x => x["last_job_id"]?.GetValue<string>() == job))
+            return false;
         return tables["ld_manual_inputs"]
             .AsArray()
             .Any(other =>
@@ -54,6 +89,90 @@ public sealed partial class PgStore
                             == original["search_id"]?.GetValue<string>()
                     )
             );
+    }
+
+    private static void ValidateBundleGraph(JsonObject tables)
+    {
+        var jobs = tables["ld_jobs"].AsArray().ToDictionary(x => x["job_id"].GetValue<string>());
+        var items = tables["ld_items"].AsArray().ToDictionary(x => x["item_id"].GetValue<string>());
+        var batches = tables["ld_batches"]
+            .AsArray()
+            .ToDictionary(x => x["batch_id"].GetValue<string>());
+        bool HasOriginal(string search) =>
+            tables["ld_article_files"]
+                .AsArray()
+                .Any(x => x["search_id"].GetValue<string>() == search);
+        foreach (var item in items.Values)
+        {
+            var current = item["last_job_id"]?.GetValue<string>();
+            if (
+                current == null
+                    ? item["attempts"].GetValue<int>() != 0
+                        || item["state"].GetValue<string>() is not ("paused" or "cancelled")
+                        || jobs.Values.Any(j =>
+                            j["item_id"]?.GetValue<string>() == item["item_id"].GetValue<string>()
+                        )
+                    : !jobs.TryGetValue(current, out var job)
+                        || job["item_id"]?.GetValue<string>() != item["item_id"].GetValue<string>()
+                        || job["search_id"]?.GetValue<string>()
+                            != item["search_id"].GetValue<string>()
+                        || job["kind"].GetValue<string>() != "acquire"
+            )
+                throw new IOException("Current acquisition job and item identity graph disagree.");
+            if (
+                !batches.TryGetValue(item["batch_id"].GetValue<string>(), out var batch)
+                || !tables["ld_members"]
+                    .AsArray()
+                    .Any(x =>
+                        x["scope_id"].GetValue<string>() == batch["scope_id"].GetValue<string>()
+                        && x["search_id"].GetValue<string>() == item["search_id"].GetValue<string>()
+                    )
+            )
+                throw new IOException("Acquisition item is outside its batch scope.");
+            if (
+                item["state"].GetValue<string>() == "completed"
+                && !HasOriginal(item["search_id"].GetValue<string>())
+            )
+                throw new IOException(
+                    "Completed acquisition has no preserved original association."
+                );
+        }
+        foreach (var job in jobs.Values.Where(x => x["kind"].GetValue<string>() == "acquire"))
+        {
+            if (
+                job["item_id"] == null
+                    ? !tables["ld_legacy_rows"]
+                        .AsArray()
+                        .Any(x =>
+                            x["table_name"].GetValue<string>() == "jobs"
+                            && JsonNode
+                                .Parse(x["data"].GetValue<string>())["job_id"]
+                                ?.GetValue<string>() == job["job_id"].GetValue<string>()
+                        )
+                    : !items.TryGetValue(job["item_id"].GetValue<string>(), out var item)
+                        || job["search_id"]?.GetValue<string>()
+                            != item["search_id"].GetValue<string>()
+            )
+                throw new IOException("Historical acquisition identity graph disagrees.");
+            if (
+                job["state"].GetValue<string>() == "completed"
+                && !HasOriginal(job["search_id"].GetValue<string>())
+            )
+                throw new IOException(
+                    "Completed acquisition has no preserved original association."
+                );
+        }
+        foreach (var record in tables["ld_records"].AsArray())
+        {
+            var article = JsonSerializer.Deserialize<Article>(
+                record["metadata"].GetValue<string>()
+            );
+            if (
+                article.RetrievalState == "completed"
+                && !HasOriginal(record["search_id"].GetValue<string>())
+            )
+                throw new IOException("Completed metadata has no preserved original association.");
+        }
     }
 
     public const long BundleLimit = 256L * 1024 * 1024;
@@ -242,6 +361,25 @@ public sealed partial class PgStore
         return output.ToArray();
     }
 
+    // 拒絕同名 JSON 欄位，避免不同讀取器對同一封存的身份或權限資料產生歧義。
+    private static void ValidateUniqueJson(byte[] bytes)
+    {
+        var reader = new Utf8JsonReader(bytes);
+        var objects = new Stack<HashSet<string>>();
+        while (reader.Read())
+        {
+            if (reader.TokenType == JsonTokenType.StartObject)
+                objects.Push(new HashSet<string>(StringComparer.Ordinal));
+            else if (reader.TokenType == JsonTokenType.EndObject)
+                objects.Pop();
+            else if (
+                reader.TokenType == JsonTokenType.PropertyName
+                && !objects.Peek().Add(reader.GetString())
+            )
+                throw new IOException("Duplicate JSON property in private bundle.");
+        }
+    }
+
     // 僅還原固定資料表的值；輸入不包含 SQL、帳號權限、租約或可執行排程。
     public async Task<Guid> ImportBundle(
         Guid owner,
@@ -272,10 +410,11 @@ public sealed partial class PgStore
         }
         if (!entries.ContainsKey("manifest.json") || !entries.ContainsKey("metadata.json"))
             throw new IOException("Bundle metadata is missing.");
+        var manifestBytes = ReadEntry(entries["manifest.json"], 4 * 1024 * 1024);
+        ValidateUniqueJson(manifestBytes);
         var manifest =
-            JsonSerializer.Deserialize<BundleManifest>(
-                ReadEntry(entries["manifest.json"], 4 * 1024 * 1024)
-            ) ?? throw new IOException("Missing manifest.");
+            JsonSerializer.Deserialize<BundleManifest>(manifestBytes)
+            ?? throw new IOException("Missing manifest.");
         if (
             manifest.Format != 1
             || manifest.Schema != 3
@@ -283,6 +422,7 @@ public sealed partial class PgStore
         )
             throw new IOException("Unsupported bundle format, schema or coverage.");
         var metadata = ReadEntry(entries["metadata.json"], MetadataLimit);
+        ValidateUniqueJson(metadata);
         if (
             !Artifacts
                 .Hash(metadata)
@@ -428,8 +568,10 @@ public sealed partial class PgStore
                     );
                 }
             }
+            ValidateBundleGraph(tables);
             foreach (var row in tables["ld_records"].AsArray())
             {
+                ValidateUniqueJson(Encoding.UTF8.GetBytes(row["metadata"].GetValue<string>()));
                 var article = JsonSerializer.Deserialize<Article>(
                     row["metadata"].GetValue<string>()
                 );

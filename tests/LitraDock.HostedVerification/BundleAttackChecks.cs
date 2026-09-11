@@ -24,12 +24,80 @@ public static class BundleAttackChecks
         }
         var metadata = Read("metadata.json");
         var manifest = Read("manifest.json");
+        if (attack == "compression-bomb")
+        {
+            var expandedMetadata = Encoding.UTF8.GetBytes(
+                metadata.ToJsonString() + new string(' ', 2 * 1024 * 1024)
+            );
+            manifest["MetadataHash"] = Artifacts.Hash(expandedMetadata);
+            zip.GetEntry("metadata.json").Delete();
+            using (
+                var stream = zip.CreateEntry("metadata.json", CompressionLevel.SmallestSize).Open()
+            )
+                stream.Write(expandedMetadata);
+            Put("manifest.json", Encoding.UTF8.GetBytes(manifest.ToJsonString()));
+            return;
+        }
+        if (attack == "symlink")
+        {
+            zip.GetEntry("metadata.json").ExternalAttributes = unchecked((int)0xA1FF0000);
+            return;
+        }
+        if (attack == "duplicate-json")
+        {
+            Put(
+                "manifest.json",
+                Encoding.UTF8.GetBytes(manifest.ToJsonString().Insert(1, "\"Format\":1,"))
+            );
+            return;
+        }
         if (attack == "ordinal")
             metadata["ld_records"][0]["ordinal"] = long.MaxValue;
         else if (attack == "identifier-index")
             metadata["ld_identifiers"].AsArray().First(x => x["kind"].GetValue<string>() == "pmid")[
                 "value"
             ] = "88888888";
+        else if (attack == "missing-current-job")
+            metadata["ld_items"][0]["last_job_id"] = "JOB-missing";
+        else if (attack == "cross-record-job")
+        {
+            var jobId = metadata["ld_items"][0]["last_job_id"].GetValue<string>();
+            var job = metadata["ld_jobs"]
+                .AsArray()
+                .Single(x => x["job_id"].GetValue<string>() == jobId);
+            job["search_id"] = metadata["ld_records"]
+                .AsArray()
+                .First(x =>
+                    x["search_id"].GetValue<string>() != job["search_id"].GetValue<string>()
+                )["search_id"]
+                .GetValue<string>();
+        }
+        else if (attack == "false-completion")
+        {
+            foreach (
+                var table in new[]
+                {
+                    "ld_files",
+                    "ld_article_files",
+                    "ld_object_provenance",
+                    "ld_publications",
+                    "ld_manual_inputs",
+                }
+            )
+            {
+                metadata[table] = new JsonArray();
+                manifest["Counts"][table] = 0;
+            }
+            foreach (
+                var entry in zip
+                    .Entries.Where(x =>
+                        x.FullName.StartsWith("objects/") || x.FullName.StartsWith("staging/")
+                    )
+                    .ToArray()
+            )
+                entry.Delete();
+            manifest["Files"] = new JsonArray();
+        }
         else if (attack == "account-field")
             metadata["ld_records"][0]["owner_id"] = Guid.NewGuid().ToString();
         else
@@ -102,6 +170,12 @@ public static class BundleAttackChecks
                 "kind-binding",
                 "account-field",
                 "identifier-index",
+                "compression-bomb",
+                "symlink",
+                "duplicate-json",
+                "missing-current-job",
+                "cross-record-job",
+                "false-completion",
             }
         )
         {
@@ -112,9 +186,15 @@ public static class BundleAttackChecks
             {
                 await store.ImportBundle(owner, path, originals);
             }
-            catch (IOException)
+            catch (IOException error)
             {
-                rejected = true;
+                rejected = attack switch
+                {
+                    "compression-bomb" => error.Message.Contains("compression ratio"),
+                    "symlink" => error.Message.Contains("symbolic links"),
+                    "duplicate-json" => error.Message.Contains("Duplicate JSON"),
+                    _ => true,
+                };
             }
             check(
                 rejected && await Number("SELECT count(*) FROM ld_libraries") == libraries,
@@ -127,6 +207,30 @@ public static class BundleAttackChecks
         check(
             await Number("SELECT last_value FROM ld_records_ordinal_seq") < 1000000,
             "Imported bigint-max ordinal cannot control shared allocator"
+        );
+        await using var beforeCommand = new NpgsqlCommand(
+            "SELECT metadata FROM ld_records WHERE library_id=@p0 ORDER BY ordinal LIMIT 1",
+            db
+        );
+        beforeCommand.Parameters.AddWithValue("p0", restored);
+        var beforeMetadata = (string)await beforeCommand.ExecuteScalarAsync();
+        var beforeArticle = System.Text.Json.JsonSerializer.Deserialize<Article>(beforeMetadata);
+        var beforeFiles = (await store.Files(restored, beforeArticle.SearchId)).Count;
+        await store.Search(restored, "Unrelated identity after restore", 1);
+        var unrelatedClaim = await store.ClaimNext();
+        var unrelated = await store.SearchInput(unrelatedClaim);
+        unrelated.Total = 1;
+        unrelated.State = "complete";
+        unrelated.SourceIds.Add("88888888");
+        unrelated.Articles.Add(
+            new Article { Pmid = "88888888", Title = "Independent new synthetic paper" }
+        );
+        await store.SaveSearch(unrelatedClaim, unrelated);
+        await store.Finish(unrelatedClaim, "completed", "Synthetic identity regression");
+        check(
+            (string)await beforeCommand.ExecuteScalarAsync() == beforeMetadata
+                && (await store.Files(restored, beforeArticle.SearchId)).Count == beforeFiles,
+            "Unrelated search in restored library cannot overwrite earlier canonical metadata or originals"
         );
         bool interrupted = false;
         try

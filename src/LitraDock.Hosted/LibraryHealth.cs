@@ -25,7 +25,7 @@ public sealed partial class PgStore
             ] = (string)file["hash"];
         var manual = await Rows(
             db,
-            "SELECT m.stage_token,m.hash FROM ld_manual_inputs m JOIN ld_jobs j USING(library_id,job_id) JOIN ld_items i ON i.library_id=m.library_id AND i.last_job_id=m.job_id WHERE m.library_id=@p0 AND j.state<>'completed' LIMIT 10001",
+            "SELECT m.stage_token,m.hash FROM ld_manual_inputs m JOIN ld_jobs j USING(library_id,job_id) JOIN ld_items i ON i.library_id=m.library_id AND i.last_job_id=m.job_id WHERE m.library_id=@p0 AND j.state<>'completed' AND NOT EXISTS(SELECT 1 FROM ld_publications p JOIN ld_object_provenance v ON v.library_id=p.library_id AND v.hash=p.hash JOIN ld_jobs n ON n.library_id=v.library_id AND n.job_id=v.job_id WHERE p.library_id=m.library_id AND p.job_id=m.job_id AND p.hash=m.hash AND p.state='reconciled' AND n.state='completed' AND n.search_id=j.search_id AND v.search_id=j.search_id AND v.details::jsonb->>'recoveredFromJob'=m.job_id) LIMIT 10001",
             library
         );
         if (manual.Count > 10000)
