@@ -80,6 +80,15 @@ public sealed class HostedWorker(PgStore store, OriginalStore originals, ILitera
             else
             {
                 var article = await store.Article(claim.Library, claim.SearchId);
+                if (await store.RecoverPublication(claim, article, originals))
+                {
+                    await store.Finish(
+                        claim,
+                        "completed",
+                        "Recovered validated durable original without refetch."
+                    );
+                    return;
+                }
                 foreach (var file in await store.Files(claim.Library, claim.SearchId))
                 {
                     try

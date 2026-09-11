@@ -15,19 +15,21 @@ public sealed partial class PgStore
         OriginalStore originals
     )
     {
-        var legacy = new Library(copiedRoot);
-        var articles = legacy.ReadArticles();
-        if (articles.Count > 10000)
-            throw new ArgumentException("Import limit is 10000 records; source remains unchanged.");
+        var copyRoot = Path.GetFullPath(copiedRoot);
+        var database = Path.Combine(copyRoot, "library.sqlite3");
+        if (!File.Exists(database))
+            throw new IOException(
+                "Existing stopped SQLite copy is required; no source is created."
+            );
         var library = Guid.NewGuid();
         using var hostLease = new FileStream(
-            Path.Combine(legacy.Root, "web-host.lock"),
+            Path.Combine(copyRoot, "web-host.lock"),
             FileMode.OpenOrCreate,
             FileAccess.ReadWrite,
             FileShare.None
         );
         using var batchLease = new FileStream(
-            Path.Combine(legacy.Root, "batch.lock"),
+            Path.Combine(copyRoot, "batch.lock"),
             FileMode.OpenOrCreate,
             FileAccess.ReadWrite,
             FileShare.None
@@ -35,13 +37,22 @@ public sealed partial class PgStore
         await using var sqlite = new SqliteConnection(
             new SqliteConnectionStringBuilder
             {
-                DataSource = legacy.DatabasePath,
+                DataSource = database,
                 Mode = SqliteOpenMode.ReadOnly,
                 Pooling = false,
             }.ConnectionString
         );
         await sqlite.OpenAsync();
         await using var readTx = sqlite.BeginTransaction(deferred: true);
+        using (var version = sqlite.CreateCommand())
+        {
+            version.Transaction = readTx;
+            version.CommandText = "PRAGMA user_version";
+            if (Convert.ToInt32(version.ExecuteScalar()) != 2)
+                throw new InvalidOperationException(
+                    "Import requires schema2; upgrade a separate copy using the preserved baseline first."
+                );
+        }
         var tables = new Dictionary<string, List<Dictionary<string, object>>>();
         foreach (
             var table in new[]
@@ -84,6 +95,18 @@ public sealed partial class PgStore
                 );
             tables[table] = rows;
         }
+        if (tables["articles"].Count > 10000)
+            throw new ArgumentException("Import limit is 10000 records; source remains unchanged.");
+        var serializer = new System.Xml.Serialization.XmlSerializer(typeof(Article));
+        var articles = tables["articles"]
+            .Select(row =>
+            {
+                using var reader = Metadata
+                    .ParseXml(System.Text.Encoding.UTF8.GetBytes((string)row["metadata_xml"]))
+                    .CreateReader();
+                return (Article)serializer.Deserialize(reader);
+            })
+            .ToArray();
         await using var db = await Data.OpenConnectionAsync();
         await using var tx = await db.BeginTransactionAsync();
         await Exec(db, "INSERT INTO ld_libraries VALUES(@p0,@p1,@p2,false)", library, owner, name);
@@ -231,12 +254,16 @@ public sealed partial class PgStore
         foreach (var r in tables["files"])
         {
             var hash = (string)r["hash"];
-            var path = legacy
-                .FilePaths(
-                    tables["article_files"].First(a => Equals(a["hash"], hash))["search_id"]
-                        as string
+            var path = Path.GetFullPath(Path.Combine(copyRoot, (string)r["relative_path"]));
+            if (
+                !path.StartsWith(
+                    Path.TrimEndingDirectorySeparator(copyRoot) + Path.DirectorySeparatorChar,
+                    OperatingSystem.IsWindows()
+                        ? StringComparison.OrdinalIgnoreCase
+                        : StringComparison.Ordinal
                 )
-                .FirstOrDefault(p => Path.GetFileNameWithoutExtension(p) == hash);
+            )
+                throw new IOException("Imported original path escapes the stopped copy.");
             var target = originals.ObjectPath(library, hash);
             if (
                 path == null

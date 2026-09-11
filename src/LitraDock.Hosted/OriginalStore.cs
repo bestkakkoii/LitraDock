@@ -36,6 +36,28 @@ public sealed class OriginalStore(string root)
                 );
     }
 
+    public void VerifyWebRoot(string webRoot)
+    {
+        VerifyPrivateRoot(webRoot);
+        if (!Directory.Exists(webRoot))
+            return;
+        var pending = new Stack<DirectoryInfo>();
+        pending.Push(new DirectoryInfo(webRoot));
+        var count = 0;
+        while (pending.Count > 0)
+        {
+            foreach (var item in pending.Pop().EnumerateFileSystemInfos())
+            {
+                if (++count > 10000)
+                    throw new IOException("Public content validation limit exceeded.");
+                if ((item.Attributes & FileAttributes.ReparsePoint) != 0)
+                    throw new IOException("Linked public content is not supported.");
+                if (item is DirectoryInfo directory)
+                    pending.Push(directory);
+            }
+        }
+    }
+
     public string ObjectPath(Guid library, string hash)
     {
         if (hash.Length != 64 || hash.Any(c => !Uri.IsHexDigit(c)))
@@ -114,6 +136,58 @@ public sealed class OriginalStore(string root)
 
 public sealed partial class PgStore
 {
+    public async Task<bool> RecoverPublication(
+        Claim claim,
+        Article article,
+        OriginalStore originals
+    )
+    {
+        await using var db = await Data.OpenConnectionAsync();
+        var candidates = await Rows(
+            db,
+            "SELECT p.* FROM ld_publications p JOIN ld_jobs j USING(library_id,job_id) WHERE p.library_id=@p0 AND j.search_id=@p1 AND p.state='prepared' AND p.job_id<>@p2 ORDER BY j.created_at LIMIT 100",
+            claim.Library,
+            claim.SearchId,
+            claim.Job
+        );
+        foreach (var row in candidates)
+        {
+            var hash = (string)row["hash"];
+            if (!File.Exists(originals.ObjectPath(claim.Library, hash)))
+                continue;
+            var bytes = originals.Read(claim.Library, hash);
+            var info = Artifacts.ValidateXml(bytes, article);
+            var response = new SourceResponse
+            {
+                Bytes = bytes,
+                OriginalUri = (string)row["source_uri"],
+                FinalUri = (string)row["final_uri"],
+            };
+            await PreparePublication(claim, info, response);
+            var stage = originals.Stage(claim, bytes);
+            await Publish(claim, article, info, response, originals, stage);
+            await using var tx = await db.BeginTransactionAsync();
+            await Fence(db, claim);
+            await Exec(
+                db,
+                "UPDATE ld_publications SET state='reconciled' WHERE library_id=@p0 AND job_id=@p1",
+                claim.Library,
+                row["job_id"]
+            );
+            await Event(
+                db,
+                claim.Library,
+                claim.Job,
+                "reconciled",
+                "Validated retained original associated without a source request; prior publication "
+                    + row["job_id"]
+            );
+            await tx.CommitAsync();
+            return true;
+        }
+        return false;
+    }
+
     public async Task<List<Dictionary<string, object>>> Files(Guid library, string article)
     {
         await using var db = await Data.OpenConnectionAsync();

@@ -37,6 +37,60 @@ if (args.FirstOrDefault() == "--postgres")
     await using var store = new PgStore(connection);
     await store.Migrate();
     await store.VerifySchema();
+    var times = new System.Collections.Concurrent.ConcurrentBag<long>();
+    using (
+        var firstClient = new HttpMessageInvoker(
+            new SourceRequestHandler(store, new HeaderFixture(times))
+        )
+    )
+    using (
+        var secondClient = new HttpMessageInvoker(
+            new SourceRequestHandler(store, new HeaderFixture(times))
+        )
+    )
+    {
+        await Task.WhenAll(
+            firstClient.SendAsync(
+                new HttpRequestMessage(HttpMethod.Get, "https://example.invalid/one"),
+                CancellationToken.None
+            ),
+            secondClient.SendAsync(
+                new HttpRequestMessage(HttpMethod.Get, "https://example.invalid/two"),
+                CancellationToken.None
+            )
+        );
+        var ordered = times.OrderBy(x => x).ToArray();
+        Check(
+            ordered.Length == 2 && ordered[1] - ordered[0] >= 350,
+            "Independent source handlers share PostgreSQL request pacing"
+        );
+    }
+    using (
+        var limited = new HttpMessageInvoker(
+            new SourceRequestHandler(store, new HeaderFixture(times, true))
+        )
+    )
+        await limited.SendAsync(
+            new HttpRequestMessage(HttpMethod.Get, "https://example.invalid/limited"),
+            CancellationToken.None
+        );
+    using (
+        var blocked = new HttpMessageInvoker(
+            new SourceRequestHandler(store, new HeaderFixture(times))
+        )
+    )
+    {
+        try
+        {
+            await blocked.SendAsync(
+                new HttpRequestMessage(HttpMethod.Get, "https://example.invalid/blocked"),
+                CancellationToken.None
+            );
+            throw new Exception("Shared cooldown bypassed");
+        }
+        catch (SourceException) { }
+    }
+    Check(times.Count == 3, "Persisted Retry-After prevents another handler from reaching source");
     var password = PgStore.Token();
     var login = "test-" + Guid.NewGuid().ToString("N");
     var a = await store.CreateAccount(login, password);
@@ -169,6 +223,33 @@ if (args.FirstOrDefault() == "--postgres")
     Check(
         await store.ClaimNext() == null && !await store.Renew(stopping),
         "Graceful worker stop pauses entire batch and fences its lease"
+    );
+    var crashBatch = await store.Batch(library, scope, true, Naming.DefaultTemplate);
+    var crash = await store.ClaimNext();
+    var crashArticle = await store.Article(library, crash.SearchId);
+    var crashResponse = await source.FetchFullTextAsync(crashArticle, CancellationToken.None);
+    crashResponse.Bytes = Encoding.UTF8.GetBytes(
+        Encoding
+            .UTF8.GetString(crashResponse.Bytes)
+            .Replace("Synthetic 測試 β", "Retained version after interrupted publication")
+    );
+    var crashInfo = Artifacts.ValidateXml(crashResponse.Bytes, crashArticle);
+    await store.PreparePublication(crash, crashInfo, crashResponse);
+    originals.Publish(library, crashInfo.Hash, originals.Stage(crash, crashResponse.Bytes));
+    await store.PauseClaim(crash);
+    Check(
+        !await store.Associated(library, crash.SearchId, crashInfo.Hash)
+            && originals.Read(library, crashInfo.Hash).Length > 0,
+        "Interrupted file publication retains bytes without false committed association"
+    );
+    await store.Control(library, crashBatch, "resume");
+    var noSource = new UnavailableFixture();
+    var recovery = new HostedWorker(store, originals, noSource);
+    for (var i = 0; i < 2; i++)
+        await recovery.ExecuteClaim(await store.ClaimNext(), CancellationToken.None);
+    Check(
+        await store.Associated(library, crash.SearchId, crashInfo.Hash) && noSource.Fetches == 0,
+        "Reopened publication reconciles valid version without refetch when source unavailable"
     );
     var other = await store.CreateLibrary(b, "Other library");
     Check(
@@ -331,6 +412,54 @@ else if (args.FirstOrDefault() == "--static")
     }
     catch (ArgumentException) { }
     Check(true, "Original path rejects unsafe hash");
+    try
+    {
+        originals.VerifyWebRoot(originals.Root);
+        throw new Exception("External public root accepted");
+    }
+    catch (InvalidOperationException) { }
+    Check(true, "Configured external public root cannot expose originals");
+    await using (
+        var noDatabase = new PgStore("Host=127.0.0.1;Port=1;Database=unused;Username=unused")
+    )
+    {
+        var missing = Path.Combine(output, "missing-copy");
+        try
+        {
+            await noDatabase.ImportStoppedCopy(Guid.NewGuid(), "missing", missing, originals);
+            throw new Exception("Missing import accepted");
+        }
+        catch (IOException) { }
+        Check(
+            !Directory.Exists(missing),
+            "Missing import source rejected before database access or directory creation"
+        );
+        var v1 = Path.Combine(output, "v1-copy");
+        Directory.CreateDirectory(v1);
+        var path = Path.Combine(v1, "library.sqlite3");
+        using (
+            var sqlite = new Microsoft.Data.Sqlite.SqliteConnection(
+                "Data Source=" + path + ";Pooling=False"
+            )
+        )
+        {
+            sqlite.Open();
+            using var command = sqlite.CreateCommand();
+            command.CommandText = "PRAGMA user_version=1";
+            command.ExecuteNonQuery();
+        }
+        var before = Artifacts.Hash(File.ReadAllBytes(path));
+        try
+        {
+            await noDatabase.ImportStoppedCopy(Guid.NewGuid(), "v1", v1, originals);
+            throw new Exception("V1 import accepted");
+        }
+        catch (InvalidOperationException) { }
+        Check(
+            Artifacts.Hash(File.ReadAllBytes(path)) == before,
+            "Unsupported SQLite version rejected without source migration"
+        );
+    }
     var workbook = HostedExport.Write(
         new[]
         {
@@ -576,5 +705,42 @@ sealed class FixtureSource : ILiteratureSource
                 FinalUri = "https://example.invalid/fixture",
             }
         );
+    }
+}
+
+sealed class HeaderFixture(
+    System.Collections.Concurrent.ConcurrentBag<long> times,
+    bool limited = false
+) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(
+        HttpRequestMessage request,
+        CancellationToken cancellationToken
+    )
+    {
+        times.Add(Environment.TickCount64);
+        var response = new HttpResponseMessage(
+            limited ? HttpStatusCode.TooManyRequests : HttpStatusCode.OK
+        );
+        if (limited)
+            response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(
+                TimeSpan.FromSeconds(61)
+            );
+        return Task.FromResult(response);
+    }
+}
+
+sealed class UnavailableFixture : ILiteratureSource
+{
+    public int Fetches { get; private set; }
+    public string Name => "Unavailable synthetic source";
+
+    public Task SearchAsync(SearchSnapshot run, CancellationToken token) =>
+        throw new NotSupportedException();
+
+    public Task<SourceResponse> FetchFullTextAsync(Article article, CancellationToken token)
+    {
+        Fetches++;
+        throw new SourceException("unavailable", "Synthetic unavailable source");
     }
 }

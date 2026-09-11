@@ -14,6 +14,9 @@ if (string.IsNullOrWhiteSpace(connection) || string.IsNullOrWhiteSpace(storage))
 await using var store = new PgStore(connection);
 var originals = new OriginalStore(storage);
 originals.VerifyPrivateRoot(builder.Environment.ContentRootPath);
+originals.VerifyWebRoot(
+    builder.Environment.WebRootPath ?? Path.Combine(builder.Environment.ContentRootPath, "wwwroot")
+);
 if (args.Contains("--migrate"))
 {
     await store.Migrate();
