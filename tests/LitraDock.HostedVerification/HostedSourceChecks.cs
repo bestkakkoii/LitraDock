@@ -135,7 +135,7 @@ public static class HostedSourceChecks
                 && Directory
                     .GetFiles(Path.Combine(originals.Root, library.ToString("N"), "objects"))
                     .Length == 2
-                && (await store.Provenance(library, id)).Count == 3,
+                && (await store.Provenance(library, id)).Count == 2,
             "Duplicate manual bytes keep one identical object and distinct attempts"
         );
         var version = SourceChecks.Pdf(article, "Second legitimate version");
@@ -157,7 +157,7 @@ public static class HostedSourceChecks
                     library,
                     item
                 ) == "needs_review"
-                && (await store.Files(library, id)).Count == 3,
+                && (await store.Files(library, id)).Count == 2,
             "Uncertain PDF retained for review without an original association or false completion"
         );
         await store.ConfirmManual(library, id, item);

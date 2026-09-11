@@ -491,3 +491,5 @@ $("restoreBundle").onclick=safe(async()=>{
   $("records").replaceChildren();$("progress").replaceChildren();$("counts").textContent="Choose a restored scope.";$("status").textContent="Restored library; unfinished work is paused.";
   await libraries();await catalog();$("recoveryStatus").textContent=result.message;
 });
+
+$("transferHistory").onclick=safe(async()=>{$("recoveryStatus").textContent=JSON.stringify(await json("transfers"),null,2);});

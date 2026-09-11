@@ -37,8 +37,18 @@ public sealed class ResourceAdmission : IAsyncDisposable
         }
         catch
         {
-            await PgStore.Exec(db, "SELECT pg_advisory_unlock_all()");
-            await db.DisposeAsync();
+            try
+            {
+                await PgStore.Exec(db, "SELECT pg_advisory_unlock_all()");
+            }
+            catch
+            {
+                NpgsqlConnection.ClearPool(db);
+            }
+            finally
+            {
+                await db.DisposeAsync();
+            }
             throw;
         }
     }

@@ -296,202 +296,309 @@ public sealed partial class PgStore
         var transfer = Guid.NewGuid();
         var stage = Path.Combine(originals.Root, "transfer-staging", transfer.ToString("N"));
         var target = Path.Combine(originals.Root, id.ToString("N"));
-        await using var db = await Data.OpenConnectionAsync();
-        await using var tx = await db.BeginTransactionAsync();
-        await Exec(
-            db,
-            "INSERT INTO ld_libraries VALUES(@p0,@p1,@p2,false)",
-            id,
+        await TransferCheckpoint(
+            transfer,
             owner,
-            "Restored library"
+            id,
+            manifest.OriginLibrary,
+            "validating",
+            "Private transfer accepted for validation; no library published."
         );
-        foreach (var table in BundleTables)
+        try
         {
-            var array = tables[table].AsArray();
-            if (
-                array.Count > 10000
-                || !manifest.Counts.TryGetValue(table, out var count)
-                || count != array.Count
-            )
-                throw new IOException("Table row count mismatch.");
-            var columns = (
-                await Rows(
-                    db,
-                    "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=@p0 ORDER BY ordinal_position",
-                    table
+            await using var db = await Data.OpenConnectionAsync();
+            await using var tx = await db.BeginTransactionAsync();
+            await Exec(
+                db,
+                "INSERT INTO ld_libraries VALUES(@p0,@p1,@p2,false)",
+                id,
+                owner,
+                "Restored library"
+            );
+            foreach (var table in BundleTables)
+            {
+                var array = tables[table].AsArray();
+                if (
+                    array.Count > 10000
+                    || !manifest.Counts.TryGetValue(table, out var count)
+                    || count != array.Count
                 )
-            )
-                .Select(r => (string)r["column_name"])
-                .ToArray();
-            var permitted = columns
-                .Where(c => c is not ("library_id" or "lease_token" or "lease_until"))
-                .Order()
-                .ToArray();
-            foreach (var node in array)
+                    throw new IOException("Table row count mismatch.");
+                var columns = (
+                    await Rows(
+                        db,
+                        "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=@p0 ORDER BY ordinal_position",
+                        table
+                    )
+                )
+                    .Select(r => (string)r["column_name"])
+                    .ToArray();
+                var permitted = columns
+                    .Where(c => c is not ("library_id" or "lease_token" or "lease_until"))
+                    .Order()
+                    .ToArray();
+                foreach (var node in array)
+                {
+                    TimeBound();
+                    var row = node.AsObject();
+                    if (!row.Select(x => x.Key).Order().SequenceEqual(permitted))
+                        throw new IOException("Unexpected or missing record fields.");
+                    row["library_id"] = id.ToString();
+                    if (table == "ld_jobs")
+                    {
+                        row["lease_token"] = null;
+                        row["lease_until"] = null;
+                    }
+                    if (table is "ld_jobs" or "ld_items" or "ld_batches" or "ld_runs")
+                    {
+                        var state = row["state"].GetValue<string>();
+                        if (
+                            state
+                            is "running"
+                                or "queued"
+                                or "scheduled"
+                                or "searching"
+                                or "resolving"
+                                or "waiting"
+                                or "downloading"
+                                or "validating"
+                                or "publishing"
+                                or "redirecting"
+                        )
+                            row["state"] = "paused";
+                    }
+                    if (table == "ld_retry" && row["status"].GetValue<string>() == "pending")
+                        row["status"] = "paused";
+                    await Exec(
+                        db,
+                        $"INSERT INTO {table} SELECT * FROM jsonb_populate_record(NULL::{table},@p0::jsonb)",
+                        row.ToJsonString()
+                    );
+                }
+            }
+            foreach (var row in tables["ld_records"].AsArray())
+            {
+                var article = JsonSerializer.Deserialize<Article>(
+                    row["metadata"].GetValue<string>()
+                );
+                if (article.SearchId != row["search_id"].GetValue<string>())
+                    throw new IOException("Canonical metadata identity differs from record key.");
+            }
+            foreach (var row in tables["ld_files"].AsArray())
+            {
+                if (
+                    row["kind"].GetValue<string>()
+                    is not (OriginalValidation.XmlKind or OriginalValidation.PdfKind)
+                )
+                    throw new IOException("Unsupported artifact kind.");
+                if (
+                    !tables["ld_article_files"]
+                        .AsArray()
+                        .Any(x => x["hash"].GetValue<string>() == row["hash"].GetValue<string>())
+                )
+                    throw new IOException("Original has no bibliographic association.");
+            }
+            // 關聯內容獨立比對，不只信任序列化器的往返；同一內容可以對應合法版本證據。
+            foreach (var row in tables["ld_article_files"].AsArray())
             {
                 TimeBound();
-                var row = node.AsObject();
-                if (!row.Select(x => x.Key).Order().SequenceEqual(permitted))
-                    throw new IOException("Unexpected or missing record fields.");
-                row["library_id"] = id.ToString();
-                if (table == "ld_jobs")
-                {
-                    row["lease_token"] = null;
-                    row["lease_until"] = null;
-                }
-                if (table is "ld_jobs" or "ld_items" or "ld_batches" or "ld_runs")
-                {
-                    var state = row["state"].GetValue<string>();
-                    if (
-                        state
-                        is "running"
-                            or "queued"
-                            or "scheduled"
-                            or "searching"
-                            or "resolving"
-                            or "waiting"
-                            or "downloading"
-                            or "validating"
-                            or "publishing"
-                            or "redirecting"
-                    )
-                        row["state"] = "paused";
-                }
-                if (table == "ld_retry" && row["status"].GetValue<string>() == "pending")
-                    row["status"] = "paused";
-                await Exec(
-                    db,
-                    $"INSERT INTO {table} SELECT * FROM jsonb_populate_record(NULL::{table},@p0::jsonb)",
-                    row.ToJsonString()
-                );
-            }
-        }
-        foreach (var row in tables["ld_records"].AsArray())
-        {
-            var article = JsonSerializer.Deserialize<Article>(row["metadata"].GetValue<string>());
-            if (article.SearchId != row["search_id"].GetValue<string>())
-                throw new IOException("Canonical metadata identity differs from record key.");
-        }
-        foreach (var row in tables["ld_files"].AsArray())
-        {
-            if (
-                row["kind"].GetValue<string>()
-                is not (OriginalValidation.XmlKind or OriginalValidation.PdfKind)
-            )
-                throw new IOException("Unsupported artifact kind.");
-            if (
-                !tables["ld_article_files"]
+                var hash = row["hash"].GetValue<string>();
+                var f = tables["ld_files"]
                     .AsArray()
-                    .Any(x => x["hash"].GetValue<string>() == row["hash"].GetValue<string>())
-            )
-                throw new IOException("Original has no bibliographic association.");
-        }
-        // 關聯內容獨立比對，不只信任序列化器的往返；同一內容可以對應合法版本證據。
-        foreach (var row in tables["ld_article_files"].AsArray())
-        {
-            var hash = row["hash"].GetValue<string>();
-            var f = tables["ld_files"].AsArray().Single(x => x["hash"].GetValue<string>() == hash);
-            var relative =
-                "objects/"
-                + hash.ToLowerInvariant()
-                + (f["kind"].GetValue<string>() == OriginalValidation.PdfKind ? ".pdf" : ".xml");
-            if (
-                !entries.TryGetValue(relative, out var entry)
-                || entry.Length != f["bytes"].GetValue<long>()
-            )
-                throw new IOException("File association is incomplete.");
-            var article = JsonSerializer.Deserialize<Article>(
-                tables["ld_records"]
-                    .AsArray()
-                    .Single(x =>
-                        x["search_id"].GetValue<string>() == row["search_id"].GetValue<string>()
-                    )["metadata"]
-                    .GetValue<string>()
-            );
-            OriginalValidation.Validate(
-                ReadEntry(entry, NcbiTransport.MaximumBytes),
-                article,
-                true
-            );
-        }
-        foreach (var row in tables["ld_manual_inputs"].AsArray())
-        {
-            var job = tables["ld_jobs"]
-                .AsArray()
-                .Single(x => x["job_id"].GetValue<string>() == row["job_id"].GetValue<string>());
-            if (job["state"].GetValue<string>() != "completed")
-            {
-                var relative = "staging/" + row["stage_token"].GetValue<string>() + ".part";
+                    .Single(x => x["hash"].GetValue<string>() == hash);
+                var relative =
+                    "objects/"
+                    + hash.ToLowerInvariant()
+                    + (
+                        f["kind"].GetValue<string>() == OriginalValidation.PdfKind ? ".pdf" : ".xml"
+                    );
                 if (
-                    !manifest.Files.Any(x =>
-                        x.Path == relative && x.Hash == row["hash"].GetValue<string>()
-                    )
+                    !entries.TryGetValue(relative, out var entry)
+                    || entry.Length != f["bytes"].GetValue<long>()
                 )
-                    throw new IOException("Retained manual input is missing.");
+                    throw new IOException("File association is incomplete.");
                 var article = JsonSerializer.Deserialize<Article>(
                     tables["ld_records"]
                         .AsArray()
                         .Single(x =>
-                            x["search_id"].GetValue<string>() == job["search_id"].GetValue<string>()
+                            x["search_id"].GetValue<string>() == row["search_id"].GetValue<string>()
                         )["metadata"]
                         .GetValue<string>()
                 );
                 OriginalValidation.Validate(
-                    ReadEntry(entries[relative], NcbiTransport.MaximumBytes),
+                    ReadEntry(entry, NcbiTransport.MaximumBytes),
                     article,
                     true
                 );
             }
+            foreach (var row in tables["ld_manual_inputs"].AsArray())
+            {
+                TimeBound();
+                var job = tables["ld_jobs"]
+                    .AsArray()
+                    .Single(x =>
+                        x["job_id"].GetValue<string>() == row["job_id"].GetValue<string>()
+                    );
+                if (job["state"].GetValue<string>() != "completed")
+                {
+                    var relative = "staging/" + row["stage_token"].GetValue<string>() + ".part";
+                    if (
+                        !manifest.Files.Any(x =>
+                            x.Path == relative && x.Hash == row["hash"].GetValue<string>()
+                        )
+                    )
+                        throw new IOException("Retained manual input is missing.");
+                    var article = JsonSerializer.Deserialize<Article>(
+                        tables["ld_records"]
+                            .AsArray()
+                            .Single(x =>
+                                x["search_id"].GetValue<string>()
+                                == job["search_id"].GetValue<string>()
+                            )["metadata"]
+                            .GetValue<string>()
+                    );
+                    OriginalValidation.Validate(
+                        ReadEntry(entries[relative], NcbiTransport.MaximumBytes),
+                        article,
+                        true
+                    );
+                }
+            }
+            await Exec(
+                db,
+                "UPDATE ld_batches b SET state='paused' WHERE b.library_id=@p0 AND b.state NOT IN ('paused','cancelled') AND EXISTS(SELECT 1 FROM ld_items i WHERE i.library_id=b.library_id AND i.batch_id=b.batch_id AND i.state='paused')",
+                id
+            );
+            await Exec(
+                db,
+                "SELECT setval(pg_get_serial_sequence('ld_records','ordinal'),GREATEST((SELECT last_value FROM ld_records_ordinal_seq),COALESCE((SELECT max(ordinal) FROM ld_records),1)))"
+            );
+            checkpoint?.Invoke("validated");
+            Directory.CreateDirectory(stage);
+            foreach (var item in manifest.Files)
+            {
+                TimeBound();
+                var destination = Path.Combine(
+                    stage,
+                    item.Path.Replace('/', Path.DirectorySeparatorChar)
+                );
+                Directory.CreateDirectory(Path.GetDirectoryName(destination));
+                using var file = new FileStream(
+                    destination,
+                    FileMode.CreateNew,
+                    FileAccess.Write,
+                    FileShare.None
+                );
+                file.Write(ReadEntry(entries[item.Path], NcbiTransport.MaximumBytes));
+                file.Flush(true);
+            }
+            await TransferCheckpoint(
+                transfer,
+                owner,
+                id,
+                manifest.OriginLibrary,
+                "staged",
+                "Validated files staged; library not committed."
+            );
+            checkpoint?.Invoke("staged");
+            Directory.Move(stage, target);
+            await TransferCheckpoint(
+                transfer,
+                owner,
+                id,
+                manifest.OriginLibrary,
+                "published",
+                "Files moved; database association not yet committed."
+            );
+            checkpoint?.Invoke("published");
+            await Exec(
+                db,
+                "INSERT INTO ld_transfers VALUES(@p0,@p1,@p2,'completed','New owned library; unfinished work paused; source IDs and private metadata preserved.',now())",
+                transfer,
+                id,
+                manifest.OriginLibrary
+            );
+            await Event(
+                db,
+                id,
+                null,
+                "restored",
+                "Private bundle restored from library "
+                    + manifest.OriginLibrary
+                    + "; authority and leases not imported."
+            );
+            await Exec(db, "UPDATE ld_libraries SET ready=true WHERE library_id=@p0", id);
+            await tx.CommitAsync();
+            try
+            {
+                await TransferCheckpoint(
+                    transfer,
+                    owner,
+                    id,
+                    manifest.OriginLibrary,
+                    "completed",
+                    "New library and immutable files committed; unfinished work paused."
+                );
+            }
+            catch
+            { /* 可見文庫已提交；後續狀態查詢依資料庫存在性對帳，不將成功寫入改報失敗。 */
+            }
+            return id;
         }
-        await Exec(
-            db,
-            "UPDATE ld_batches b SET state='paused' WHERE b.library_id=@p0 AND b.state NOT IN ('paused','cancelled') AND EXISTS(SELECT 1 FROM ld_items i WHERE i.library_id=b.library_id AND i.batch_id=b.batch_id AND i.state='paused')",
-            id
-        );
-        await Exec(
-            db,
-            "SELECT setval(pg_get_serial_sequence('ld_records','ordinal'),GREATEST((SELECT last_value FROM ld_records_ordinal_seq),COALESCE((SELECT max(ordinal) FROM ld_records),1)))"
-        );
-        checkpoint?.Invoke("validated");
-        Directory.CreateDirectory(stage);
-        foreach (var item in manifest.Files)
+        catch
         {
-            TimeBound();
-            var destination = Path.Combine(
-                stage,
-                item.Path.Replace('/', Path.DirectorySeparatorChar)
-            );
-            Directory.CreateDirectory(Path.GetDirectoryName(destination));
-            using var file = new FileStream(
-                destination,
-                FileMode.CreateNew,
-                FileAccess.Write,
-                FileShare.None
-            );
-            file.Write(ReadEntry(entries[item.Path], NcbiTransport.MaximumBytes));
-            file.Flush(true);
+            try
+            {
+                await TransferCheckpoint(
+                    transfer,
+                    owner,
+                    id,
+                    manifest.OriginLibrary,
+                    "interrupted",
+                    "Transfer completion was not confirmed; staged evidence retained for visibility reconciliation."
+                );
+            }
+            catch
+            { /* 保留原始錯誤；先前持久化階段仍可在重開後對帳。 */
+            }
+            throw;
         }
-        checkpoint?.Invoke("staged");
-        Directory.Move(stage, target);
-        checkpoint?.Invoke("published");
+    }
+
+    private async Task TransferCheckpoint(
+        Guid transfer,
+        Guid owner,
+        Guid library,
+        Guid origin,
+        string phase,
+        string reason
+    )
+    {
+        await using var db = await Data.OpenConnectionAsync();
         await Exec(
             db,
-            "INSERT INTO ld_transfers VALUES(@p0,@p1,@p2,'completed','New owned library; unfinished work paused; source IDs and private metadata preserved.',now())",
+            "INSERT INTO ld_transfer_attempts VALUES(@p0,@p1,@p2,@p3,@p4,now(),@p5) ON CONFLICT(transfer_id) DO UPDATE SET phase=excluded.phase,updated_at=now(),reason=excluded.reason",
             transfer,
-            id,
-            manifest.OriginLibrary
+            owner,
+            library,
+            origin,
+            phase,
+            reason
         );
-        await Event(
+    }
+
+    public async Task<object> TransferStatus(Guid owner)
+    {
+        await using var db = await Data.OpenConnectionAsync();
+        await Exec(
             db,
-            id,
-            null,
-            "restored",
-            "Private bundle restored from library "
-                + manifest.OriginLibrary
-                + "; authority and leases not imported."
+            "UPDATE ld_transfer_attempts t SET phase=CASE WHEN EXISTS(SELECT 1 FROM ld_libraries l WHERE l.library_id=t.target_library AND l.owner_id=t.owner_id AND l.ready) THEN 'completed' ELSE 'interrupted' END,reason='Reconciled durable library visibility; retained files require no overwrite.' WHERE owner_id=@p0 AND phase IN ('validating','staged','published','interrupted') AND updated_at<now()-interval '3 minutes'",
+            owner
         );
-        await Exec(db, "UPDATE ld_libraries SET ready=true WHERE library_id=@p0", id);
-        await tx.CommitAsync();
-        return id;
+        return await Rows(
+            db,
+            "SELECT transfer_id,target_library,origin_library,phase,updated_at,reason FROM ld_transfer_attempts WHERE owner_id=@p0 ORDER BY updated_at DESC LIMIT 100",
+            owner
+        );
     }
 }

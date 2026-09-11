@@ -3,6 +3,8 @@ CREATE TABLE ld_retry(library_id uuid NOT NULL,job_id text NOT NULL,next_at time
 CREATE INDEX ld_retry_due ON ld_retry(status,next_at);
 CREATE TABLE ld_health(library_id uuid NOT NULL REFERENCES ld_libraries,path text NOT NULL,state text NOT NULL,expected_hash text,actual_hash text,bytes bigint,checked_at timestamptz NOT NULL,reason text NOT NULL,PRIMARY KEY(library_id,path));
 CREATE TABLE ld_transfers(transfer_id uuid PRIMARY KEY,library_id uuid NOT NULL REFERENCES ld_libraries,origin_library uuid NOT NULL,state text NOT NULL,reason text NOT NULL,created_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE ld_health_scans(library_id uuid PRIMARY KEY REFERENCES ld_libraries,next_offset integer NOT NULL,checked_at timestamptz NOT NULL,reason text NOT NULL);
+CREATE TABLE ld_transfer_attempts(transfer_id uuid PRIMARY KEY,owner_id uuid NOT NULL REFERENCES ld_accounts,target_library uuid NOT NULL,origin_library uuid NOT NULL,phase text NOT NULL,updated_at timestamptz NOT NULL DEFAULT now(),reason text NOT NULL);
 CREATE TABLE ld_recovery_guard(singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton),required boolean NOT NULL);
 INSERT INTO ld_recovery_guard VALUES(true,false);
 INSERT INTO ld_schema(version) VALUES(3);

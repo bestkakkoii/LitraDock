@@ -126,6 +126,13 @@ public sealed partial class PgStore
                 state = "unreadable";
                 reason = "File could not be read; retained for review.";
             }
+            var previous =
+                await Scalar(
+                    db,
+                    "SELECT state||':'||coalesce(actual_hash,'') FROM ld_health WHERE library_id=@p0 AND path=@p1",
+                    library,
+                    relative
+                ) as string;
             await Exec(
                 db,
                 "INSERT INTO ld_health VALUES(@p0,@p1,@p2,@p3,@p4,@p5,now(),@p6) ON CONFLICT(library_id,path) DO UPDATE SET state=excluded.state,expected_hash=excluded.expected_hash,actual_hash=excluded.actual_hash,bytes=excluded.bytes,checked_at=excluded.checked_at,reason=excluded.reason",
@@ -137,7 +144,10 @@ public sealed partial class PgStore
                 length,
                 reason
             );
-            if (state is "missing" or "corrupt" or "unreadable")
+            if (
+                state is "missing" or "corrupt" or "unreadable"
+                && previous != state + ":" + (actual ?? "")
+            )
             {
                 await Event(
                     db,

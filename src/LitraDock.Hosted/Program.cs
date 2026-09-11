@@ -167,6 +167,7 @@ builder.Services.AddSingleton<ILiteratureSource>(
 );
 #endif
 builder.Services.AddHostedService<HostedWorker>();
+builder.Services.AddHostedService<HealthWorker>();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
@@ -493,6 +494,11 @@ app.MapPost(
     (Guid library, string id) => store.ManualItem(library, id)
 );
 app.MapGet("/api/sources", () => SourceAcquisition.Capabilities);
+app.MapGet(
+    "/api/transfers",
+    async (HttpContext context) =>
+        Results.Ok(await store.TransferStatus(((Session)context.Items["session"]).Account))
+);
 app.MapGet(
     "/api/libraries/{library:guid}/next-events",
     (Guid library) => store.NextEvents(library)
