@@ -63,13 +63,20 @@ jobs:
           set -euo pipefail
           node --version > evidence/browser-environment.txt
           npm --version >> evidence/browser-environment.txt
+          retain_browser_evidence() {
+            taskExitCode=$?
+            for artifact in .litradock/hosted-browser/browser-*.png .litradock/hosted-browser/failure.json; do
+              if [ -f "$artifact" ]; then cp "$artifact" evidence/; fi
+            done
+            if [ -f .litradock/hosted-browser/result.json ]; then cp .litradock/hosted-browser/result.json evidence/browser-result.json; fi
+            exit "$taskExitCode"
+          }
+          trap retain_browser_evidence EXIT
           dotnet restore tests/LitraDock.HostedBrowserHost --locked-mode 2>&1 | tee evidence/browser-restore.log
           dotnet build tests/LitraDock.HostedBrowserHost -c Release --no-restore 2>&1 | tee evidence/browser-build.log
           npm ci --prefix tests/hosted-web 2>&1 | tee evidence/browser-npm.log
           tests/hosted-web/node_modules/.bin/playwright install --with-deps chromium 2>&1 | tee evidence/browser-install.log
           node tests/hosted-web/verify.mjs .litradock/hosted-browser 2>&1 | tee evidence/browser.log
-          cp .litradock/hosted-browser/result.json evidence/browser-result.json
-          cp .litradock/hosted-browser/browser-*.png evidence/
       - name: Retain bounded synthetic evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

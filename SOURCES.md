@@ -1,0 +1,30 @@
+# Sources, originals and exports
+
+Search PubMed metadata, open a saved result scope, refine or select across pages, preview a naming template, then acquire the stated scope. Total and fetched counts differ when a search is partial. Closing the browser does not cancel a durable worker. Pause/resume/cancel and eligible retries retain attempt history. Mixed unsuccessful items have individual reasons; no fake completion percentage is shown.
+
+Use **Continue with original** on an unresolved item, or **Upload an original to this record** from record details, to associate an authorized PDF/XML without duplicating the bibliographic record. Select the actual file, legitimate version and optional stable source URL. An uncertain PDF stays `needs_review`; compare the displayed title/authors/identifiers before explicit confirmation. User-confirmed identity is distinct from machine verification. Original bytes stay intact, identical files share one per-library object, and distinct versions retain separate hashes/provenance. Download names use the saved template, actual extension and hash suffix.
+
+## Provider behavior
+
+| Provider | Support and evidence |
+| --- | --- |
+| PubMed | [E-utilities guidance](https://www.ncbi.nlm.nih.gov/books/NBK25497/) governs batched citation metadata. A hit is not full-text access. |
+| PMC OAI | [Current OAI documentation](https://pmc.ncbi.nlm.nih.gov/tools/oai/) permits its reusable full-text XML subset under article-specific terms: maximum3/sec, no overlapping requests, and work exceeding100 requests outside weekday05:00–21:00 US Eastern. The service uses a shared PostgreSQL gate covering headers/body,400ms spacing and a daytime100-request allowance with explicit off-peak continuation. |
+| PMC cloud | [Current datasets](https://pmc.ncbi.nlm.nih.gov/tools/pmcaws/) contain separate file/version information. Cloud PDF/media retrieval is not implemented here. The [former OA API](https://pmc.ncbi.nlm.nih.gov/tools/oa-service/) retired in August2026 and is not used. |
+| Europe PMC | [REST documentation](https://europepmc.org/RestfulWebService) supports OA XML and metadata discovery. Missing PMCID discovery requires unique matching identity. Europe XML is the supported fallback. A separate shared1/sec budget is a conservative default, not a negotiated provider limit. Supplements/PDF are not acquired. |
+| Publishers/institutions | Stable DOI/PubMed/PMC destinations support manual continuation. Product credentials do not supply journal credentials, subscriptions or institutional IP access. Authorized publisher connectors and reusable institutional sessions remain unimplemented. Absence of an API does not prove HTTP automation impossible or permitted. |
+| Sci-Hub | No specifically authorized route or content rights are configured; capability is unsupported. No mirrors or automatic requests. The workflow remains useful through supported sources and manual authorized originals. |
+
+Only exact approved HTTPS API paths are followed. Redirects stop after5 hops; loops, private/reserved DNS answers and unapproved destinations fail. Normal TLS validation remains enabled. No inherited cookies/proxies or challenge bypass. Bodies are bounded32MiB/90s with two bounded transient retries and persisted Retry-After. All deployment workers sharing egress must share the budget database; unrelated applications on the IP are outside this control.
+
+XML requires one article with matching nonconflicting identifiers and content. PDF uses actual bounded parsing and identity evidence; HTML/login/challenge is not a paper. Child PDF parsing has20s,256MiB managed heap and384MiB observed working-set limits, maximum300 pages and two-parser concurrency. This is not a complete malware sandbox or rendered-fidelity guarantee. XML is never renamed as a pretend PDF. User-supplied source URLs are assertions, not automatically visited.
+
+## Export, migration and limits
+
+Excel keeps the required eight leading fields, textual DOI/PMID/PMCID and actual stable hyperlinks. Scoped detail includes metadata, unresolved actions, files, provenance, jobs, activity and search history. Long fields use reconstructable ordered chunks. Shareable exports explicitly remove URL credentials, non-public queries and fragments, including nested XML/JSON URLs; private canonical metadata and original files remain exact. CSV neutralizes formula-like leading text. These reports are not portable backups.
+
+Search/batch limit10000; record pages50; catalogs/history/item pages100. Exports allow10000 records/32MiB canonical metadata and10000 rows/32MiB per detail sheet, then reject explicitly. Record detail allows100 versions/provenance entries before a limit error directing to scoped export. Upload limit32MiB. Full quotas, concurrent worst-case memory, backup drills and production capacity remain deployment requirements.
+
+Run explicit migration to schema2 before this version. Stop writers and preserve matching database/object backups first, then verify a copy. Existing IDs and histories remain; new tables store manual input, provenance and source usage. Rollback restores the pre-upgrade pair to a separate target; no destructive down-migration or automatic reverse transfer of new writes. Import only a stopped SQLite copy into a new library; preserve native rollback data independently.
+
+The CI workflow uses ephemeral PostgreSQL and synthetic documents. It does not deploy production, prove institutional access or establish every browser/OS. No production endpoint is supplied by GitHub Pages or Actions.

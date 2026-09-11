@@ -1,8 +1,8 @@
-# LitraDock hosted foundation — hosted development preview
+# LitraDock — hosted literature workflow preview
 
 This snapshot contains application code and synthetic tests for review. It has no original development/commissioning history, private libraries or acquired papers. Project source is provided under GNU AGPL-3.0-only; see LICENSE. This does not grant rights to scholarly articles, trademarks or external services. Third-party components retain their own notices.
 
-The hosted foundation uses ASP.NET Core 10, PostgreSQL and private immutable originals outside the web root. It is not a production release. PostgreSQL integration, multiuser security and deployment must pass actual tests before enabling a public endpoint. Current operator-created accounts have revocable sessions; self-registration/reset/email flows are not implemented.
+The service uses ASP.NET Core10, PostgreSQL and private immutable originals outside the web root. It supports PubMed search, permitted PMC/Europe PMC XML acquisition, durable mixed-outcome batches, same-record manual originals and complete scoped Excel/CSV reports. See [source workflow and limits](SOURCES.md). It is not a production release; actual deployment/security/backup gates remain. Operator-created accounts have revocable sessions; self-registration/reset/email flows are not implemented.
 
 ```sh
 dotnet restore tests/LitraDock.HostedVerification --locked-mode

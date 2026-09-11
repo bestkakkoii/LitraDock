@@ -177,12 +177,8 @@ try {
   await row
     .getByRole("button", { name: "Continue with original", exact: true })
     .click();
+  await page.locator("#manualDialog").waitFor({ state: "visible" });
   const identity = await page.locator("#manualIdentity").textContent();
-  check(
-    identity.includes("Synthetic browser article") &&
-      identity.includes("PMID:"),
-    "Manual confirmation displays title, authors and canonical identifiers",
-  );
   const id = identity.split(" · ")[0];
   const csrf = await page.evaluate(
     async () => (await (await fetch("/api/session")).json()).csrf,
@@ -192,6 +188,12 @@ try {
       (await (await fetch(`/api/libraries/${library}/records/${id}`)).json())
         .article,
     { library, id },
+  );
+  check(
+    [record.title, record.authors, record.doi, record.pmid, record.pmcid].every(
+      (value) => value && identity.includes(value),
+    ),
+    "Visible manual confirmation displays exact title, authors, DOI, PMID and PMCID",
   );
   const xml = `<article><front><article-meta><article-id pub-id-type="pmid">${record.pmid}</article-id><article-id pub-id-type="pmc">${record.pmcid}</article-id><article-id pub-id-type="doi">${record.doi}</article-id><license>Synthetic user original</license></article-meta></front><body><p>Complete synthetic body β 測試</p></body></article>`;
   await page.locator("#manualFile").setInputFiles({
