@@ -252,8 +252,8 @@ public sealed class SourceAcquisition(PubMedSource metadata, HttpClient ncbi, Ht
         catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
         {
             throw new SourceException(
-                "failed",
-                "Source request timed out; retry explicitly; no deliberate pause inferred."
+                "transient",
+                "Source request timed out; bounded automatic continuation may follow; no deliberate pause inferred."
             );
         }
     }

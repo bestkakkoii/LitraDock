@@ -86,6 +86,12 @@ if (args.Contains("--operator-restore"))
     return;
 }
 await store.VerifySchema();
+if (args.Contains("--operator-clear-guard"))
+{
+    await OperatorRecovery.VerifyAndClearGuard(store, originals);
+    Console.WriteLine("Database/object hashes verified; startup recovery guard cleared.");
+    return;
+}
 await store.VerifyOperational();
 if (args.Contains("--operator-backup"))
 {

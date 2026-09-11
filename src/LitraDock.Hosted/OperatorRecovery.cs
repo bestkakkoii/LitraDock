@@ -16,6 +16,30 @@ public sealed record RecoveryPair(
 // 僅供受信任操作人員；資料庫 dump 不是可由一般使用者上傳的交換格式。
 public static class OperatorRecovery
 {
+    public static async Task VerifyAndClearGuard(PgStore store, OriginalStore originals)
+    {
+        await using var maintenance = await ResourceAdmission.Enter(store, maintenance: true);
+        await store.VerifySchema();
+        await using var db = await store.Data.OpenConnectionAsync();
+        var files = await PgStore.Rows(
+            db,
+            "SELECT library_id,hash,bytes FROM ld_files LIMIT 10001"
+        );
+        if (files.Count > 10000)
+            throw new IOException(
+                "Guard verification exceeds bounded file count; use an audited recovery procedure."
+            );
+        foreach (var file in files)
+            if (
+                originals.Read((Guid)file["library_id"], (string)file["hash"]).LongLength
+                != (long)file["bytes"]
+            )
+                throw new IOException(
+                    "Database/object association is incomplete; guard remains set."
+                );
+        await PgStore.Exec(db, "UPDATE ld_recovery_guard SET required=false");
+    }
+
     private static void Separate(string directory, string storage)
     {
         var a =

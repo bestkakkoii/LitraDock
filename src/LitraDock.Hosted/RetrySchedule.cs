@@ -125,6 +125,13 @@ public sealed partial class PgStore
             );
             await Exec(
                 db,
+                "UPDATE ld_jobs SET state=@p2 WHERE library_id=@p0 AND job_id=@p1 AND state='scheduled'",
+                library,
+                old,
+                row["category"]
+            );
+            await Exec(
+                db,
                 "UPDATE ld_retry SET status='dispatched',successor_job=@p2 WHERE library_id=@p0 AND job_id=@p1",
                 library,
                 old,

@@ -11,6 +11,11 @@ using Npgsql;
 
 var output = Path.GetFullPath(args.ElementAtOrDefault(1) ?? ".litradock/hosted-tests");
 Directory.CreateDirectory(output);
+if (args.FirstOrDefault() is "--recovery-scheduler-child" or "--recovery-import-child")
+{
+    await RecoveryProcessChecks.Child(args[0], output);
+    return;
+}
 var checks = new List<string>();
 var watch = Stopwatch.StartNew();
 string engineVersion = null;
@@ -999,6 +1004,22 @@ static async Task HttpNegativeTests(
             "Authenticated HTTP mutation without CSRF is denied"
         );
         client.DefaultRequestHeaders.Add("X-CSRF", csrf);
+        foreach (var denied in new[] { "bundle", "health" })
+            check(
+                (
+                    await client.PostAsJsonAsync(
+                        "/api/libraries/" + foreign + "/" + denied,
+                        new { offset = 0 }
+                    )
+                ).StatusCode == HttpStatusCode.NotFound,
+                "Cross-user private transfer/health HTTP denial: " + denied
+            );
+        check(
+            (await client.GetAsync("/api/libraries/" + foreign + "/next-events")).StatusCode
+                == HttpStatusCode.NotFound,
+            "Cross-user automatic event HTTP denial"
+        );
+
         foreach (
             var route in new[]
             {

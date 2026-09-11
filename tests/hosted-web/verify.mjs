@@ -28,6 +28,7 @@ const dll = path.join(
   "build/LitraDock.HostedBrowserHost/Release/net10.0/LitraDock.HostedBrowserHost.dll",
 );
 const cwd = path.join(root, "src/LitraDock.Hosted");
+await promisify(execFile)("dotnet", [dll, "--migrate"], {cwd,env,windowsHide:true});
 await promisify(execFile)("dotnet", [dll, "--create-account"], {
   cwd,
   env,

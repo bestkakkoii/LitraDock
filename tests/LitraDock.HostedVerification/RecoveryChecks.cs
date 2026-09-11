@@ -91,8 +91,7 @@ public static class RecoveryChecks
             "UPDATE ld_retry SET next_at=now()-interval '1 second' WHERE library_id=@p0",
             library
         );
-        await using (var peer = new PgStore(sourceConnection))
-            await Task.WhenAll(store.AdvanceSchedule(), peer.AdvanceSchedule());
+        await RecoveryProcessChecks.SchedulePair(sourceConnection, output);
         check(
             Convert.ToInt32(
                 await Sql(
@@ -100,7 +99,7 @@ public static class RecoveryChecks
                     library
                 )
             ) == 1,
-            "Concurrent schedulers create one successor attempt"
+            "Two actual scheduler processes create one successor attempt"
         );
         var successor = await store.ClaimNext();
         check(
@@ -113,6 +112,15 @@ public static class RecoveryChecks
         );
         await worker.ExecuteClaim(successor, CancellationToken.None);
         check(source.Fetches == 1, "Automatic continuation acquires the original once");
+        check(
+            (string)
+                await Sql(
+                    "SELECT state FROM ld_batches WHERE library_id=@p0 AND batch_id=@p1",
+                    library,
+                    batch
+                ) == "completed",
+            "Superseded scheduled attempt cannot keep completed batch running"
+        );
         var files = await store.Files(library, id);
         var hash = (string)files[0]["hash"];
         var original = originals.Read(library, hash);
@@ -358,6 +366,29 @@ public static class RecoveryChecks
                 && originals.Read(library, hash).SequenceEqual(original),
             "Failed publication leaves existing libraries and source bytes intact"
         );
+        await RecoveryProcessChecks.InterruptImport(
+            sourceConnection,
+            output,
+            other,
+            archive,
+            originals
+        );
+        check(
+            Equals(countBefore, await Sql("SELECT count(*) FROM ld_libraries")),
+            "Actual process kill after file move rolls back library publication"
+        );
+        await Sql(
+            "UPDATE ld_transfer_attempts SET updated_at=now()-interval '4 minutes' WHERE phase IN ('published','interrupted')"
+        );
+        var transfers = JsonSerializer.SerializeToElement(await store.TransferStatus(other));
+        check(
+            transfers
+                .EnumerateArray()
+                .Any(x => x.GetProperty("phase").GetString() == "interrupted"),
+            "Reopen reconciles interrupted transfer with retained evidence and no false completion"
+        );
+        await using (var available = await ResourceAdmission.Enter(store, heavy: true))
+            check(true, "Killed import process releases aggregate resource gate");
         var bad = Path.Combine(output, "bad.zip");
         foreach (
             var attack in new[]
@@ -437,6 +468,36 @@ public static class RecoveryChecks
         var dumpTool = Environment.GetEnvironmentVariable("LITRADOCK_PG_DUMP") ?? "pg_dump";
         var restoreTool =
             Environment.GetEnvironmentVariable("LITRADOCK_PG_RESTORE") ?? "pg_restore";
+        await Reject(
+            () =>
+                OperatorRecovery.Backup(
+                    store,
+                    sourceConnection,
+                    originals,
+                    Path.Combine(output, "failed-backup"),
+                    dumpTool,
+                    phase =>
+                    {
+                        if (phase == "copied")
+                            throw new IOException("Synthetic backup interruption");
+                    }
+                ),
+            "Failed operator backup leaves an incomplete destination and releases maintenance"
+        );
+        await using (var admission = await ResourceAdmission.Enter(store))
+            check(true, "Failed backup does not leave application maintenance lock held");
+        await Sql("UPDATE ld_recovery_guard SET required=true");
+        await Reject(
+            () => store.VerifyOperational(),
+            "Incomplete recovery guard blocks service startup"
+        );
+        await OperatorRecovery.VerifyAndClearGuard(store, originals);
+        await store.VerifyOperational();
+        check(
+            true,
+            "Operator verifies original associations before clearing failed-backup startup guard"
+        );
+        var login = await store.Login("recovery-user", "Synthetic-recovery-password-2026");
         bool barrier = false;
         await OperatorRecovery.Backup(
             store,
@@ -484,6 +545,12 @@ public static class RecoveryChecks
             restoreTool
         );
         await target.VerifyOperational();
+        check(
+            await target.Authenticate(login.Value.Token) == null
+                && await store.Authenticate(login.Value.Token) != null,
+            "Operator restore revokes copied sessions while preserving source session"
+        );
+
         check(
             relocated.Read(library, hash).SequenceEqual(original)
                 && (await target.Article(library, id)).SearchId == id,

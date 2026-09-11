@@ -23,7 +23,7 @@ while True:
             continue
         try:
             name = (directory / 'comm').read_text().strip()
-            if not any(x in name.lower() for x in ['dotnet', 'postgres', 'chrome', 'chromium', 'node']):
+            if not (name in {'dotnet', 'node', 'postgres'} or name.startswith(('chrome', 'chromium'))):
                 continue
             rss = int((directory / 'statm').read_text().split()[1]) * page
             current[name] = current.get(name, 0) + rss
