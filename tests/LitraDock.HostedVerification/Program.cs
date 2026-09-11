@@ -412,6 +412,22 @@ if (args.FirstOrDefault() == "--postgres")
             && !await store.Associated(library, corruptClaim.SearchId, corruptInfo.Hash),
         "Corrupt prepared candidate retains failure evidence and permits verified good-original skip"
     );
+    await using (var evidenceDb = new NpgsqlConnection(connection))
+    {
+        await evidenceDb.OpenAsync();
+        await using var query = new NpgsqlCommand(
+            "SELECT EXISTS(SELECT 1 FROM ld_events WHERE library_id=$1 AND state='recovery_validation_failed' AND strpos(reason,$2)>0)",
+            evidenceDb
+        );
+        query.Parameters.AddWithValue(library);
+        query.Parameters.AddWithValue(corruptClaim.Job);
+        Check(
+            (bool)await query.ExecuteScalarAsync()
+                && File.ReadAllText(originals.ObjectPath(library, corruptInfo.Hash))
+                    == "corrupt retained evidence",
+            "Corrupt prepared original bytes and attributed failure event remain retained"
+        );
+    }
     var other = await store.CreateLibrary(b, "Other library");
     Check(
         (await store.Files(other, first)).Count == 0
@@ -802,6 +818,29 @@ static async Task HttpNegativeTests(
             await Task.Delay(100);
         }
         check(ready, "Actual hosted HTTP process requires authentication");
+        var privatePath = Path.Combine(
+            start.Environment["LITRADOCK_OBJECTS"],
+            foreign.ToString("N"),
+            "objects",
+            hash + ".xml"
+        );
+        Directory.CreateDirectory(Path.GetDirectoryName(privatePath));
+        File.Copy(
+            Path.Combine(output, "objects", foreign.ToString("N"), "objects", hash + ".xml"),
+            privatePath,
+            false
+        );
+        var raw = await client.GetAsync("/" + foreign.ToString("N") + "/objects/" + hash + ".xml");
+        check(
+            File.Exists(privatePath)
+                && raw.StatusCode == HttpStatusCode.NotFound
+                && (
+                    await client.GetAsync(
+                        "/api/libraries/" + foreign + "/records/" + record + "/files/" + hash
+                    )
+                ).StatusCode == HttpStatusCode.Unauthorized,
+            "Existing private original is denied through unauthenticated raw URL and download API"
+        );
         async Task RejectPublicRoot(string root, string expected)
         {
             Directory.CreateDirectory(root);
