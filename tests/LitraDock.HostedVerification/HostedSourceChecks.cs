@@ -122,7 +122,8 @@ public static class HostedSourceChecks
             (await store.Files(library, id)).Count == 1
                 && Directory
                     .GetFiles(Path.Combine(originals.Root, library.ToString("N"), "objects"))
-                    .Length == 1,
+                    .Length == 2
+                && (await store.Provenance(library, id)).Count == 2,
             "Duplicate manual bytes keep one identical object and distinct attempts"
         );
         var version = SourceChecks.Pdf(article, "Second legitimate version");
@@ -251,7 +252,8 @@ public static class HostedSourceChecks
                 CancellationToken.None
             );
         check(
-            await store.Associated(library, id, info.Hash),
+            await store.Associated(library, id, info.Hash)
+                && !File.Exists(originals.RetainedStage(library, (string)input["stage_token"])),
             "Reopened worker reconciles interrupted manual publication"
         );
         var staleDenied = false;
@@ -308,6 +310,7 @@ public static class HostedSourceChecks
             )
         );
         await BudgetChecks(store, connection, check);
+        await BudgetFailureChecks.Run(store, connection, check);
     }
 
     private static async Task BudgetChecks(

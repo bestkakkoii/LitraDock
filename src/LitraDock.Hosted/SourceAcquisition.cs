@@ -172,8 +172,12 @@ public sealed class SourceAcquisition(PubMedSource metadata, HttpClient ncbi, Ht
             {
                 failures.Add(error);
                 progress?.Invoke(
-                    error.State,
-                    SourceEndpoints.Provider(new Uri(route)) + ": " + error.Message
+                    "resolving",
+                    SourceEndpoints.Provider(new Uri(route))
+                        + " returned "
+                        + error.State
+                        + ": "
+                        + error.Message
                 );
             }
             catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
@@ -331,8 +335,8 @@ public sealed class SourceAcquisition(PubMedSource metadata, HttpClient ncbi, Ht
             using var buffer = new MemoryStream();
             var chunk = new byte[65536];
             progress?.Invoke(
-                "downloading",
-                "Receiving source bytes; validated completion is still pending."
+                "validating",
+                "Reading bounded source response; identity validation is still pending."
             );
             int count;
             while ((count = await stream.ReadAsync(chunk, token)) != 0)

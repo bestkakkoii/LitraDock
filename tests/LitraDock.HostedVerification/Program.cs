@@ -556,6 +556,10 @@ if (args.FirstOrDefault() == "--postgres")
     );
     await HostedSourceChecks.Run(store, connection, output, Check);
 }
+else if (args.FirstOrDefault() == "--live-sources")
+{
+    await LiveSourceChecks.Run(output, Check);
+}
 else if (args.FirstOrDefault() == "--sources")
 {
     await SourceChecks.Run(Check);

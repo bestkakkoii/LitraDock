@@ -186,6 +186,7 @@ public static class SourceChecks
             "Explicit user identity attestation remains distinct from automatic verification"
         );
         var stages = new List<string>();
+        var reasons = new List<string>();
         using var ncbi = new HttpClient(
             new Routes((_, _) => new HttpResponseMessage(HttpStatusCode.NotFound))
         );
@@ -195,11 +196,16 @@ public static class SourceChecks
         var result = await source.FetchFullTextAsync(
             article,
             CancellationToken.None,
-            (state, _) => stages.Add(state)
+            (state, reason) =>
+            {
+                stages.Add(state);
+                reasons.Add(reason);
+            }
         );
         check(
             result.FinalUri.Contains("ebi.ac.uk")
-                && stages.Contains("unavailable")
+                && !stages.Contains("unavailable")
+                && reasons.Any(r => r.Contains("returned unavailable"))
                 && result.Bytes.SequenceEqual(xml),
             "Unavailable PMC falls back to validated Europe PMC XML"
         );

@@ -223,14 +223,24 @@ public static class ScopedWorkbook
                 var text = table.Value[r][c] ?? "";
                 if (csv || text.Length <= 32767)
                     continue;
-                for (var part = 0; part * 30000 < text.Length; part++)
+                var part = 0;
+                for (var offset = 0; offset < text.Length; )
+                {
+                    var length = Math.Min(30000, text.Length - offset);
+                    if (
+                        offset + length < text.Length
+                        && char.IsHighSurrogate(text[offset + length - 1])
+                    )
+                        length--;
                     overflow.Add([
                         table.Key,
                         (r + 1).ToString(),
                         (c + 1).ToString(),
-                        (part + 1).ToString(),
-                        text.Substring(part * 30000, Math.Min(30000, text.Length - part * 30000)),
+                        (++part).ToString(),
+                        text.Substring(offset, length),
                     ]);
+                    offset += length;
+                }
                 table.Value[r][c] =
                     "Complete value in Long Fields: row " + (r + 1) + ", column " + (c + 1) + ".";
             }
@@ -286,7 +296,7 @@ public static class ScopedWorkbook
                     string Cell(string v)
                     {
                         v ??= "";
-                        if (v.Length > 0 && "=+-@\t\r".Contains(v[0]))
+                        if (v.Length > 0 && (char.IsWhiteSpace(v[0]) || "=+-@".Contains(v[0])))
                             v = "'" + v;
                         return "\"" + v.Replace("\"", "\"\"") + "\"";
                     }

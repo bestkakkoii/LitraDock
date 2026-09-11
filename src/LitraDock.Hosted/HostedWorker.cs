@@ -95,6 +95,10 @@ public sealed class HostedWorker(PgStore store, OriginalStore originals, ILitera
                         "completed",
                         "Recovered validated durable original without refetch."
                     );
+                    if (manual != null)
+                        File.Delete(
+                            originals.RetainedStage(claim.Library, (string)manual["stage_token"])
+                        );
                     return;
                 }
                 foreach (
@@ -125,7 +129,13 @@ public sealed class HostedWorker(PgStore store, OriginalStore originals, ILitera
                         when (error is IOException or SourceException or System.Xml.XmlException)
                     { }
                 }
-                await store.Progress(claim, "downloading", "Retrieving supported source XML.");
+                await store.Progress(
+                    claim,
+                    "resolving",
+                    manual == null
+                        ? "Resolving supported full-text routes."
+                        : "Validating retained manual original."
+                );
                 var response =
                     manual != null
                         ? new SourceResponse
