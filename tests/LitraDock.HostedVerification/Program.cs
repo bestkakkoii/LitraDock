@@ -14,6 +14,11 @@ Directory.CreateDirectory(output);
 var checks = new List<string>();
 var watch = Stopwatch.StartNew();
 string engineVersion = null;
+if (args.FirstOrDefault() is "--gate-child" or "--gate-hold")
+{
+    await GateProcessChecks.Child(output, args[0] == "--gate-hold");
+    return;
+}
 if (args.FirstOrDefault() == "--source-probe")
 {
     if (Environment.GetEnvironmentVariable("LITRADOCK_ALLOW_EPHEMERAL_TEST") != "yes")
@@ -59,6 +64,7 @@ if (args.FirstOrDefault() == "--postgres")
         throw new InvalidOperationException(
             "Use an explicitly authorized ephemeral litradock_ci_ database."
         );
+    await UpgradeChecks.Run(connection, Check);
     await using var store = new PgStore(connection);
     await store.Migrate();
     await store.VerifySchema();
@@ -520,6 +526,50 @@ if (args.FirstOrDefault() == "--postgres")
             .Equals(legacy.ReadTable("files").Rows[0]["hash"]),
         "Imported original hashes/associations remain queryable"
     );
+    var concurrentWrite = false;
+    var consistentImport = await store.ImportStoppedCopy(
+        a,
+        "Concurrent snapshot fixture",
+        legacyRoot,
+        originals,
+        table =>
+        {
+            if (table != "articles")
+                return;
+            using var writer = new Microsoft.Data.Sqlite.SqliteConnection(
+                new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+                {
+                    DataSource = legacy.DatabasePath,
+                    Mode = Microsoft.Data.Sqlite.SqliteOpenMode.ReadWrite,
+                    Pooling = false,
+                }.ConnectionString
+            );
+            writer.Open();
+            using var command = writer.CreateCommand();
+            command.CommandText =
+                "INSERT INTO activity(state,reason,occurred_at) VALUES('snapshot_probe','Concurrent writer committed after articles snapshot','2026-09-12T00:00:00Z')";
+            command.ExecuteNonQuery();
+            concurrentWrite = true;
+        }
+    );
+    await using (var snapshotDb = new NpgsqlConnection(connection))
+    {
+        await snapshotDb.OpenAsync();
+        await using var query = new NpgsqlCommand(
+            "SELECT count(*) FROM ld_legacy_rows WHERE library_id=$1 AND table_name='activity' AND data::jsonb->>'state'='snapshot_probe'",
+            snapshotDb
+        );
+        query.Parameters.AddWithValue(consistentImport);
+        Check(
+            concurrentWrite
+                && Convert.ToInt32(await query.ExecuteScalarAsync()) == 0
+                && legacy
+                    .ReadTable("activity")
+                    .Rows.Cast<System.Data.DataRow>()
+                    .Any(r => (string)r["state"] == "snapshot_probe"),
+            "Actual concurrent SQLite writer commits while import retains one pre-write table snapshot"
+        );
+    }
     await using (var db = new NpgsqlConnection(connection))
     {
         await db.OpenAsync();
@@ -865,6 +915,7 @@ static async Task HttpNegativeTests(
         check(
             File.Exists(privatePath)
                 && raw.StatusCode == HttpStatusCode.NotFound
+                && !(await raw.Content.ReadAsStringAsync()).Contains("Synthetic")
                 && (
                     await client.GetAsync(
                         "/api/libraries/" + foreign + "/records/" + record + "/files/" + hash
@@ -958,6 +1009,9 @@ static async Task HttpNegativeTests(
                 ("/scopes/" + scope + "/select", new { id = record, selected = true }),
                 ("/batches", new { scope, selectedOnly = false }),
                 ("/batches/" + batch + "/control", new { action = "retry" }),
+                ("/records/" + record + "/manual-item", new { }),
+                ("/records/" + record + "/manual/ITEM-guessed/confirm", new { }),
+                ("/scopes/" + scope + "/csv", new { }),
             }
         )
             check(
@@ -965,6 +1019,19 @@ static async Task HttpNegativeTests(
                     == HttpStatusCode.NotFound,
                 "Foreign mutation denied: " + route
             );
+        using (var upload = new ByteArrayContent(await File.ReadAllBytesAsync(privatePath)))
+        {
+            upload.Headers.ContentType = new("application/octet-stream");
+            using var deniedUpload = await client.PostAsync(
+                "/api/libraries/" + foreign + "/records/" + record + "/manual/ITEM-guessed",
+                upload
+            );
+            check(
+                deniedUpload.StatusCode == HttpStatusCode.NotFound
+                    && !(await deniedUpload.Content.ReadAsStringAsync()).Contains(record),
+                "Cross-user original upload denied without record/body disclosure"
+            );
+        }
         var revoked = await client.PostAsJsonAsync("/api/logout", new { });
         revoked.EnsureSuccessStatusCode();
         check(

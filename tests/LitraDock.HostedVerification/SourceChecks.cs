@@ -46,6 +46,48 @@ public static class SourceChecks
 
     public static async Task Run(Action<bool, string> check)
     {
+        var longUnicode = new string('a', 29999) + "😀繁體中文" + new string('b', 4000);
+        var workbook = ScopedWorkbook.Write(
+            new() { ["Records"] = [new[] { "Title" }, new[] { longUnicode }] },
+            false
+        );
+        using (var archive = new System.IO.Compression.ZipArchive(new MemoryStream(workbook)))
+        {
+            var doc = System.Xml.Linq.XDocument.Load(
+                archive.GetEntry("xl/worksheets/sheet2.xml").Open()
+            );
+            var parts = doc.Descendants()
+                .Where(e => e.Name.LocalName == "row")
+                .Skip(1)
+                .Select(row => row.Elements().Last().Value);
+            check(
+                string.Concat(parts) == longUnicode,
+                "Excel overflow preserves surrogate pairs and complete multilingual field"
+            );
+        }
+        var csv = ScopedWorkbook.Write(
+            new()
+            {
+                ["Records"] =
+                [
+                    new[] { "Title" },
+                    new[] { " \n=HYPERLINK(\"https://example.invalid\")" },
+                ],
+            },
+            true
+        );
+        using (var archive = new System.IO.Compression.ZipArchive(new MemoryStream(csv)))
+        using (var text = new StreamReader(archive.GetEntry("Records.csv").Open()))
+            check(
+                text.ReadToEnd().Contains("\"' \n=HYPERLINK"),
+                "CSV neutralizes formula payload after leading whitespace"
+            );
+        check(
+            SourceAcquisition.PublicLocation(
+                "https://pmc.ncbi.nlm.nih.gov/api/oai/v1/mh/?verb=secret&metadataPrefix=pmc&identifier=token#secret"
+            ) == "https://pmc.ncbi.nlm.nih.gov/api/oai/v1/mh/",
+            "Export provenance strips query secrets even under allowed field names"
+        );
         foreach (
             var address in new[]
             {

@@ -80,9 +80,11 @@ async function catalog() {
     Math.max(r.totals.runs, r.totals.scopes, r.totals.batches);
   $("catalogPrevious").disabled = catalogOffset === 0;
 }
+let previewRecord = "";
 async function page() {
   if (!scope) return;
   const p = await json(base() + `scopes/${scope}?offset=${offset}`);
+  previewRecord = p.records[0]?.article.searchId || "";
   $("counts").textContent =
     `Scope ${p.total}; selected ${p.selected}; page starts ${offset + 1}`;
   $("records").replaceChildren();
@@ -171,7 +173,14 @@ async function progress() {
   }
 }
 async function download(path, body, name) {
-  const blob = await (await api(path, body)).blob(),
+  const response = await api(path, body);
+  if (!name) {
+    const encoded = /filename\*=UTF-8''([^;]+)/i.exec(
+      response.headers.get("Content-Disposition") || "",
+    );
+    name = encoded ? decodeURIComponent(encoded[1]) : "original";
+  }
+  const blob = await response.blob(),
     url = URL.createObjectURL(blob),
     a = document.createElement("a");
   a.href = url;
@@ -192,11 +201,7 @@ async function detail(id) {
     const b = document.createElement("button");
     b.textContent = "Download original " + f.hash;
     b.onclick = safe(() =>
-      download(
-        base() + `records/${id}/files/${f.hash}`,
-        undefined,
-        id + (f.kind === "Original PDF" ? ".pdf" : ".xml"),
-      ),
+      download(base() + `records/${id}/files/${f.hash}`, undefined, undefined),
     );
     $("article").append(b);
   }
@@ -209,7 +214,7 @@ async function detail(id) {
     $("detail").close();
     await catalog();
     await progress();
-    openManual(id, saved.item, "paused");
+    await openManual(id, saved.item, "paused");
   });
   $("article").append(manualButton);
   const provenance = document.createElement("pre");
@@ -312,6 +317,13 @@ $("acquire").onclick = safe(async () => {
   await catalog();
   await progress();
 });
+$("previewName").onclick = safe(async () => {
+  if (!previewRecord) throw new Error("Open a result scope first.");
+  const preview = await json(base() + `records/${previewRecord}/name-preview`, {
+    value: $("template").value,
+  });
+  $("namePreview").textContent = preview.name + " · " + preview.note;
+});
 $("batches").onchange = safe(async () => {
   batch = $("batches").value;
   itemOffset = 0;
@@ -374,11 +386,23 @@ $("csv").onclick = safe(() =>
 let manualRecord = "",
   manualItem = "",
   manualLibrary = "";
-function openManual(record, item, state) {
+async function openManual(record, item, state) {
   manualRecord = record;
   manualItem = item;
   manualLibrary = library;
   $("manualIdentity").textContent = record + " · " + item;
+  const details = await json(base() + "records/" + record);
+  $("manualIdentity").textContent +=
+    "\n" +
+    details.article.title +
+    "\n" +
+    details.article.authors +
+    "\nDOI: " +
+    details.article.doi +
+    " · PMID: " +
+    details.article.pmid +
+    " · PMCID: " +
+    details.article.pmcid;
   $("manualFile").value = "";
   $("manualStatus").textContent = "";
   $("manualConfirmed").checked = false;

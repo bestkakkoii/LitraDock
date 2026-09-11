@@ -127,6 +127,15 @@ try {
     document.querySelector("#counts").textContent.includes("selected 7"),
   );
   check(true, "Cross-page selection retains exact seven items");
+  await page.locator("#template").fill("Study_{SearchId}_{Year}");
+  await page.locator("#previewName").click();
+  await page.waitForFunction(() =>
+    document.querySelector("#namePreview").textContent.includes("Study_LD-"),
+  );
+  check(
+    true,
+    "Actual safe naming preview explains artifact extension and hash suffix",
+  );
   await page.locator("#acquire").click();
   await page.waitForFunction(
     () => document.querySelector("#batches").value !== "",
@@ -169,6 +178,11 @@ try {
     .getByRole("button", { name: "Continue with original", exact: true })
     .click();
   const identity = await page.locator("#manualIdentity").textContent();
+  check(
+    identity.includes("Synthetic browser article") &&
+      identity.includes("PMID:"),
+    "Manual confirmation displays title, authors and canonical identifiers",
+  );
   const id = identity.split(" · ")[0];
   const csrf = await page.evaluate(
     async () => (await (await fetch("/api/session")).json()).csrf,
@@ -180,13 +194,11 @@ try {
     { library, id },
   );
   const xml = `<article><front><article-meta><article-id pub-id-type="pmid">${record.pmid}</article-id><article-id pub-id-type="pmc">${record.pmcid}</article-id><article-id pub-id-type="doi">${record.doi}</article-id><license>Synthetic user original</license></article-meta></front><body><p>Complete synthetic body β 測試</p></body></article>`;
-  await page
-    .locator("#manualFile")
-    .setInputFiles({
-      name: "user-original.xml",
-      mimeType: "application/xml",
-      buffer: Buffer.from(xml),
-    });
+  await page.locator("#manualFile").setInputFiles({
+    name: "user-original.xml",
+    mimeType: "application/xml",
+    buffer: Buffer.from(xml),
+  });
   await page.locator("#manualVersion").selectOption("accepted-manuscript");
   await page.locator("#manualUpload").click();
   await page.waitForFunction(() =>
@@ -252,6 +264,9 @@ try {
   );
   check(exportNoCsrf === 403, "Browser export rejects missing CSRF");
   await page.locator("#selectAll").click();
+  await page.waitForFunction(() =>
+    document.querySelector("#counts").textContent.includes("selected 120"),
+  );
   await page.locator("#acquire").click();
   await waitStatus(page, "running");
   const interruptedBatch = await page.locator("#batches").inputValue();
@@ -276,6 +291,15 @@ try {
     fullPage: true,
   });
   await page.setViewportSize({ width: 390, height: 844 });
+  check(
+    await page.evaluate(
+      () =>
+        document.querySelector("#progress").clientHeight <=
+          innerHeight * 0.55 + 2 &&
+        document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+    "Narrow layout bounds batch list height and avoids document-wide horizontal overflow",
+  );
   await page.screenshot({
     path: path.join(output, "browser-narrow.png"),
     fullPage: true,
@@ -302,6 +326,21 @@ try {
       2,
     ),
   );
+} catch (error) {
+  const pages = browser?.contexts().flatMap((context) => context.pages()) || [];
+  if (pages.length)
+    await pages
+      .at(-1)
+      .screenshot({
+        path: path.join(output, "browser-failure.png"),
+        fullPage: true,
+      })
+      .catch(() => {});
+  await fs.writeFile(
+    path.join(output, "failure.json"),
+    JSON.stringify({ message: error.message, passed: checks }, null, 2),
+  );
+  throw error;
 } finally {
   await browser?.close();
   await stop(server);

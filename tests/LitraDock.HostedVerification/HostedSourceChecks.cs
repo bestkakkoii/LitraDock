@@ -45,7 +45,7 @@ public static class HostedSourceChecks
         var run = await store.Search(library, "synthetic mixed outcomes", 7);
         await worker.ExecuteClaim(await store.ClaimNext(), CancellationToken.None);
         var scope = await store.Scope(library, run, null, "");
-        var batch = await store.Batch(library, scope, false, Naming.DefaultTemplate);
+        var batch = await store.Batch(library, scope, false, "Evidence_{SearchId}_{Year}");
         for (var n = 0; n < 7; n++)
             await worker.ExecuteClaim(await store.ClaimNext(), CancellationToken.None);
         var status = JsonSerializer.SerializeToElement(await store.BatchStatus(library, batch, 0));
@@ -89,6 +89,17 @@ public static class HostedSourceChecks
         );
         await worker.ExecuteClaim(await store.ClaimNext(), CancellationToken.None);
         var files = await store.Files(library, id);
+        var actualName = await store.OriginalName(
+            library,
+            id,
+            Artifacts.Hash(pdf),
+            OriginalValidation.PdfKind
+        );
+        check(
+            actualName.StartsWith("Evidence_" + id)
+                && actualName.EndsWith("_" + Artifacts.Hash(pdf)[..8] + ".pdf"),
+            "Original download retains chosen naming template, actual PDF kind and version hash"
+        );
         check(
             files.Count == 1
                 && (string)files[0]["kind"] == "Original PDF"
@@ -199,6 +210,35 @@ public static class HostedSourceChecks
                     && xml.ToString().Contains(article.Doi),
                 "Selected export contains exactly one record and textual identifiers"
             );
+            var leading = xml.Descendants()
+                .First(e => e.Name.LocalName == "row")
+                .Elements()
+                .Select(e => e.Value)
+                .Take(8);
+            var links = new StreamReader(
+                zip.GetEntry("xl/worksheets/_rels/sheet1.xml.rels").Open()
+            ).ReadToEnd();
+            check(
+                leading.SequenceEqual(ExcelExport.LeadingHeaders)
+                    && links.Contains(article.DoiUri)
+                    && links.Contains(article.OriginalUri)
+                    && links.Contains(article.PmcUri),
+                "Complete workbook preserves eight leading fields and distinct DOI/PubMed/PMC hyperlink targets"
+            );
+            var metadata = System.Xml.Linq.XDocument.Load(
+                zip.GetEntry("xl/worksheets/sheet2.xml").Open()
+            );
+            var json = string.Concat(
+                metadata
+                    .Descendants()
+                    .Where(e => e.Name.LocalName == "row")
+                    .Skip(1)
+                    .Select(r => r.Elements().Last().Value)
+            );
+            check(
+                json == JsonSerializer.Serialize(await store.Article(library, id)),
+                "Selected export reconstructs every canonical Article field including raw multilingual metadata exactly"
+            );
         }
         check(
             (await store.ExportComplete(library, scope, false, true)).Length > 0,
@@ -243,6 +283,34 @@ public static class HostedSourceChecks
             File.Exists(originals.ObjectPath(library, info.Hash))
                 && !await store.Associated(library, id, info.Hash),
             "Injected post-move association failure retains object and rolls back association"
+        );
+        var staleRecoveryRejected = false;
+        try
+        {
+            await store.RecoverPublication(
+                claim with
+                {
+                    Job = "JOB-stale-synthetic",
+                    Lease = Guid.NewGuid(),
+                },
+                article,
+                originals
+            );
+        }
+        catch (OperationCanceledException)
+        {
+            staleRecoveryRejected = true;
+        }
+        check(
+            staleRecoveryRejected
+                && !await store.Associated(library, id, info.Hash)
+                && originals.Read(library, info.Hash).SequenceEqual(recoveryPdf),
+            "Stale reconciliation claim cannot attach prepared original or alter retained bytes"
+        );
+        check(
+            !await store.RecoverPublication(claim with { Library = foreign }, article, originals)
+                && !Directory.Exists(Path.Combine(originals.Root, foreign.ToString("N"))),
+            "Foreign-library reconciliation cannot discover or copy another library prepared original"
         );
         await store.PauseClaim(claim);
         await store.Control(library, recoveryBatch, "resume");
@@ -311,6 +379,7 @@ public static class HostedSourceChecks
         );
         await BudgetChecks(store, connection, check);
         await BudgetFailureChecks.Run(store, connection, check);
+        await GateProcessChecks.Run(output, check);
     }
 
     private static async Task BudgetChecks(

@@ -289,11 +289,16 @@ public sealed partial class PgStore
     public async Task<List<Dictionary<string, object>>> Provenance(Guid library, string article)
     {
         await using var db = await Data.OpenConnectionAsync();
-        return await Rows(
+        var rows = await Rows(
             db,
-            "SELECT job_id,hash,details FROM ld_object_provenance WHERE library_id=@p0 AND search_id=@p1 ORDER BY job_id LIMIT 100",
+            "SELECT job_id,hash,details FROM ld_object_provenance WHERE library_id=@p0 AND search_id=@p1 ORDER BY job_id LIMIT 101",
             library,
             article
         );
+        if (rows.Count > 100)
+            throw new ArgumentException(
+                "Record has more than 100 provenance entries; use scoped export for complete evidence. No history was truncated."
+            );
+        return rows;
     }
 }

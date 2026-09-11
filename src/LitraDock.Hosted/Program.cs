@@ -396,12 +396,18 @@ app.MapGet(
         return Results.File(
             bytes,
             kind == OriginalValidation.PdfKind ? "application/pdf" : "application/xml",
-            Path.ChangeExtension(
-                Naming.Preview(await store.Article(library, id)),
-                OriginalValidation.Extension(kind)
-            )
+            await store.OriginalName(library, id, hash, kind)
         );
     }
+);
+app.MapPost(
+    "/api/libraries/{library:guid}/records/{id}/name-preview",
+    async (Guid library, string id, Name input) =>
+        new
+        {
+            name = Naming.Preview(await store.Article(library, id), input.Value),
+            note = "XML example; the downloaded original uses its validated XML/PDF extension and an eight-character hash suffix.",
+        }
 );
 app.MapPost(
     "/api/libraries/{library:guid}/scopes/{scope}/export",

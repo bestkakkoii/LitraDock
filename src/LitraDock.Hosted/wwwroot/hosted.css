@@ -42,6 +42,7 @@ form {
 }
 label {
   display: inline-block;
+  max-width: 100%;
 }
 .records {
   overflow: auto;
@@ -88,4 +89,36 @@ dialog {
 }
 dialog p {
   white-space: pre-wrap;
+}
+#progress {
+  max-height: 55vh;
+  overflow: auto;
+}
+.acquisition-item {
+  overflow-wrap: anywhere;
+}
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+input,
+select {
+  max-width: calc(100% - 8px);
+}
+@media (max-width: 600px) {
+  main {
+    padding: 8px;
+  }
+  section,
+  form {
+    padding: 10px;
+  }
+  header {
+    padding: 12px;
+  }
+  dialog {
+    width: 94vw;
+    max-width: 94vw;
+  }
 }

@@ -260,12 +260,17 @@ public sealed partial class PgStore
     public async Task<List<Dictionary<string, object>>> Files(Guid library, string article)
     {
         await using var db = await Data.OpenConnectionAsync();
-        return await Rows(
+        var rows = await Rows(
             db,
-            "SELECT a.*,f.kind,f.bytes FROM ld_article_files a JOIN ld_files f USING(library_id,hash) WHERE a.library_id=@p0 AND a.search_id=@p1 ORDER BY hash LIMIT 100",
+            "SELECT a.*,f.kind,f.bytes FROM ld_article_files a JOIN ld_files f USING(library_id,hash) WHERE a.library_id=@p0 AND a.search_id=@p1 ORDER BY hash LIMIT 101",
             library,
             article
         );
+        if (rows.Count > 100)
+            throw new ArgumentException(
+                "Record has more than 100 original versions; use scoped export for complete evidence. No file list was truncated."
+            );
+        return rows;
     }
 
     public async Task<bool> Associated(Guid library, string article, string hash)

@@ -224,7 +224,17 @@ public sealed class SourceAcquisition(PubMedSource metadata, HttpClient ncbi, Ht
             return "";
         var clean = new UriBuilder(uri) { Fragment = "" };
         var fields = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query);
-        if (fields.Keys.Any(k => k is not ("verb" or "metadataPrefix" or "identifier")))
+        if (
+            fields.Count != 3
+            || uri.Host != "pmc.ncbi.nlm.nih.gov"
+            || uri.AbsolutePath != "/api/oai/v1/mh/"
+            || fields["verb"].ToString() != "GetRecord"
+            || fields["metadataPrefix"].ToString() != "pmc"
+            || !Regex.IsMatch(
+                fields["identifier"].ToString(),
+                @"^oai:pubmedcentral\.nih\.gov:[0-9]+$"
+            )
+        )
             clean.Query = "";
         return clean.Uri.AbsoluteUri;
     }
