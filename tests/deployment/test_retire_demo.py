@@ -6,7 +6,11 @@ service; this module never infers permission to invoke production retirement.
 from datetime import datetime, timedelta, timezone
 import importlib.util
 from pathlib import Path
+import json
+import os
+import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("retire", ROOT / "deployment/qualification/retire_demo.py")
@@ -31,6 +35,22 @@ class Registration(unittest.TestCase):
         for text in ("literat+ 60705", "997", "997 60705 extra", "NaN 1"):
             with self.subTest(text=text), self.assertRaises(m.q.Rejected):
                 m.service_processes(text, 997)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX lock control; separate target receipt covers actual root")
+    def test_completed_replay_rejects_restored_invitation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "deployment.json"
+            config.write_text(json.dumps(self.policy))
+            (root / "retirement-state.json").write_text(json.dumps({"binding": "control", "phase": "complete"}))
+            with patch.object(m.os, "geteuid", return_value=0), patch.object(m.q, "protected_file", side_effect=lambda p, _: p), \
+                 patch.object(m, "validate", return_value="control"), patch.object(m, "inspect_storage"), \
+                 patch.object(m, "DATA_ROOT", root / "objects-root"), patch.object(m, "sql", return_value=""):
+                self.assertTrue(m.retire(config, True)["repeated"])
+                (root / "invitations.json").write_text("synthetic-restored-invitation")
+                with self.assertRaises(m.q.Rejected):
+                    m.retire(config, True)
+                self.assertEqual("synthetic-restored-invitation", (root / "invitations.json").read_text())
 
     def test_early_never_mutates(self):
         with self.assertRaises(m.q.Rejected):

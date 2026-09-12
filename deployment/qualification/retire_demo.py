@@ -108,7 +108,7 @@ def retire(config, apply=False):
             os.replace(temp, state_path)
         if state["phase"] == "complete":
             q.require(not any((DATA_ROOT / name).exists() for name in ("objects", "recovery"))
-                      and not (config.parent / "service.env").exists()
+                      and not any((config.parent / name).exists() for name in ("service.env", "invitations.json"))
                       and sql("SELECT oid FROM pg_database WHERE datname='" + policy["database"] + "'") == "",
                       "Retired target has new state; separate registration required.")
             return {"status": "RETIRED", "repeated": True}
