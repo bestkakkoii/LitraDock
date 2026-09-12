@@ -5,16 +5,16 @@ namespace Literature.Service;
 
 public sealed partial class PgStore
 {
-    internal static readonly string[] ResearchTables =
-    [
-        "ld_projects",
-        "ld_reviews",
-        "ld_review_events",
-        "ld_conversions",
-        "ld_derivations",
-        "ld_conversion_events",
-        "ld_citations",
-    ];
+    internal static string[] ResearchTables =>
+        [
+            "ld_projects",
+            "ld_reviews",
+            "ld_review_events",
+            "ld_conversions",
+            "ld_derivations",
+            "ld_conversion_events",
+            "ld_citations",
+        ];
 
     private static void ProjectBundle(JsonObject tables, HashSet<string> ids)
     {

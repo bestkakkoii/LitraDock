@@ -62,6 +62,10 @@ jobs:
           node src/document-worker/node_modules/playwright/cli.js install --with-deps chromium 2>&1 | tee evidence/document-browser-install.log
           python3 -m venv .litradock/pdf-verification
           .litradock/pdf-verification/bin/python -m pip install --only-binary=:all: pymupdf==1.28.2 2>&1 | tee evidence/pdf-dependencies.log
+          test -u /opt/google/chrome/chrome-sandbox
+          stat -c '%U %a %n' /opt/google/chrome/chrome-sandbox | tee evidence/chromium-sandbox-helper.txt
+          export CHROME_DEVEL_SANDBOX=/opt/google/chrome/chrome-sandbox
+          echo "CHROME_DEVEL_SANDBOX=$CHROME_DEVEL_SANDBOX" >> "$GITHUB_ENV"
           node tests/documents/preflight.mjs 2>&1 | tee evidence/document-preflight.log
           python3 tests/recovery/measure.py evidence/document-resources.json -- node tests/documents/verify.mjs .litradock/documents 2>&1 | tee evidence/document-tests.log
           .litradock/pdf-verification/bin/python tests/documents/pdf_checks.py .litradock/documents 2>&1 | tee evidence/pdf-inspection.log

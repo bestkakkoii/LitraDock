@@ -17,7 +17,17 @@ if (args.FirstOrDefault() == "--inspect-pdf")
         Console.Write(
             System.Text.Json.JsonSerializer.Serialize(
                 new PdfInspection.Output(
-                    OriginalValidation.ValidatePdf(input.Bytes, input.Article, input.Confirmed),
+                    input.DerivedKind == null
+                        ? OriginalValidation.ValidatePdf(
+                            input.Bytes,
+                            input.Article,
+                            input.Confirmed
+                        )
+                        : OriginalValidation.ValidateDerivedPdf(
+                            input.Bytes,
+                            input.Article.SearchId,
+                            input.DerivedKind
+                        ),
                     null,
                     null
                 )

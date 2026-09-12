@@ -325,6 +325,18 @@ public static class ResearchChecks
                 "New store process boundary retains relocated canonical identity"
             );
         }
+        await ResearchLifecycleChecks.Run(
+            store,
+            config.ConnectionString,
+            library,
+            owner,
+            id,
+            originals,
+            hash,
+            derivedHash,
+            output,
+            check
+        );
         var health = JsonSerializer.Serialize(await store.InspectHealth(imported, originals));
         check(
             health.Contains("valid"),

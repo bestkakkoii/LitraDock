@@ -774,17 +774,12 @@ public sealed partial class PgStore
                     || entry.Length != f["bytes"].GetValue<long>()
                 )
                     throw new IOException("Derived file association is incomplete.");
-                using var document = UglyToad.PdfPig.PdfDocument.Open(
-                    ReadEntry(entry, NcbiTransport.MaximumBytes)
+                await PdfInspection.Inspect(
+                    ReadEntry(entry, NcbiTransport.MaximumBytes),
+                    new Article { SearchId = derived["search_id"].ToString() },
+                    false,
+                    derived["kind"].ToString()
                 );
-                if (document.NumberOfPages is < 1 or > 200)
-                    throw new IOException("Derived PDF page bound exceeded.");
-                var content = string.Concat(document.GetPages().Select(x => x.Text));
-                if (
-                    !content.Contains(derived["search_id"].ToString())
-                    || !content.Contains(derived["kind"].ToString())
-                )
-                    throw new IOException("Derived PDF identity/label is absent.");
             }
             foreach (var conversion in tables["ld_conversions"].AsArray())
             {

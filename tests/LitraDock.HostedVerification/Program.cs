@@ -21,6 +21,11 @@ if (
     await RecoveryProcessChecks.Child(args[0], output);
     return;
 }
+if (args.FirstOrDefault() == "--research-claim-hold")
+{
+    await ResearchLifecycleChecks.Child(output);
+    return;
+}
 var checks = new List<string>();
 var watch = Stopwatch.StartNew();
 string engineVersion = null;

@@ -10,11 +10,21 @@ public static class PdfInspection
 {
     private static readonly SemaphoreSlim Gate = new(2, 2);
 
-    public sealed record Input(byte[] Bytes, Article Article, bool Confirmed);
+    public sealed record Input(
+        byte[] Bytes,
+        Article Article,
+        bool Confirmed,
+        string DerivedKind = null
+    );
 
     public sealed record Output(ArtifactInfo Info, string State, string Error);
 
-    public static async Task<ArtifactInfo> Inspect(byte[] bytes, Article article, bool confirmed)
+    public static async Task<ArtifactInfo> Inspect(
+        byte[] bytes,
+        Article article,
+        bool confirmed,
+        string derivedKind = null
+    )
     {
         if (!await Gate.WaitAsync(0))
             throw new SourceException("failed", "PDF validation capacity is busy; retry later.");
@@ -45,7 +55,9 @@ public static class PdfInspection
             var stderr = process.StandardError.ReadToEndAsync(timeout.Token);
             try
             {
-                var input = JsonSerializer.Serialize(new Input(bytes, article, confirmed));
+                var input = JsonSerializer.Serialize(
+                    new Input(bytes, article, confirmed, derivedKind)
+                );
                 await process.StandardInput.WriteAsync(input.AsMemory(), timeout.Token);
                 process.StandardInput.Close();
                 while (!process.HasExited)

@@ -172,6 +172,29 @@ public static class OriginalValidation
 
     // 只接受可讀且前兩頁包含選定作品 DOI 的 PDF；掃描件/身分不明檔不會自動冒充匹配。
     // 這是身分與容器驗證，不是視覺保真、惡意程式掃描或授權判決。
+    public static ArtifactInfo ValidateDerivedPdf(byte[] bytes, string searchId, string kind)
+    {
+        if (kind is not ("Formatted Reading Copy" or "Abstract Only"))
+            throw new IOException("Unknown reading-copy kind.");
+        using var document = PdfDocument.Open(bytes);
+        if (document.NumberOfPages is < 1 or > 200)
+            throw new IOException("Derived PDF page bound exceeded.");
+        var content = string.Concat(document.GetPages().Select(x => x.Text));
+        var compact = Regex.Replace(content, @"\s", "");
+        if (
+            !compact.Contains(Regex.Replace(searchId, @"\s", ""))
+            || !compact.Contains(Regex.Replace(kind, @"\s", ""))
+        )
+            throw new IOException("Derived PDF identity/label is absent.");
+        return new ArtifactInfo
+        {
+            Hash = Artifacts.Hash(bytes),
+            Bytes = bytes.LongLength,
+            Validation =
+                "Labelled derived PDF parsed in a bounded isolated process; exact Search ID and kind found.",
+        };
+    }
+
     public static ArtifactInfo ValidatePdf(byte[] bytes, Article article, bool confirmed = false)
     {
         try

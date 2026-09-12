@@ -40,6 +40,7 @@ public static class DocumentProcess
                 "USERPROFILE",
                 "LOCALAPPDATA",
                 "PLAYWRIGHT_BROWSERS_PATH",
+                "CHROME_DEVEL_SANDBOX",
             }
         )
             if (Environment.GetEnvironmentVariable(name) is string value)

@@ -261,6 +261,18 @@ public sealed partial class PgStore
         var hash = Artifacts.Hash(bytes);
         if (details["hash"]?.GetValue<string>() != hash)
             throw new IOException("Derived hash disagrees.");
+        var inputHash = c.InputHash ?? Artifacts.Hash(Encoding.UTF8.GetBytes(c.Metadata));
+        if (
+            details["inputHash"]?.ToString() != inputHash
+            || (c.Mode == "abstract" && details["kind"]?.ToString() != "Abstract Only")
+        )
+            throw new IOException("Prepared conversion input provenance disagrees.");
+        await PdfInspection.Inspect(
+            bytes,
+            new Article { SearchId = c.SearchId },
+            false,
+            details["kind"].GetValue<string>()
+        );
         await using var db = await Data.OpenConnectionAsync();
         await using var tx = await db.BeginTransactionAsync();
         await FenceConversion(db, c);
@@ -442,9 +454,6 @@ public sealed class ReadingWorker(PgStore store, OriginalStore files) : Backgrou
                 || bytes.Length > 32 * 1024 * 1024
             )
                 throw new IOException("Renderer returned invalid PDF.");
-            using (var pdf = UglyToad.PdfPig.PdfDocument.Open(bytes))
-                if (pdf.NumberOfPages is < 1 or > 200)
-                    throw new IOException("Reading PDF exceeds 200 pages.");
             var lease = Guid.NewGuid();
             var stage = files.Stage(
                 new Claim(c.Library, c.Id, "conversion", null, null, c.SearchId, lease),
