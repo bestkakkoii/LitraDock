@@ -237,10 +237,11 @@ class ActualPostgresTests(unittest.TestCase):
         self.assertTrue(settings["PGDATABASE"].startswith("litradock_ci_"))
         values = {"LITRADOCK_POSTGRES": value}
         self.assertTrue(q.probe_database(values, True)["readOnly"])
-        def sql(command):
-            result = subprocess.run(["psql", "-X", "-q", "-A", "-t", "--no-password", "-v", "ON_ERROR_STOP=1", "-c", command],
+        def sql(command, setup=None):
+            result = subprocess.run(["psql", "-X", "-q", "-A", "-t", "--no-password", "-v", "ON_ERROR_STOP=1", *(["-c", setup] if setup else []), "-c", command],
                                     env={**os.environ, **settings}, capture_output=True, text=True, timeout=15)
             self.assertEqual(result.returncode, 0, "Disposable database control failed.")
+            return result.stdout
         admin = os.environ.get("QUALIFICATION_TEST_ADMIN")
         self.assertIsNotNone(admin, "Explicit disposable admin connection required for role negative control.")
         admin_settings = q.database_settings(admin)
@@ -277,6 +278,20 @@ class ActualPostgresTests(unittest.TestCase):
                 sql("DROP VIEW public.ld_retry")
         finally:
             sql(definition)
+        self.assertTrue(q.probe_database(values, True)["initialEmptyChecked"])
+        for namespace in ("pgxtempycontrol", "pgxtoastcontrol"):
+            sql(f"CREATE SCHEMA {namespace}; CREATE TABLE {namespace}.unrelated(value integer)")
+            try:
+                with self.assertRaises(q.Rejected):
+                    q.probe_database(values, True)
+            finally:
+                sql(f"DROP TABLE {namespace}.unrelated; DROP SCHEMA {namespace}")
+        # Same actual PostgreSQL session creates a genuine temporary namespace;
+        # the read-only catalog probe must exclude it and real toast/catalog tables.
+        self.assertGreater(int(sql("SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='pg_toast'")), 0)
+        temporary = sql(q.DB_SQL, "CREATE TEMP TABLE system_exclusion_control(value text)")
+        self.assertTrue(q.validate_database(json.loads(temporary), True)["readOnly"])
+        print("PF007-01: both adversarial namespaces rejected; genuine temporary/toast/catalog namespaces excluded; clean restoration passed.")
         self.assertTrue(q.probe_database(values, True)["initialEmptyChecked"])
         sql("INSERT INTO public.ld_source_usage VALUES('synthetic-control','2000-01-01',1)")
         try:

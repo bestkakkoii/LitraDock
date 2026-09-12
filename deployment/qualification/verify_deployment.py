@@ -259,7 +259,7 @@ SELECT json_build_object(
 'jobs',(SELECT count(*) FROM public.ld_jobs),
 'files',(SELECT count(*) FROM public.ld_files),
 'sourceRequests',(SELECT coalesce(sum(requests),0) FROM public.ld_source_usage),
-'relations',(SELECT coalesce(json_agg(json_build_array(n.nspname,c.relname,c.relkind) ORDER BY n.nspname,c.relname),'[]'::json) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp_%' AND c.relkind IN ('r','p','v','m','f')),
+'relations',(SELECT coalesce(json_agg(json_build_array(n.nspname,c.relname,c.relkind) ORDER BY n.nspname,c.relname),'[]'::json) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname <> 'information_schema' AND left(n.nspname,3) <> 'pg_' AND c.relkind IN ('r','p','v','m','f')),
 'postgres',current_setting('server_version_num'));
 ROLLBACK;"""
 
