@@ -243,12 +243,13 @@ public sealed class SourceAcquisition(PubMedSource metadata, HttpClient ncbi, Ht
     public async Task<SourceResponse> Request(
         string location,
         CancellationToken cancellation,
-        Action<string, string> progress = null
+        Action<string, string> progress = null,
+        bool allowRedirects = true
     )
     {
         try
         {
-            return await RequestCore(location, cancellation, progress);
+            return await RequestCore(location, cancellation, progress, allowRedirects);
         }
         catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
         {
@@ -262,7 +263,8 @@ public sealed class SourceAcquisition(PubMedSource metadata, HttpClient ncbi, Ht
     private async Task<SourceResponse> RequestCore(
         string location,
         CancellationToken cancellation,
-        Action<string, string> progress = null
+        Action<string, string> progress,
+        bool allowRedirects
     )
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
@@ -285,6 +287,8 @@ public sealed class SourceAcquisition(PubMedSource metadata, HttpClient ncbi, Ht
             var status = (int)response.StatusCode;
             if (status >= 300 && status < 400)
             {
+                if (!allowRedirects)
+                    throw new SourceException("unsupported", "This source policy does not follow redirects; no alternate source or version was fetched. Open the record source links.");
                 if (
                     ++redirects > 5
                     || !seen.Add(current.AbsoluteUri)

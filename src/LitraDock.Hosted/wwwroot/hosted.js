@@ -644,7 +644,7 @@ try {
   if(service.demo) {
     demoMode=true;
     $("serviceInformation").textContent = `Invited demo operated by ${service.operatorName}. Help: ${service.contact}. Retention and cleanup: ${service.retention}. Access ends ${service.expiresAt}.`;
-    $("acquisitionMeaning").textContent += ` Demo: search up to ${service.searchLimit} results and queue up to ${service.batchLimit} records. Automatic acquisition currently supports only the reviewed PMC6836491 and PMC8005924 article XML; other results retain source links and an unavailable reason.`;
+    $("acquisitionMeaning").textContent += ` Demo: search up to ${service.searchLimit} results and queue up to ${service.batchLimit} records. Automatic acquisition: ${service.acquisitionDescription || "reviewed XML only; other results retain source links and an unavailable reason."}`;
     $("limit").max=service.searchLimit;$("limit").value=Math.min(Number($("limit").value),service.searchLimit);
     $("bundleFile").closest("details").hidden=true;$("researchTools").hidden=true;
     $("sourceContinuation").textContent="Unavailable items retain public source links. Upload, conversion, projects, citations and private library transfer are outside this demo.";

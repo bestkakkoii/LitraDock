@@ -209,6 +209,7 @@ public sealed partial class PgStore
                     )
                 ).SingleOrDefault();
                 info = OriginalValidation.Validate(bytes, article, IdentityConfirmed(priorManual));
+                if (Demo != null) info = Demo.ValidateOriginal(bytes, article);
             }
             catch (Exception error)
                 when (error

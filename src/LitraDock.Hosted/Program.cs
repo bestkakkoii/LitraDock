@@ -216,7 +216,9 @@ builder.Services.AddSingleton<ILiteratureSource>(new Literature.Verification.Bro
 #else
 builder.Services.AddSingleton<ILiteratureSource>(
     demo == null ? new SourceAcquisition(new PubMedSource(transport), ncbi, europe)
-        : new DemoSource(new SourceAcquisition(new PubMedSource(transport), ncbi, europe), demo)
+        : new DemoSource(demo.AcquisitionPolicy == PmcOpenPolicy.Id
+            ? new PmcOpenSource(new PubMedSource(transport), new SourceAcquisition(new PubMedSource(transport), ncbi, europe))
+            : new SourceAcquisition(new PubMedSource(transport), ncbi, europe), demo)
 );
 #endif
 builder.Services.AddHostedService<HostedWorker>();
@@ -454,6 +456,8 @@ app.MapGet(
 app.MapGet("/service-info", () => Results.Ok(new
 {
     demo = demo != null,
+    acquisitionPolicy = demo?.AcquisitionPolicy,
+    acquisitionDescription = demo?.AcquisitionDescription,
     operatorName = demo?.Operator,
     contact = demo?.Contact,
     retention = demo?.Retention,
@@ -566,8 +570,11 @@ app.MapGet(
             return Results.NotFound();
         var bytes = originals.Read(library, hash);
         var kind = OriginalValidation.Kind(bytes);
-        if (demo != null && (!DemoSource.Reviewed(await store.Article(library, id)) || kind != OriginalValidation.XmlKind || !ArticleRights.Assess(bytes).Permitted))
-            return Results.Problem("Original is outside the reviewed demo acquisition set; contact the operator.", statusCode: 403);
+        if (demo != null)
+        {
+            try { demo.ValidateOriginal(bytes, await store.Article(library, id)); }
+            catch (SourceException) { return Results.Problem("Original is outside the configured acquisition policy; contact the operator.", statusCode: 403); }
+        }
         return Results.File(
             bytes,
             OriginalValidation.Mime(kind),

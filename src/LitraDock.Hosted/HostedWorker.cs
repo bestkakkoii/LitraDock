@@ -82,9 +82,7 @@ public sealed class HostedWorker(PgStore store, OriginalStore originals, ILitera
                 var article = await store.Article(claim.Library, claim.SearchId);
                 if (store.Demo != null)
                 {
-                    store.Demo.RequireActive();
-                    if (!DemoSource.Reviewed(article))
-                        throw new SourceException("unavailable", "This demo acquires only reviewed PMC6836491 and PMC8005924 XML; open the record source links for other access options.");
+                    store.Demo.RequireArticle(article);
                     if (originals.Measure() + NcbiTransport.MaximumBytes * 2L > DemoPolicy.StorageLimit)
                         throw new SourceException("unavailable", "Demo storage budget reached; existing originals retained.");
                 }
@@ -117,6 +115,7 @@ public sealed class HostedWorker(PgStore store, OriginalStore originals, ILitera
                 {
                     try
                     {
+                        if (store.Demo != null) store.Demo.ValidateOriginal(originals.Read(claim.Library, (string)file["hash"]), article);
                         OriginalValidation.Validate(
                             originals.Read(claim.Library, (string)file["hash"]),
                             article,
@@ -171,6 +170,7 @@ public sealed class HostedWorker(PgStore store, OriginalStore originals, ILitera
                     article,
                     PgStore.IdentityConfirmed(manual)
                 );
+                if (store.Demo != null) info = store.Demo.ValidateOriginal(response.Bytes, article);
                 if (manual != null && info.Hash != (string)manual["hash"])
                     throw new IOException("Manual input hash changed; retained for review.");
                 await store.PreparePublication(claim, info, response);

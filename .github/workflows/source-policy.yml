@@ -1,0 +1,74 @@
+name: Source policy candidate verification
+on:
+  push:
+    branches: [source-policy-002]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: source-policy-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18.6-bookworm@sha256:1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af
+        env:
+          POSTGRES_USER: fixture
+          POSTGRES_PASSWORD: synthetic-ci-only-password
+          POSTGRES_DB: litradock_ci_foundation
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      LITRADOCK_PG_TEST_CONNECTION: Host=127.0.0.1;Port=5432;Database=litradock_ci_foundation;Username=fixture;Password=synthetic-ci-only-password;SSL Mode=Disable
+      LITRADOCK_ALLOW_EPHEMERAL_TEST: 'yes'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.400'
+      - name: Environment and locked restore
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          dotnet --info > evidence/environment.txt
+          uname -a >> evidence/environment.txt
+          lscpu >> evidence/environment.txt
+          free -m >> evidence/environment.txt
+          dotnet restore tests/LitraDock.HostedVerification --locked-mode 2>&1 | tee evidence/restore.log
+      - name: Build and offline checks
+        run: |
+          set -euo pipefail
+          dotnet build tests/LitraDock.HostedVerification -c Release --no-restore 2>&1 | tee evidence/build.log
+          dotnet run --project tests/LitraDock.HostedVerification -c Release --no-build -- --static .litradock/static 2>&1 | tee evidence/static.log
+          cp .litradock/static/result.json evidence/static-result.json
+          dotnet run --project tests/LitraDock.HostedVerification -c Release --no-build -- --sources .litradock/sources 2>&1 | tee evidence/sources.log
+          cp .litradock/sources/result.json evidence/sources-result.json
+      - name: Policy and actual PostgreSQL worker regression
+        run: |
+          set -euo pipefail
+          dotnet run --project tests/LitraDock.HostedVerification -c Release --no-build -- --source-policy .litradock/policy 2>&1 | tee evidence/policy.log
+          cp .litradock/policy/result.json evidence/policy-result.json
+          dotnet run --project tests/LitraDock.HostedVerification -c Release --no-build -- --source-policy-postgres .litradock/policy-pg 2>&1 | tee evidence/policy-pg.log
+          cp .litradock/policy-pg/result.json evidence/policy-pg-result.json
+          dotnet run --project tests/LitraDock.HostedVerification -c Release --no-build -- --demo .litradock/demo 2>&1 | tee evidence/demo.log
+          cp .litradock/demo/result.json evidence/demo-result.json
+      - name: Keep bounded synthetic evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: source-policy-${{ github.run_id }}
+          path: evidence/
+          retention-days: 7
+          if-no-files-found: error

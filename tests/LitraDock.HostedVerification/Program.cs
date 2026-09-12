@@ -699,6 +699,14 @@ else if (args.FirstOrDefault() == "--sources")
 {
     await SourceChecks.Run(Check);
 }
+else if (args.FirstOrDefault() == "--source-policy")
+{
+    await PmcPolicyChecks.Run(Check);
+}
+else if (args.FirstOrDefault() == "--source-policy-postgres")
+{
+    await PmcPolicyChecks.RunPostgres(Environment.GetEnvironmentVariable("LITRADOCK_PG_TEST_CONNECTION"), output, Check);
+}
 else if (args.FirstOrDefault() == "--static")
 {
     System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(PgStore).TypeHandle);

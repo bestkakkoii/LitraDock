@@ -6,6 +6,28 @@ namespace Literature.Service;
 
 public sealed record DemoPolicy(string Operator, string Contact, string Retention, string SourceRevision, DateTimeOffset ExpiresAt)
 {
+    public const string ReviewedPolicy = "reviewed-xml-v1";
+    public string AcquisitionPolicy { get; init; } = ReviewedPolicy;
+    public string AcquisitionDescription => AcquisitionPolicy == PmcOpenPolicy.Id ? PmcOpenPolicy.Description
+        : "Only the reviewed PMC6836491 and PMC8005924 article XML. Other results retain source links and an unavailable reason.";
+    public void RequireArticle(Article article)
+    {
+        RequireActive();
+        if (AcquisitionPolicy == PmcOpenPolicy.Id) { PmcOpenPolicy.Location(article); return; }
+        if (AcquisitionPolicy != ReviewedPolicy) throw new InvalidOperationException("Unknown acquisition policy.");
+        if (!DemoSource.Reviewed(article))
+            throw new SourceException("unavailable", "This demo acquires only reviewed PMC6836491 and PMC8005924 XML; open the record source links for other access options.");
+    }
+    public ArtifactInfo ValidateOriginal(byte[] bytes, Article article)
+    {
+        RequireArticle(article);
+        if (AcquisitionPolicy == PmcOpenPolicy.Id) return PmcOpenPolicy.Validate(bytes, article);
+        var info = OriginalValidation.Validate(bytes, article);
+        if (OriginalValidation.Kind(bytes) != OriginalValidation.XmlKind || info.RightsStatus != "permitted"
+            || info.RightsLicenseUri != "https://creativecommons.org/licenses/by/4.0/")
+            throw new SourceException("unavailable", "The reviewed article license is missing or changed; demo acquisition requires operator review.");
+        return info;
+    }
     public const int SearchLimit = 100;
     public const int BatchLimit = 10;
     public const long StorageLimit = 512L * 1024 * 1024;
@@ -26,7 +48,9 @@ public sealed record DemoPolicy(string Operator, string Contact, string Retentio
         if (!System.Text.RegularExpressions.Regex.IsMatch(expiryText, @"T.*(?:Z|[+-]\d{2}:\d{2})$")
             || !DateTimeOffset.TryParse(expiryText, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var expiry))
             throw new InvalidOperationException("Demo expiry must be an explicit timestamp.");
-        return new(Required("LITRADOCK_DEMO_OPERATOR"), Required("LITRADOCK_DEMO_CONTACT"), Required("LITRADOCK_DEMO_RETENTION"), revision, expiry);
+        var acquisition = config["LITRADOCK_ACQUISITION_POLICY"] ?? ReviewedPolicy;
+        if (acquisition is not (ReviewedPolicy or PmcOpenPolicy.Id)) throw new InvalidOperationException("Unknown acquisition policy.");
+        return new(Required("LITRADOCK_DEMO_OPERATOR"), Required("LITRADOCK_DEMO_CONTACT"), Required("LITRADOCK_DEMO_RETENTION"), revision, expiry) { AcquisitionPolicy = acquisition };
     }
 
     public void RequireActive()
@@ -116,14 +140,9 @@ public sealed class DemoSource(ILiteratureSource source, DemoPolicy policy) : IC
     public Task<SourceResponse> FetchFullTextAsync(Article article, CancellationToken token) => FetchFullTextAsync(article, token, null);
     public async Task<SourceResponse> FetchFullTextAsync(Article article, CancellationToken token, Action<string, string> progress)
     {
-        policy.RequireActive();
-        if (!Reviewed(article))
-            throw new SourceException("unavailable", "This demo acquires only the reviewed PMC6836491 and PMC8005924 XML articles; this result remains searchable. Open its source links to review other permitted access options.");
+        policy.RequireArticle(article);
         var response = source is IProgressSource reported ? await reported.FetchFullTextAsync(article, token, progress) : await source.FetchFullTextAsync(article, token);
-        OriginalValidation.Validate(response.Bytes, article);
-        var rights = ArticleRights.Assess(response.Bytes);
-        if (!rights.Permitted || rights.LicenseUri != "https://creativecommons.org/licenses/by/4.0/")
-            throw new SourceException("unavailable", "The reviewed article license is missing or changed; demo acquisition requires operator review.");
+        policy.ValidateOriginal(response.Bytes, article);
         return response;
     }
 }
