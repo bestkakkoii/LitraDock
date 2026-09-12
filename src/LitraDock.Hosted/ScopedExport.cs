@@ -209,6 +209,24 @@ public sealed partial class PgStore
             "Search Results",
             "SELECT x.* FROM ld_results x JOIN export_members USING(search_id) WHERE x.library_id=@p0 AND @p1 IS NOT NULL LIMIT 10001"
         );
+        foreach (
+            var entry in new[]
+            {
+                ("Reviews", "ld_reviews"),
+                ("Review History", "ld_review_events"),
+                ("Derived Files", "ld_derivations"),
+                ("Conversions", "ld_conversions"),
+                ("Citations", "ld_citations"),
+            }
+        )
+            await Detail(
+                entry.Item1,
+                $"SELECT (to_jsonb(t)-'lease_token'-'lease_until')::text AS data FROM {entry.Item2} t JOIN export_members USING(search_id) WHERE t.library_id=@p0 AND @p1 IS NOT NULL LIMIT 10001"
+            );
+        await Detail(
+            "Projects",
+            "SELECT p.* FROM ld_projects p WHERE p.library_id=@p0 AND p.project_id IN (SELECT r.project_id FROM ld_reviews r JOIN export_members USING(search_id) WHERE r.library_id=@p0) AND @p1 IS NOT NULL LIMIT 10001"
+        );
         sheets["Export Notes"] =
         [
             new[] { "Projection", "Original preservation" },

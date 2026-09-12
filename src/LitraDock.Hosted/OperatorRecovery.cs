@@ -181,7 +181,7 @@ public static class OperatorRecovery
         checkpoint?.Invoke("copied");
         var pair = new RecoveryPair(
             1,
-            3,
+            4,
             Hash(dump),
             files,
             "Application API/worker/CLI write maintenance barrier; external SQL/filesystem writers must be stopped by operator; trusted private backup includes accounts and revokes sessions on restore."
@@ -209,7 +209,7 @@ public static class OperatorRecovery
         var pair = JsonSerializer.Deserialize<RecoveryPair>(
             await File.ReadAllTextAsync(Path.Combine(source, "pair.json"))
         );
-        if (pair.Version != 1 || pair.Schema != 3 || pair.Files.Count > OriginalStore.EntryLimit)
+        if (pair.Version != 1 || pair.Schema != 4 || pair.Files.Count > OriginalStore.EntryLimit)
             throw new IOException("Unsupported backup manifest.");
         var dump = Path.Combine(source, "database.dump");
         if (Hash(dump) != pair.DumpHash)
@@ -279,7 +279,7 @@ public static class OperatorRecovery
             await using var tx = await db.BeginTransactionAsync();
             await PgStore.Exec(
                 db,
-                "DELETE FROM ld_sessions; UPDATE ld_jobs SET state='paused',lease_token=NULL,lease_until=NULL WHERE state IN ('queued','running','scheduled'); UPDATE ld_items SET state='paused' WHERE state IN ('queued','running','scheduled','resolving','downloading','validating','publishing','waiting','redirecting'); UPDATE ld_batches SET state='paused' WHERE state IN ('queued','running'); UPDATE ld_runs SET state='paused' WHERE state IN ('queued','searching','running','scheduled'); UPDATE ld_retry SET status='paused' WHERE status='pending'"
+                "DELETE FROM ld_sessions; UPDATE ld_conversions SET state='paused',lease_token=NULL,lease_until=NULL WHERE state IN ('queued','running'); UPDATE ld_jobs SET state='paused',lease_token=NULL,lease_until=NULL WHERE state IN ('queued','running','scheduled'); UPDATE ld_items SET state='paused' WHERE state IN ('queued','running','scheduled','resolving','downloading','validating','publishing','waiting','redirecting'); UPDATE ld_batches SET state='paused' WHERE state IN ('queued','running'); UPDATE ld_runs SET state='paused' WHERE state IN ('queued','searching','running','scheduled'); UPDATE ld_retry SET status='paused' WHERE status='pending'"
             );
             Directory.Move(stage, originals.Root);
             await PgStore.Exec(db, "UPDATE ld_recovery_guard SET required=false");
@@ -291,7 +291,7 @@ public static class OperatorRecovery
             JsonSerializer.Serialize(
                 new
                 {
-                    schema = 3,
+                    schema = 4,
                     restoredAt = DateTime.UtcNow,
                     files = pair.Files.Count,
                     sessionsRevoked = true,

@@ -62,11 +62,11 @@ public static class UpgradeChecks
                                 + table
                                 + " t) q"
                         ),
-                "Populated PostgreSQL v1-to-v3 preserves exact rows: " + table
+                "Populated PostgreSQL v1-to-v4 preserves exact rows: " + table
             );
         check(
-            Convert.ToInt32(await Sql("SELECT max(version) FROM ld_schema")) == 3,
-            "Populated hosted migration completes schema3 without altering paused identity graph"
+            Convert.ToInt32(await Sql("SELECT max(version) FROM ld_schema")) == 4,
+            "Populated hosted migration completes schema4 without altering paused identity graph"
         );
     }
 }

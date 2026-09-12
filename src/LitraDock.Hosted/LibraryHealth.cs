@@ -21,7 +21,7 @@ public sealed partial class PgStore
             expected[
                 "objects/"
                     + ((string)file["hash"]).ToLowerInvariant()
-                    + ((string)file["kind"] == OriginalValidation.PdfKind ? ".pdf" : ".xml")
+                    + OriginalValidation.Extension((string)file["kind"])
             ] = (string)file["hash"];
         var manual = await Rows(
             db,

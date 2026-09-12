@@ -650,6 +650,14 @@ if (args.FirstOrDefault() == "--postgres")
     );
     await HostedSourceChecks.Run(store, connection, output, Check);
 }
+else if (args.FirstOrDefault() == "--research")
+{
+    await ResearchChecks.Run(
+        Environment.GetEnvironmentVariable("LITRADOCK_PG_TEST_CONNECTION"),
+        output,
+        Check
+    );
+}
 else if (args.FirstOrDefault() == "--recovery")
 {
     await RecoveryChecks.Run(

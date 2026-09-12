@@ -66,10 +66,15 @@ public sealed partial class OriginalStore(string root)
             Root,
             library.ToString("N"),
             "objects",
-            hash.ToLowerInvariant() + (kind == OriginalValidation.PdfKind ? ".pdf" : ".xml")
+            hash.ToLowerInvariant() + OriginalValidation.Extension(kind)
         );
-        if (kind == null && !File.Exists(path) && File.Exists(Path.ChangeExtension(path, ".pdf")))
-            path = Path.ChangeExtension(path, ".pdf");
+        if (kind == null && !File.Exists(path))
+            foreach (var extension in new[] { ".pdf", ".html", ".txt" })
+                if (File.Exists(Path.ChangeExtension(path, extension)))
+                {
+                    path = Path.ChangeExtension(path, extension);
+                    break;
+                }
         VerifyNoLinks(Path.GetDirectoryName(path));
         if (File.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
             throw new IOException("Linked original files are not supported.");
@@ -365,9 +370,13 @@ public sealed partial class PgStore
             info.Hash,
             info.Bytes,
             info.Validation,
-            Path.GetExtension(info.RelativePath) == ".pdf"
-                ? OriginalValidation.PdfKind
-                : OriginalValidation.XmlKind
+            Path.GetExtension(info.RelativePath) switch
+            {
+                ".pdf" => OriginalValidation.PdfKind,
+                ".html" => OriginalValidation.HtmlKind,
+                ".txt" => OriginalValidation.TextKind,
+                _ => OriginalValidation.XmlKind,
+            }
         );
         await Exec(
             db,

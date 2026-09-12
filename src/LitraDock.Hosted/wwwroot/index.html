@@ -137,6 +137,19 @@
         <button id="itemPrevious">Previous items</button
         ><button id="itemNext">Next items</button><span id="itemCounts"></span>
         <div id="progress"></div>
+        <details id="researchTools">
+          <summary>Projects, citations and selected library transfer</summary>
+          <p>Project screening is independent of acquisition. Citation numbering belongs to the chosen export order.</p>
+          <button id="loadProjects">Load projects</button><select id="projects" aria-label="Project collection"></select>
+          <input id="projectName" maxlength="200" placeholder="New project / collection name"><button id="createProject">Create project</button>
+          <button id="projectPrevious">Previous project records</button><button id="projectNext">Next project records</button><span id="projectCounts"></span><div id="projectRecords"></div>
+          <label>Citation style <select id="citationStyle"><option value="apa">APA author-date</option><option value="ieee">IEEE numeric</option></select></label>
+          <label><input type="checkbox" id="citationSelected">Selected scope records only</label>
+          <button id="citationPreview">Preview citations</button><button id="citationRis">Download RIS</button><button id="citationBib">Download BibTeX</button><button id="citationJson">Download CSL-JSON</button><button id="citationText">Download bibliography</button>
+          <pre id="citationOutput"></pre>
+          <button id="scopedBundle">Download current scope private bundle</button><label><input id="bundleSelected" type="checkbox">Selected records only</label>
+          <p>Private scope bundles contain referenced originals, reading copies and review/citation history; omitted library records are excluded. Whole-library backup remains available above.</p>
+        </details>
         <p>
           Originals retain their actual format; no PDF is invented. Public PMC /
           Europe PMC routes need no publisher account. Publisher login stays in
@@ -154,7 +167,7 @@
         <p id="manualIdentity"></p>
         <p>
           Upload only a file you are authorized to supply. Original PDF or
-          article XML, up to 32 MiB. The original bytes are retained; product
+          article XML or UTF-8 saved HTML/text, up to 32 MiB. Saved HTML/text requires explicit identity confirmation. The original bytes are retained; product
           sign-in does not confer publisher access.
         </p>
         <label
@@ -162,7 +175,7 @@
           <input
             type="file"
             id="manualFile"
-            accept=".pdf,.xml,application/pdf,application/xml"
+            accept=".pdf,.xml,.html,.txt,application/pdf,application/xml,text/html,text/plain"
         /></label>
         <label
           >Stable source URL (optional, no session query)
@@ -191,6 +204,22 @@
           <button id="manualConfirm">Confirm relationship and continue</button>
         </div>
         <p id="manualStatus" aria-live="polite"></p>
+      </dialog>
+      <dialog id="researchDialog">
+        <button id="researchClose">Close research record</button><h2 id="researchTitle"></h2>
+        <p id="researchIdentity"></p>
+        <h3>Per-project screening and evidence</h3>
+        <label>Project <select id="reviewProject"></select></label><label>State <select id="reviewState"><option>unscreened</option><option>included</option><option>excluded</option><option>uncertain</option></select></label>
+        <label>Tags <input id="reviewTags" maxlength="1000"></label><label>Reason <textarea id="reviewReason" maxlength="2000"></textarea></label>
+        <label>Notes <textarea id="reviewNote" maxlength="8000"></textarea></label>
+        <label>Optional exact version <select id="reviewVersion"></select></label><label>Quote <textarea id="reviewQuote" maxlength="2000"></textarea></label><label>Section <input id="reviewSection" maxlength="300"></label>
+        <label>Page <input id="reviewPage" type="number" min="1" max="100000"></label><label>Page numbering <select id="reviewPageKind"><option value="source">Source page</option><option value="derived">Derived page</option><option value="section">Section locator</option></select></label>
+        <button id="saveReview">Save project decision</button><p id="reviewStatus" aria-live="polite"></p>
+        <h3>Labelled reading copies</h3><label>Saved original <select id="conversionOriginal"></select></label>
+        <button id="convertOriginal">Queue reading copy</button><button id="convertAbstract">Queue Abstract Only</button><button id="refreshResearch">Refresh processing and history</button>
+        <p>Conversion never replaces an original. External media is not fetched here; unavailable figures and unsupported formula notation are disclosed in the reading copy. Original PDFs/scans remain downloadable without reflow or OCR.</p>
+        <span id="researchCounts"></span><button id="researchPrevious">Previous history page</button><button id="researchNext">Next history page</button>
+        <div id="conversionList"></div><div id="derivedList"></div><pre id="reviewHistory"></pre>
       </dialog>
       <dialog id="detail">
         <button id="close">Close</button>

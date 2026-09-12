@@ -99,7 +99,7 @@ public sealed partial class PgStore
         {
             info = OriginalValidation.Validate(bytes, record, true);
             info.Validation =
-                "PDF container parsed; identity pending explicit user review; not machine verified.";
+                "Saved original passed format bounds; identity pending explicit user review, not machine verified.";
             state = "needs_review";
         }
         var kind = OriginalValidation.Kind(bytes);

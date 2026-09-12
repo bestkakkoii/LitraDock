@@ -1,3 +1,4 @@
+import { researchFlow } from "./research.mjs";
 import { chromium } from "playwright";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -158,7 +159,7 @@ try {
   await page.locator("#libraries").selectOption(library);
   await page.locator("#batches").selectOption(batch);
   await waitStatus(page, "scheduled 1");
-  await page.locator("details").evaluate(node=>node.open=true);
+  await page.locator("details").first().evaluate(node=>node.open=true);
   await page.waitForFunction(()=>document.getElementById("nextEvents").textContent.includes("next eligible"));
   check(true,"Browser shows persisted automatic next eligible event after browser closure");
   await waitStatus(page, "completed_with_errors");
@@ -299,7 +300,7 @@ try {
     ),
     "Selected batch label agrees with fresh durable cancelled progress",
   );
-  await page.locator("details").evaluate(node=>node.open=true);
+  await page.locator("details").first().evaluate(node=>node.open=true);
   await page.locator("#health").click();
   await page.waitForFunction(()=>document.getElementById("recoveryStatus").textContent.includes('"physicalBytes"'));
   check(true,"Actual browser performs bounded file-health reconciliation");
@@ -345,6 +346,7 @@ try {
   check(afterRestart.ok() && (await afterRestart.body()).equals(Buffer.from(xml)),"Actual API process restart retains relocated original bytes and user authorization");
   const csrfRejected=await context.request.post(origin+"/api/restore",{headers:{Origin:origin,"Content-Type":"application/octet-stream"},data:await fs.readFile(bundlePath)});
   check(csrfRejected.status()===403,"Actual restore upload fails without session CSRF capability");
+  await researchFlow({page,context,origin,library:restoredLibrary,id,record,output,check});
   await page.screenshot({
     path: path.join(output, "browser-wide.png"),
     fullPage: true,

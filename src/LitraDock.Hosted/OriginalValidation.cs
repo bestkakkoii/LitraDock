@@ -10,11 +10,38 @@ public static class OriginalValidation
 {
     public const string XmlKind = "Source XML";
     public const string PdfKind = "Original PDF";
+    public const string HtmlKind = "Source HTML";
+    public const string TextKind = "Source Text";
 
-    public static string Kind(byte[] bytes) =>
-        bytes.AsSpan().StartsWith("%PDF-"u8) ? PdfKind : XmlKind;
+    public static string Kind(byte[] bytes)
+    {
+        if (bytes.AsSpan().StartsWith("%PDF-"u8))
+            return PdfKind;
+        var start = Encoding
+            .UTF8.GetString(bytes.AsSpan(0, Math.Min(bytes.Length, 1024)))
+            .TrimStart('\uFEFF', ' ', '\r', '\n', '\t');
+        if (Regex.IsMatch(start, @"^<(?:!doctype\s+html|html)(?:\s|>)", RegexOptions.IgnoreCase))
+            return HtmlKind;
+        return start.StartsWith('<') ? XmlKind : TextKind;
+    }
 
-    public static string Extension(string kind) => kind == PdfKind ? ".pdf" : ".xml";
+    public static string Extension(string kind) =>
+        kind switch
+        {
+            PdfKind => ".pdf",
+            HtmlKind => ".html",
+            TextKind => ".txt",
+            _ => ".xml",
+        };
+
+    public static string Mime(string kind) =>
+        kind switch
+        {
+            PdfKind => "application/pdf",
+            HtmlKind => "text/html; charset=utf-8",
+            TextKind => "text/plain; charset=utf-8",
+            _ => "application/xml",
+        };
 
     public static ArtifactInfo Validate(byte[] bytes, Article article, bool confirmed = false)
     {
@@ -25,6 +52,59 @@ public static class OriginalValidation
             );
         if (Kind(bytes) == PdfKind)
             return PdfInspection.Inspect(bytes, article, confirmed).GetAwaiter().GetResult();
+        if (Kind(bytes) is HtmlKind or TextKind)
+        {
+            string text;
+            try
+            {
+                text = new UTF8Encoding(false, true).GetString(bytes);
+            }
+            catch (DecoderFallbackException)
+            {
+                throw new SourceException(
+                    "failed",
+                    "Only valid UTF-8 saved HTML/text is supported."
+                );
+            }
+            if (
+                text.Any(c => char.IsControl(c) && c is not ('\r' or '\n' or '\t'))
+                || bytes.AsSpan().StartsWith("MZ"u8)
+                || bytes.AsSpan().StartsWith("PK"u8)
+            )
+                throw new SourceException(
+                    "failed",
+                    "Binary/executable content is not accepted as text."
+                );
+            if (
+                Regex.IsMatch(
+                    text,
+                    @"<form\b|captcha|access denied|verify you are human",
+                    RegexOptions.IgnoreCase
+                )
+            )
+                throw new SourceException(
+                    "challenge",
+                    "Login/challenge content is not a saved scholarly original."
+                );
+            if (!confirmed)
+                throw new SourceException(
+                    "needs_review",
+                    "Saved HTML/text requires explicit user identity confirmation; no automatic source match is asserted."
+                );
+            var hash = Artifacts.Hash(bytes);
+            return new ArtifactInfo
+            {
+                Hash = hash,
+                Bytes = bytes.Length,
+                RelativePath = "objects/" + hash + Extension(Kind(bytes)),
+                License = "User-supplied saved content; no redistribution license inferred.",
+                Validation =
+                    "Strict UTF-8 and content bounds checked; relationship explicitly user-confirmed, not machine identity verification; active content is never rendered directly.",
+                MetadataXml = "",
+                ArticleNumber = "",
+                EqualContribution = "",
+            };
+        }
         var doc = Metadata.ParseXml(bytes);
         if (doc.Root?.Name.LocalName.Equals("html", StringComparison.OrdinalIgnoreCase) == true)
             throw new SourceException(

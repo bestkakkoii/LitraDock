@@ -207,9 +207,15 @@ public sealed partial class PgStore
         "ld_manual_inputs",
         "ld_object_provenance",
         "ld_retry",
+        .. ResearchTables,
     ];
 
-    public async Task<string> ExportBundle(Guid library, OriginalStore originals)
+    public async Task<string> ExportBundle(
+        Guid library,
+        OriginalStore originals,
+        string scope = null,
+        bool selectedOnly = false
+    )
     {
         originals.Admit(library, BundleLimit);
         var directory = Path.Combine(originals.Root, library.ToString("N"), "transfers");
@@ -247,6 +253,27 @@ public sealed partial class PgStore
             tables[table] = array;
             counts[table] = rows.Count;
         }
+        if (scope != null)
+        {
+            if (
+                await Scalar(
+                    db,
+                    "SELECT scope_id FROM ld_scopes WHERE library_id=@p0 AND scope_id=@p1",
+                    library,
+                    scope
+                ) == null
+            )
+                throw new KeyNotFoundException();
+            var selected = await Rows(
+                db,
+                "SELECT search_id FROM ld_members WHERE library_id=@p0 AND scope_id=@p1 AND (NOT @p2 OR selected)",
+                library,
+                scope,
+                selectedOnly
+            );
+            ProjectBundle(tables, selected.Select(x => (string)x["search_id"]).ToHashSet());
+            counts = tables.ToDictionary(x => x.Key, x => x.Value.AsArray().Count);
+        }
         var metadata = Encoding.UTF8.GetBytes(tables.ToJsonString());
         if (metadata.Length > MetadataLimit)
             throw new IOException("Portable metadata exceeds 32 MiB.");
@@ -269,12 +296,18 @@ public sealed partial class PgStore
                 {
                     var hash = row["hash"].GetValue<string>();
                     var kind = BundleKind(row["kind"].GetValue<string>());
-                    if (kind is not (OriginalValidation.PdfKind or OriginalValidation.XmlKind))
+                    if (
+                        kind
+                        is not (
+                            OriginalValidation.PdfKind
+                            or OriginalValidation.XmlKind
+                            or OriginalValidation.HtmlKind
+                            or OriginalValidation.TextKind
+                        )
+                    )
                         throw new IOException("Unsupported artifact kind; no lossy transfer.");
                     requested[
-                        "objects/"
-                            + hash.ToLowerInvariant()
-                            + (kind == OriginalValidation.PdfKind ? ".pdf" : ".xml")
+                        "objects/" + hash.ToLowerInvariant() + OriginalValidation.Extension(kind)
                     ] = hash;
                 }
                 foreach (var row in tables["ld_manual_inputs"].AsArray())
@@ -292,6 +325,24 @@ public sealed partial class PgStore
                         && !ConsumedHistoricalInput(tables, row)
                     )
                         requested["staging/" + token + ".part"] = row["hash"].GetValue<string>();
+                }
+                foreach (var conversion in tables["ld_conversions"].AsArray())
+                {
+                    if (conversion["state"].ToString() == "completed")
+                        continue;
+                    var details = JsonNode.Parse(conversion["details"].ToString());
+                    if (details?["hash"] == null)
+                        continue;
+                    var hash = details["hash"].ToString();
+                    var stage = details["stage"]?.ToString();
+                    if (!Guid.TryParseExact(stage, "N", out _))
+                        throw new IOException("Invalid retained conversion stage.");
+                    var relative = File.Exists(
+                        originals.ObjectPath(library, hash, OriginalValidation.PdfKind)
+                    )
+                        ? "objects/" + hash.ToLowerInvariant() + ".pdf"
+                        : "staging/" + stage + ".part";
+                    requested[relative] = hash;
                 }
                 foreach (var pair in requested)
                 {
@@ -320,10 +371,12 @@ public sealed partial class PgStore
                     }
                 }
                 var manifest = new BundleManifest(
-                    1,
-                    3,
+                    2,
+                    4,
                     library,
-                    "all records and complete library relations",
+                    scope == null
+                        ? "all records and complete library relations"
+                        : "selected records and referenced library relations",
                     Artifacts.Hash(metadata),
                     counts,
                     files,
@@ -427,9 +480,15 @@ public sealed partial class PgStore
             JsonSerializer.Deserialize<BundleManifest>(manifestBytes)
             ?? throw new IOException("Missing manifest.");
         if (
-            manifest.Format != 1
-            || manifest.Schema != 3
-            || manifest.Coverage != "all records and complete library relations"
+            !(
+                (manifest.Format == 1 && manifest.Schema == 3)
+                || (manifest.Format == 2 && manifest.Schema == 4)
+            )
+            || manifest.Coverage
+                is not (
+                    "all records and complete library relations"
+                    or "selected records and referenced library relations"
+                )
         )
             throw new IOException("Unsupported bundle format, schema or coverage.");
         var metadata = ReadEntry(entries["metadata.json"], MetadataLimit);
@@ -449,6 +508,21 @@ public sealed partial class PgStore
                 );
         }
         var tables = JsonNode.Parse(metadata).AsObject();
+        if (manifest.Schema == 3)
+        {
+            if (
+                !tables
+                    .Select(x => x.Key)
+                    .Order()
+                    .SequenceEqual(BundleTables.Except(ResearchTables).Order())
+            )
+                throw new IOException("Unexpected legacy bundle tables.");
+            foreach (var table in ResearchTables)
+            {
+                tables[table] = new JsonArray();
+                manifest.Counts[table] = 0;
+            }
+        }
         if (!tables.Select(x => x.Key).Order().SequenceEqual(BundleTables.Order()))
             throw new IOException("Unexpected or missing library tables.");
         var expected = new HashSet<string>(StringComparer.Ordinal)
@@ -468,7 +542,7 @@ public sealed partial class PgStore
             if (
                 !System.Text.RegularExpressions.Regex.IsMatch(
                     item.Path,
-                    @"^(objects/[a-f0-9]{64}\.(xml|pdf)|staging/[a-f0-9]{32}\.part)$"
+                    @"^(objects/[a-f0-9]{64}\.(xml|pdf|html|txt)|staging/[a-f0-9]{32}\.part)$"
                 )
             )
                 throw new IOException("Unsupported original path or executable entry.");
@@ -543,12 +617,19 @@ public sealed partial class PgStore
                     if (!row.Select(x => x.Key).Order().SequenceEqual(permitted))
                         throw new IOException("Unexpected or missing record fields.");
                     row["library_id"] = id.ToString();
-                    if (table == "ld_jobs")
+                    if (table is "ld_jobs" or "ld_conversions")
                     {
                         row["lease_token"] = null;
                         row["lease_until"] = null;
                     }
-                    if (table is "ld_jobs" or "ld_items" or "ld_batches" or "ld_runs")
+                    if (
+                        table
+                        is "ld_jobs"
+                            or "ld_items"
+                            or "ld_batches"
+                            or "ld_runs"
+                            or "ld_conversions"
+                    )
                     {
                         var state = row["state"].GetValue<string>();
                         if (
@@ -580,6 +661,7 @@ public sealed partial class PgStore
                 }
             }
             ValidateBundleGraph(tables);
+            ValidateResearchBundle(tables);
             foreach (var row in tables["ld_records"].AsArray())
             {
                 ValidateUniqueJson(Encoding.UTF8.GetBytes(row["metadata"].GetValue<string>()));
@@ -623,13 +705,21 @@ public sealed partial class PgStore
             {
                 if (
                     BundleKind(row["kind"].GetValue<string>())
-                    is not (OriginalValidation.XmlKind or OriginalValidation.PdfKind)
+                    is not (
+                        OriginalValidation.XmlKind
+                        or OriginalValidation.PdfKind
+                        or OriginalValidation.HtmlKind
+                        or OriginalValidation.TextKind
+                    )
                 )
                     throw new IOException("Unsupported artifact kind.");
                 if (
                     !tables["ld_article_files"]
                         .AsArray()
                         .Any(x => x["hash"].GetValue<string>() == row["hash"].GetValue<string>())
+                    && !tables["ld_derivations"]
+                        .AsArray()
+                        .Any(x => x["hash"].ToString() == row["hash"].ToString())
                 )
                     throw new IOException("Original has no bibliographic association.");
             }
@@ -644,9 +734,7 @@ public sealed partial class PgStore
                 var relative =
                     "objects/"
                     + hash.ToLowerInvariant()
-                    + (
-                        f["kind"].GetValue<string>() == OriginalValidation.PdfKind ? ".pdf" : ".xml"
-                    );
+                    + OriginalValidation.Extension(f["kind"].GetValue<string>());
                 if (
                     !entries.TryGetValue(relative, out var entry)
                     || entry.Length != f["bytes"].GetValue<long>()
@@ -672,6 +760,46 @@ public sealed partial class PgStore
                 )
                     throw new IOException(
                         "Original bytes, manifest, file row and artifact kind disagree."
+                    );
+            }
+            foreach (var derived in tables["ld_derivations"].AsArray())
+            {
+                var f = tables["ld_files"]
+                    .AsArray()
+                    .Single(x => x["hash"].ToString() == derived["hash"].ToString());
+                var relative = "objects/" + derived["hash"].ToString().ToLowerInvariant() + ".pdf";
+                if (
+                    !entries.TryGetValue(relative, out var entry)
+                    || f["kind"].ToString() != OriginalValidation.PdfKind
+                    || entry.Length != f["bytes"].GetValue<long>()
+                )
+                    throw new IOException("Derived file association is incomplete.");
+                using var document = UglyToad.PdfPig.PdfDocument.Open(
+                    ReadEntry(entry, NcbiTransport.MaximumBytes)
+                );
+                if (document.NumberOfPages is < 1 or > 200)
+                    throw new IOException("Derived PDF page bound exceeded.");
+                var content = string.Concat(document.GetPages().Select(x => x.Text));
+                if (
+                    !content.Contains(derived["search_id"].ToString())
+                    || !content.Contains(derived["kind"].ToString())
+                )
+                    throw new IOException("Derived PDF identity/label is absent.");
+            }
+            foreach (var conversion in tables["ld_conversions"].AsArray())
+            {
+                var details = JsonNode.Parse(conversion["details"].ToString());
+                if (conversion["state"].ToString() == "completed" || details?["hash"] == null)
+                    continue;
+                var hash = details["hash"].ToString();
+                var staged = "staging/" + details["stage"] + ".part";
+                if (
+                    !manifest.Files.Any(x =>
+                        x.Hash == hash && (x.Path == "objects/" + hash + ".pdf" || x.Path == staged)
+                    )
+                )
+                    throw new IOException(
+                        "Prepared conversion is missing its retained output bytes."
                     );
             }
             foreach (var row in tables["ld_manual_inputs"].AsArray())

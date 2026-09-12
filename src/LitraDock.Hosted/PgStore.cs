@@ -106,7 +106,15 @@ public sealed partial class PgStore : IAsyncDisposable
             using var text = new StreamReader(upgrade);
             await Exec(db, await text.ReadToEndAsync());
         }
-        if (Convert.ToInt32(await Scalar(db, "SELECT max(version) FROM ld_schema")) != 3)
+        if (Convert.ToInt32(await Scalar(db, "SELECT max(version) FROM ld_schema")) == 3)
+        {
+            using var upgrade = typeof(PgStore).Assembly.GetManifestResourceStream(
+                "LitraDock.Hosted.migrations.004.sql"
+            );
+            using var text = new StreamReader(upgrade);
+            await Exec(db, await text.ReadToEndAsync());
+        }
+        if (Convert.ToInt32(await Scalar(db, "SELECT max(version) FROM ld_schema")) != 4)
             throw new InvalidOperationException("Unsupported hosted schema.");
         await tx.CommitAsync();
     }
@@ -114,7 +122,7 @@ public sealed partial class PgStore : IAsyncDisposable
     public async Task VerifySchema()
     {
         await using var db = await Data.OpenConnectionAsync();
-        if (Convert.ToInt32(await Scalar(db, "SELECT max(version) FROM ld_schema")) != 3)
+        if (Convert.ToInt32(await Scalar(db, "SELECT max(version) FROM ld_schema")) != 4)
             throw new InvalidOperationException("Run the reviewed schema migration first.");
     }
 

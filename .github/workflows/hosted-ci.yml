@@ -52,12 +52,32 @@ jobs:
           cp .litradock/static/result.json evidence/static-result.json
           dotnet run --project tests/LitraDock.HostedVerification -c Release --no-build -- --sources .litradock/sources 2>&1 | tee evidence/sources.log
           cp .litradock/sources/result.json evidence/sources-result.json
+      - name: Pinned offline document assets and actual PDF rendering
+        run: |
+          set -euo pipefail
+          export DOCUMENT_WORKER="$PWD/src/document-worker/worker.mjs"
+          echo "DOCUMENT_WORKER=$DOCUMENT_WORKER" >> "$GITHUB_ENV"
+          npm ci --prefix src/document-worker --ignore-scripts 2>&1 | tee evidence/document-npm.log
+          python3 src/document-worker/setup-assets.py 2>&1 | tee evidence/document-assets.log
+          node src/document-worker/node_modules/playwright/cli.js install --with-deps chromium 2>&1 | tee evidence/document-browser-install.log
+          python3 -m venv .litradock/pdf-verification
+          .litradock/pdf-verification/bin/python -m pip install --only-binary=:all: pymupdf==1.28.2 2>&1 | tee evidence/pdf-dependencies.log
+          python3 tests/recovery/measure.py evidence/document-resources.json -- node tests/documents/verify.mjs .litradock/documents 2>&1 | tee evidence/document-tests.log
+          .litradock/pdf-verification/bin/python tests/documents/pdf_checks.py .litradock/documents 2>&1 | tee evidence/pdf-inspection.log
+          cp .litradock/documents/*-result.json .litradock/documents/pdf-inspection.json .litradock/documents/*-page-*.png evidence/
+          cp .litradock/documents/result.json evidence/document-result.json
       - name: Actual PostgreSQL, migration, lease and HTTP isolation checks
         run: |
           set -euo pipefail
           dotnet run --project tests/LitraDock.HostedVerification -c Release --no-build -- --postgres .litradock/postgres 2>&1 | tee evidence/postgres.log
           cp .litradock/postgres/result.json evidence/postgres-result.json
           cp .litradock/postgres/source-scale.json evidence/source-scale.json
+      - name: Actual research decisions, conversions and selected relocation
+        run: |
+          set -euo pipefail
+          python3 tests/recovery/measure.py evidence/research-resources.json -- dotnet run --project tests/LitraDock.HostedVerification -c Release --no-build -- --research .litradock/research 2>&1 | tee evidence/research.log
+          cp .litradock/research/result.json evidence/research-result.json
+          cp .litradock/research/research-scale.json .litradock/research/interchange.* evidence/
       - name: Actual unattended recovery and PostgreSQL object-pair restore drill
         env:
           LITRADOCK_PG_CONTAINER: ${{ job.services.postgres.id }}

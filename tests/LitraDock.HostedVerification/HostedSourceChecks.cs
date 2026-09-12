@@ -27,12 +27,12 @@ public static class HostedSourceChecks
             return await command.ExecuteScalarAsync();
         }
         check(
-            Convert.ToInt32(await Sql("SELECT max(version) FROM ld_schema")) == 3,
-            "Actual schema3 upgrade and prior schema1 marker retained"
+            Convert.ToInt32(await Sql("SELECT max(version) FROM ld_schema")) == 4,
+            "Actual schema4 upgrade and prior schema1 marker retained"
         );
         check(
-            Convert.ToInt32(await Sql("SELECT count(*) FROM ld_schema")) == 3,
-            "Migration retains all three version markers"
+            Convert.ToInt32(await Sql("SELECT count(*) FROM ld_schema")) == 4,
+            "Migration retains all four version markers"
         );
         var account = await store.CreateAccount(
             "sources-" + Guid.NewGuid().ToString("N"),

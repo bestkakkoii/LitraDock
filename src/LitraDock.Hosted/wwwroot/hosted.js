@@ -231,6 +231,7 @@ async function detail(id) {
     await openManual(id, saved.item, "paused");
   });
   $("article").append(manualButton);
+  const researchButton=document.createElement("button");researchButton.textContent="Review, notes and reading copies";researchButton.onclick=safe(async()=>{$("detail").close();await openResearch(id);});$("article").append(researchButton);
   const provenance = document.createElement("pre");
   provenance.textContent = JSON.stringify(r.provenance, null, 2);
   $("article").append(provenance);
@@ -513,3 +514,34 @@ $("restoreBundle").onclick=safe(async()=>{
 });
 
 $("transferHistory").onclick=safe(async()=>{$("recoveryStatus").textContent=JSON.stringify(await json("transfers"),null,2);});
+
+let projectOffset=0,researchOffset=0,researchRecord="",researchLibrary="",researchData=null,reviewRevision=0;
+async function loadProjects(){const rows=await json(base()+"projects");options("projects",rows,"project_id",x=>x.name,$("projects").value);return rows;}
+async function projectPage(){if(!$("projects").value)return;const r=await json(base()+`projects/${$("projects").value}?offset=${projectOffset}`);$("projectCounts").textContent=`Project records ${r.total}; starting ${projectOffset+1}`;$("projectPrevious").disabled=projectOffset===0;$("projectNext").disabled=projectOffset+50>=r.total;$("projectRecords").replaceChildren();for(const row of r.records){const b=document.createElement("button");b.textContent=`${row.search_id}: ${row.state} · ${JSON.parse(row.metadata).Title}`;b.onclick=safe(()=>openResearch(row.search_id));$("projectRecords").append(b);}}
+$("loadProjects").onclick=safe(loadProjects);
+$("createProject").onclick=safe(async()=>{const r=await json(base()+"projects",{name:$("projectName").value});await loadProjects();$("projects").value=r.id;await projectPage();});
+$("projects").onchange=safe(async()=>{projectOffset=0;await projectPage();});
+$("projectPrevious").onclick=safe(async()=>{projectOffset=Math.max(0,projectOffset-50);await projectPage();});
+$("projectNext").onclick=safe(async()=>{projectOffset+=50;await projectPage();});
+function researchBase(){if(library!==researchLibrary)throw new Error("Library changed; reopen the research record.");return `libraries/${researchLibrary}/`;}
+function loadReviewForm(){const r=researchData?.reviews.find(x=>x.project_id===$("reviewProject").value);reviewRevision=r?.revision??0;$("reviewState").value=r?.state??"unscreened";$("reviewTags").value=r?.tags??"";$("reviewReason").value=r?.reason??"";$("reviewNote").value=r?.note??"";const e=JSON.parse(r?.evidence??"{}");$("reviewVersion").value=e.hash??"";$("reviewQuote").value=e.quote??"";$("reviewSection").value=e.section??"";$("reviewPage").value=e.page??"";$("reviewPageKind").value=e.pageKind??"source";}
+async function refreshResearch(){
+  const r=await json(researchBase()+`records/${researchRecord}/research?offset=${researchOffset}`);researchData=r;
+  $("researchCounts").textContent=`Conversions ${r.counts.conversions}; derived files ${r.counts.derivations}; decision events ${r.counts.history}; page starts ${researchOffset+1}`;
+  $("researchPrevious").disabled=researchOffset===0;$("researchNext").disabled=researchOffset+100>=Math.max(r.counts.conversions,r.counts.derivations,r.counts.history);
+  $("conversionList").replaceChildren();for(const c of r.conversions){const row=document.createElement("section");const p=document.createElement("p");p.textContent=`${c.conversion_id}: ${c.state}; attempts ${c.attempts}. ${c.reason}`;row.append(p);for(const action of c.state==="completed"?[]:c.state==="running"||c.state==="queued"?["pause","cancel"]:["resume","cancel"]){const b=document.createElement("button");b.textContent=action+" conversion";b.onclick=safe(async()=>{await json(researchBase()+`conversions/${c.conversion_id}/control`,{action});await refreshResearch();});row.append(b);}$("conversionList").append(row);}
+  $("derivedList").replaceChildren();for(const d of r.derivations){const b=document.createElement("button");b.textContent=`Download ${d.kind} ${d.hash.slice(0,12)}`;b.onclick=safe(()=>download(researchBase()+`records/${researchRecord}/derived/${d.derivation_id}/files`,undefined,undefined));const p=document.createElement("p");const details=JSON.parse(d.provenance);p.textContent=`Input ${details.inputHash}; ${details.renderer}; ${details.warnings?.join(" ")||"Inspect saved conversion coverage."}`;$("derivedList").append(b,p);if(!Array.from($("reviewVersion").options).some(x=>x.value===d.hash))$("reviewVersion").add(new Option(`Derived: ${d.kind} ${d.hash}`,d.hash));}
+  $("reviewHistory").textContent=r.history.map(x=>`${x.created_at} · ${x.actor} · revision ${x.revision}\n${x.data}`).join("\n\n");
+}
+async function openResearch(id){researchRecord=id;researchLibrary=library;researchOffset=0;const original=await json(researchBase()+`records/${id}`);$("researchTitle").textContent=original.article.title;$("researchIdentity").textContent=`${id} · DOI ${original.article.doi} · PMID ${original.article.pmid} · PMCID ${original.article.pmcid}`;const projects=await loadProjects();options("reviewProject",projects,"project_id",x=>x.name,$("projects").value);options("conversionOriginal",original.files,"hash",x=>x.kind+" "+x.hash,original.files[0]?.hash??"");options("reviewVersion",original.files,"hash",x=>"Original: "+x.hash,"");await refreshResearch();loadReviewForm();$("reviewStatus").textContent="";$("researchDialog").showModal();}
+$("researchClose").onclick=()=>$("researchDialog").close();
+$("reviewProject").onchange=loadReviewForm;
+$("saveReview").onclick=safe(async()=>{if(!$("reviewProject").value)throw new Error("Choose or create a project first.");const evidence={hash:$("reviewVersion").value,quote:$("reviewQuote").value,section:$("reviewSection").value,pageKind:$("reviewPageKind").value};if($("reviewPage").value)evidence.page=$("reviewPage").value;const r=await json(researchBase()+`projects/${$("reviewProject").value}/records/${researchRecord}`,{state:$("reviewState").value,tags:$("reviewTags").value,note:$("reviewNote").value,reason:$("reviewReason").value,evidence:JSON.stringify(evidence),revision:reviewRevision});reviewRevision=r.revision;$("reviewStatus").textContent=`Project decision saved at revision ${r.revision}; acquisition is unchanged.`;await refreshResearch();});
+for(const [id,mode] of [["convertOriginal","original"],["convertAbstract","abstract"]])$(id).onclick=safe(async()=>{await json(researchBase()+`records/${researchRecord}/conversions`,{hash:$("conversionOriginal").value,mode});await refreshResearch();});
+$("refreshResearch").onclick=safe(refreshResearch);
+$("researchPrevious").onclick=safe(async()=>{researchOffset=Math.max(0,researchOffset-100);await refreshResearch();});
+$("researchNext").onclick=safe(async()=>{researchOffset+=100;await refreshResearch();});
+setInterval(()=>{if($("researchDialog").open)refreshResearch().catch(error=>{$("reviewStatus").textContent=error.message;});},2500);
+async function citationAction(format){if(!scope)throw new Error("Choose a saved result scope.");const request={style:$("citationStyle").value,format,selectedOnly:$("citationSelected").checked};if(format==="preview"){const r=await json(base()+`scopes/${scope}/citations`,request);$("citationOutput").textContent=`${r.processor} · ${r.style} · ${r.styleHash}\n${r.citation}\n\n${r.bibliography.join("\n\n")}\n\n${r.items.map(x=>`${x.id}: ${x.custom.missingMetadata.join(" ")}`).join("\n")}`;}else await download(base()+`scopes/${scope}/citations`,request,{ris:"references.ris",bibtex:"references.bib","csl-json":"references.csl.json",text:"bibliography.txt"}[format]);}
+for(const [id,format] of [["citationPreview","preview"],["citationRis","ris"],["citationBib","bibtex"],["citationJson","csl-json"],["citationText","text"]])$(id).onclick=safe(()=>citationAction(format));
+$("scopedBundle").onclick=safe(async()=>{if(!scope)throw new Error("Choose a saved scope.");await download(base()+`scopes/${scope}/bundle`,{selectedOnly:$("bundleSelected").checked},"selected-library.zip");});

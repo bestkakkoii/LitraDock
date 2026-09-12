@@ -174,6 +174,7 @@ builder.Services.AddSingleton<ILiteratureSource>(
 #endif
 builder.Services.AddHostedService<HostedWorker>();
 builder.Services.AddHostedService<HealthWorker>();
+builder.Services.AddHostedService<ReadingWorker>();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
@@ -288,6 +289,7 @@ app.Use(
                                     or "bundle"
                                     or "restore"
                                     or "health"
+                                    or "citations"
                         )
                 )
                 : null;
@@ -471,7 +473,7 @@ app.MapGet(
         var kind = OriginalValidation.Kind(bytes);
         return Results.File(
             bytes,
-            kind == OriginalValidation.PdfKind ? "application/pdf" : "application/xml",
+            OriginalValidation.Mime(kind),
             await store.OriginalName(library, id, hash, kind)
         );
     }
@@ -653,6 +655,7 @@ app.MapPost(
 Console.WriteLine(
     "Hosted service configured; database verified; private storage remains outside the web root."
 );
+app.MapResearch(store, originals);
 await app.RunAsync();
 
 record LoginRequest(string Login, string Password);
