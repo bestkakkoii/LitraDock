@@ -1,2 +1,4 @@
-# Pinned upstream assets retain byte-identical hashes on every checkout.
-src/document-worker/assets/* -text
+* text=auto eol=lf
+*.png binary
+*.zip binary
+*.tar binary

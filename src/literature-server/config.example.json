@@ -1,0 +1,15 @@
+{
+  "FrontendDirectory": "/CHANGE-ME/compiled-web",
+  "Database": "host=/NONEXISTENT user=CHANGE_ME dbname=litradock_native_example",
+  "Origin": "http://127.0.0.1:18090",
+  "Listen": "127.0.0.1:18090",
+  "Operator": "CHANGE_ME_ACTUAL_OPERATOR",
+  "Contact": "CHANGE_ME_ACTUAL_CONTACT",
+  "Retention": "CHANGE_ME_ACTUAL_RETENTION",
+  "Revision": "CHANGE_ME_EXACT_REVISION",
+  "Expires": "2000-01-01T00:00:00Z",
+  "LocalTest": true,
+  "SearchEnabled": false,
+  "AcquisitionEnabled": false,
+  "BlockedPMCIDs": []
+}

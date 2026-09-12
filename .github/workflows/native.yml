@@ -1,0 +1,75 @@
+name: Native candidate
+on:
+  workflow_dispatch:
+  push:
+    branches: [native-demo-003]
+permissions:
+  contents: read
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: native_test
+          POSTGRES_PASSWORD: synthetic-ci-only
+          POSTGRES_DB: litradock_native_test_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U native_test -d litradock_native_test_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27.1'
+          cache-dependency-path: src/literature-server/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: src/literature-web/package-lock.json
+      - name: Isolated synthetic configuration
+        run: |
+          python3 - <<'PY'
+          import json,os,pathlib
+          config=json.loads(pathlib.Path('src/literature-server/config.example.json').read_text())
+          config['Database']='host=127.0.0.1 user=native_test password=synthetic-ci-only dbname=litradock_native_test_ci sslmode=disable'
+          target=pathlib.Path(os.environ['RUNNER_TEMP'])/'native-test.json'
+          target.write_text(json.dumps(config));target.chmod(0o600)
+          PY
+      - name: Native engine and offline contracts
+        working-directory: src/literature-server
+        env:
+          LITRADOCK_NATIVE_TEST: 'yes'
+          LITRADOCK_GO_CONFIG: ${{ runner.temp }}/native-test.json
+        run: |
+          go test -count=1 -v ./...
+          go vet ./...
+      - name: Repeated compiler outputs
+        run: |
+          mkdir -p "$RUNNER_TEMP/native-build"
+          cd src/literature-server
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -o "$RUNNER_TEMP/native-build/server" .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -buildvcs=false -trimpath -o "$RUNNER_TEMP/native-build/server-repeat" .
+          cd ../literature-web
+          npm ci
+          npm test
+          npm run build
+          cp -r dist "$RUNNER_TEMP/web-one"
+          npm run build
+          cp -r dist "$RUNNER_TEMP/web-two"
+      - name: Source and runtime negative controls
+        run: |
+          python3 scripts/create-native-source.py --revision "$GITHUB_SHA" --output "$RUNNER_TEMP/native-build/source.tar"
+          python3 scripts/package-go-runtime.py --revision "$GITHUB_SHA" --build-directory "$RUNNER_TEMP/native-build" --frontend-directory "$RUNNER_TEMP/web-one" --frontend-repeat-directory "$RUNNER_TEMP/web-two"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-code-runtime
+          path: |
+            ${{ runner.temp }}/native-build/runtime.tar
+            ${{ runner.temp }}/native-build/runtime-manifest.json
+            ${{ runner.temp }}/native-build/runtime-package.json
+            ${{ runner.temp }}/native-build/source.tar
