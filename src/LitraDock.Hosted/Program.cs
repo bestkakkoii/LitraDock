@@ -55,7 +55,8 @@ if (string.IsNullOrWhiteSpace(connection) || string.IsNullOrWhiteSpace(storage))
     throw new InvalidOperationException(
         "LITRADOCK_POSTGRES and LITRADOCK_OBJECTS must be configured; no fallback backend."
     );
-await using var store = new PgStore(connection);
+var demo = DemoPolicy.Read(builder.Configuration);
+await using var store = new PgStore(connection, demo);
 var originals = new OriginalStore(storage);
 originals.VerifyPrivateRoot(builder.Environment.ContentRootPath);
 originals.VerifyWebRoot(
@@ -168,6 +169,7 @@ if (args.Contains("--import"))
     return;
 }
 var local = builder.Configuration["LITRADOCK_LOCAL_TEST"] == "true";
+await store.VerifyDemo();
 if (
     !Uri.TryCreate(builder.Configuration["LITRADOCK_ORIGIN"], UriKind.Absolute, out var origin)
     || origin.AbsolutePath != "/"
@@ -208,15 +210,22 @@ using var europe = new HttpClient(
 builder.Services.AddSingleton<ILiteratureSource>(new Literature.Verification.BrowserFixture());
 #else
 builder.Services.AddSingleton<ILiteratureSource>(
-    new SourceAcquisition(new PubMedSource(transport), ncbi, europe)
+    demo == null ? new SourceAcquisition(new PubMedSource(transport), ncbi, europe)
+        : new DemoSource(new SourceAcquisition(new PubMedSource(transport), ncbi, europe), demo)
 );
 #endif
 builder.Services.AddHostedService<HostedWorker>();
 builder.Services.AddHostedService<HealthWorker>();
-builder.Services.AddHostedService<ReadingWorker>();
+if (demo == null) builder.Services.AddHostedService<ReadingWorker>();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
+    if (demo != null)
+        options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(_ =>
+            RateLimitPartition.GetFixedWindowLimiter("invited-demo", _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 600, Window = TimeSpan.FromMinutes(1), QueueLimit = 0,
+            }));
     options.AddPolicy(
         "login",
         context =>
@@ -235,7 +244,7 @@ var proxy = builder.Configuration["LITRADOCK_PROXY_IP"];
 if (proxy != null)
     builder.Services.Configure<ForwardedHeadersOptions>(options =>
     {
-        options.ForwardedHeaders = ForwardedHeaders.XForwardedProto;
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedFor;
         options.KnownProxies.Clear();
         options.KnownIPNetworks.Clear();
         options.KnownProxies.Add(IPAddress.Parse(proxy));
@@ -335,6 +344,19 @@ app.Use(
                         )
                 )
                 : null;
+            if (demo != null && context.Request.Path.StartsWithSegments("/api"))
+            {
+                demo.RequireActive();
+                var route = (context.GetEndpoint() as Microsoft.AspNetCore.Routing.RouteEndpoint)?.RoutePattern.RawText;
+                if (!DemoPolicy.Allows(context.Request.Method, route))
+                {
+                    context.Response.StatusCode = 403;
+                    await context.Response.WriteAsJsonAsync(new { error = "This feature is not enabled in the invited demo; existing research data is preserved." });
+                    return;
+                }
+                if (context.Request.Method == "POST" && originals.Measure() > DemoPolicy.StorageLimit)
+                    throw new InvalidOperationException("Demo storage limit reached; existing originals are retained. Contact the operator.");
+            }
             if (context.Items.ContainsKey("session"))
             {
                 // 初次驗證與准入之間可能完成撤銷；持有准入鎖後必須重新查詢，不能沿用舊 Session。
@@ -426,6 +448,17 @@ app.MapGet(
     "/api/session",
     (HttpContext context) => new { csrf = ((Session)context.Items["session"]).Csrf }
 );
+app.MapGet("/service-info", () => Results.Ok(new
+{
+    demo = demo != null,
+    operatorName = demo?.Operator,
+    contact = demo?.Contact,
+    retention = demo?.Retention,
+    expiresAt = demo?.ExpiresAt,
+    source = demo == null ? "https://github.com/bestkakkoii/LitraDock" : "https://github.com/bestkakkoii/LitraDock/tree/" + demo.SourceRevision,
+    searchLimit = demo == null ? 10000 : DemoPolicy.SearchLimit,
+    batchLimit = demo == null ? 10000 : DemoPolicy.BatchLimit,
+}));
 app.MapPost(
     "/api/logout",
     async (HttpContext context) =>
@@ -530,6 +563,8 @@ app.MapGet(
             return Results.NotFound();
         var bytes = originals.Read(library, hash);
         var kind = OriginalValidation.Kind(bytes);
+        if (demo != null && (!DemoSource.Reviewed(await store.Article(library, id)) || kind != OriginalValidation.XmlKind || !ArticleRights.Assess(bytes).Permitted))
+            return Results.Problem("Original is outside the reviewed demo acquisition set; contact the operator.", statusCode: 403);
         return Results.File(
             bytes,
             OriginalValidation.Mime(kind),

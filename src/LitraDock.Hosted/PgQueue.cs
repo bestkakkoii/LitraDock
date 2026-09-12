@@ -228,6 +228,8 @@ public sealed partial class PgStore
             throw new ArgumentException("Invalid control action.");
         await using var db = await Data.OpenConnectionAsync();
         await using var tx = await db.BeginTransactionAsync();
+        if (action is "resume" or "retry")
+            await DemoLibraryAdmission(db, library, "jobs", 0);
         await Exec(db, "SELECT pg_advisory_xact_lock(724913002)");
         var state =
             await Scalar(
@@ -271,6 +273,7 @@ public sealed partial class PgStore
                 throw new InvalidOperationException(
                     "No eligible items; batch state remains unchanged."
                 );
+            await DemoLibraryAdmission(db, library, "jobs", items.Count);
             foreach (var item in items)
             {
                 var job = "JOB-" + Guid.NewGuid().ToString("N");

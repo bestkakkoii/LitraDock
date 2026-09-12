@@ -29,7 +29,7 @@ public static class SourceChecks
                 + a.Pmid
                 + "</article-id><article-id pub-id-type='doi'>"
                 + a.Doi
-                + "</article-id><permissions><license>CC BY 4.0 synthetic fixture only</license></permissions></article-meta></front><body><p>"
+                + "</article-id><permissions><license href='https://creativecommons.org/licenses/by/4.0/'>CC BY 4.0 synthetic fixture only</license></permissions></article-meta></front><body><p>"
                 + body
                 + "</p></body></article>"
         );
@@ -46,6 +46,21 @@ public static class SourceChecks
 
     public static async Task Run(Action<bool, string> check)
     {
+        var licensed = Encoding.UTF8.GetString(Xml(Record()));
+        foreach (var (rightsXml, expected) in new[]
+        {
+            (licensed, "permitted"),
+            (licensed.Replace("href='https://creativecommons.org/licenses/by/4.0/'", ""), "unknown"),
+            (licensed.Replace("<license", "<notice").Replace("</license>", "</notice>"), "unknown"),
+            (licensed.Replace("/by/4.0/", "/by-nc/4.0/"), "restricted"),
+            (licensed.Replace("creativecommons.org", "creativecommons.org.evil.invalid"), "unknown"),
+            (licensed.Replace("CC BY 4.0 synthetic fixture only", "All rights reserved"), "restricted"),
+        })
+        {
+            var bytes = Encoding.UTF8.GetBytes(rightsXml);
+            check(ArticleRights.Assess(bytes).Status == expected && OriginalValidation.Validate(bytes, Record()).RightsStatus == expected,
+                "PDR002 structured rights decision is independent of display warning: " + expected);
+        }
         foreach (
             var (utc, expected) in new[]
             {

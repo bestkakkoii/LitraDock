@@ -164,6 +164,9 @@ public static class OriginalValidation
             expected.Pmcid = pmc.StartsWith("PMC", StringComparison.Ordinal) ? pmc : "PMC" + pmc;
         }
         var info = Artifacts.ValidateXml(bytes, expected);
+        var rights = ArticleRights.Assess(bytes);
+        info.RightsStatus = rights.Status;
+        info.RightsLicenseUri = rights.LicenseUri;
         if (!doc.Descendants().Any(e => e.Name.LocalName == "license"))
             info.License =
                 "No article license statement supplied; no redistribution permission inferred. Access route recorded separately.";

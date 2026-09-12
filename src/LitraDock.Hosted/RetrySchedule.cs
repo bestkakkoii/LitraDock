@@ -23,7 +23,7 @@ public sealed partial class PgStore
         await tx.CommitAsync();
     }
 
-    private static async Task ScheduleLocked(
+    private async Task ScheduleLocked(
         NpgsqlConnection db,
         Guid library,
         string job,
@@ -42,7 +42,7 @@ public sealed partial class PgStore
         var number = prior == null ? 1 : (int)prior["number"] + 1;
         var first = prior == null ? DateTime.UtcNow : (DateTime)prior["first_at"];
         var allowed =
-            number <= (category == "rate_wait" ? 8 : 4)
+            Demo == null && number <= (category == "rate_wait" ? 8 : 4)
             && DateTime.UtcNow - first < TimeSpan.FromHours(72);
         var delay = TimeSpan.FromSeconds(Math.Min(900, 15 * Math.Pow(4, number - 1)));
         var next = DateTime.UtcNow + delay;
@@ -55,7 +55,7 @@ public sealed partial class PgStore
         var state = allowed ? "scheduled" : "failed";
         var message = allowed
             ? reason + " Automatic continuation is scheduled."
-            : reason + " Automatic retry budget exhausted; inspect and retry explicitly.";
+            : reason + (Demo == null ? " Automatic retry budget exhausted; inspect and retry explicitly." : " Automatic continuation is disabled in this demo; retry the batch or submit a new search after the source cooldown.");
         await Exec(
             db,
             "UPDATE ld_jobs SET state=@p2,reason=@p3,lease_token=NULL,lease_until=NULL WHERE library_id=@p0 AND job_id=@p1",
@@ -101,6 +101,7 @@ public sealed partial class PgStore
 
     public async Task AdvanceSchedule()
     {
+        if (Demo != null) return;
         await using var db = await Data.OpenConnectionAsync();
         await using var tx = await db.BeginTransactionAsync();
         await Exec(db, "SELECT pg_advisory_xact_lock(724913002)");

@@ -56,6 +56,14 @@ public sealed class SourceRequestHandler(
                 );
             if (delay > TimeSpan.Zero)
                 await Task.Delay(delay, cancellationToken);
+            if (store.Demo != null)
+            {
+                store.Demo.RequireActive();
+                if (Convert.ToInt64(await PgStore.Scalar(db, "SELECT coalesce(sum(requests),0)::bigint FROM ld_source_usage WHERE provider=@p0", provider)) >= 250)
+                    throw new SourceException("unavailable", "Demo provider request budget exhausted; contact the operator. No automatic budget reset.");
+                if (provider == "europepmc")
+                    await PgStore.Exec(db, "INSERT INTO ld_source_usage VALUES(@p0,@p1,1) ON CONFLICT(provider,day) DO UPDATE SET requests=ld_source_usage.requests+1", provider, DateTime.UtcNow.ToString("yyyy-MM-dd"));
+            }
             if (provider == "ncbi")
             {
                 var eastern = TimeZoneInfo.FindSystemTimeZoneById("America/New_York");

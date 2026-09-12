@@ -1,5 +1,7 @@
 # LitraDock — hosted literature workflow preview
 
+The [restricted invited-user demo](DEMO.md) provides a concrete same-origin deployment path with bounded real PubMed search and reviewed XML acquisition. Read its exact scope, server limits, source/privacy notices and unresolved hosting/device qualification before inviting participants.
+
 This snapshot contains application code and synthetic tests for review. It has no original development/commissioning history, private libraries or acquired papers. Project source is provided under GNU AGPL-3.0-only; see LICENSE. This does not grant rights to scholarly articles, trademarks or external services. Third-party components retain their own notices.
 
 The service uses ASP.NET Core10, PostgreSQL and private immutable originals outside the web root. It supports PubMed search, permitted PMC/Europe PMC XML acquisition, durable mixed-outcome batches, same-record manual originals and complete scoped Excel/CSV reports. See [source workflow and limits](SOURCES.md) and [private library transfer and operator recovery](RECOVERY.md). It is not a production release; actual deployment/security/backup gates remain. Operator-created accounts have revocable sessions; self-registration/reset/email flows are not implemented.

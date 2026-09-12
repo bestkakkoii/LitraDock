@@ -9,7 +9,7 @@ concurrency:
 jobs:
   postgres:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:18.6-bookworm@sha256:1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af
@@ -103,6 +103,13 @@ jobs:
           python3 tests/recovery/measure.py evidence/research-resources.json -- dotnet run --project tests/LitraDock.HostedVerification -c Release --no-build -- --research .litradock/research 2>&1 | tee evidence/research.log
           cp .litradock/research/result.json evidence/research-result.json
           cp .litradock/research/research-scale.json evidence/
+      - name: Actual demo admission and quota concurrency
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          dotnet run --project tests/LitraDock.HostedVerification -c Release --no-build -- --demo .litradock/demo 2>&1 | tee evidence/demo.log
+          cp .litradock/demo/result.json evidence/demo-result.json
+          cp .litradock/demo/demo-environment.json evidence/
       - name: Actual unattended recovery and PostgreSQL object-pair restore drill
         if: ${{ !cancelled() }}
         env:
@@ -139,7 +146,37 @@ jobs:
           npm ci --prefix tests/hosted-web 2>&1 | tee evidence/browser-npm.log
           tests/hosted-web/node_modules/.bin/playwright install --with-deps chromium 2>&1 | tee evidence/browser-install.log
           python3 tests/recovery/measure.py evidence/browser-resources.json -- node tests/hosted-web/verify.mjs .litradock/hosted-browser 2>&1 | tee evidence/browser.log
-      - name: Retain bounded synthetic evidence
+      - name: Production demo real PubMed search and reviewed two-item batch
+        if: ${{ !cancelled() }}
+        env:
+          LITRADOCK_PG_TEST_CONNECTION: Host=127.0.0.1;Port=5432;Database=litradock_ci_demo_live;Username=fixture;Password=synthetic-ci-only-password;SSL Mode=Disable
+          LITRADOCK_ALLOW_LIVE_SOURCE_PROBE: 'yes'
+        run: |
+          set -euo pipefail
+          docker exec ${{ job.services.postgres.id }} createdb --username fixture litradock_ci_demo_live
+          retain_demo_evidence() {
+            taskExitCode=$?
+            if [ -f .litradock/demo-live/result.json ]; then cp .litradock/demo-live/result.json evidence/demo-live-result.json; fi
+            for artifact in .litradock/demo-live/demo-*.png; do
+              if [ -f "$artifact" ]; then cp "$artifact" evidence/; fi
+            done
+            exit "$taskExitCode"
+          }
+          trap retain_demo_evidence EXIT
+          python3 tests/recovery/measure.py evidence/demo-live-resources.json -- node tests/hosted-web/demo.mjs .litradock/demo-live 2>&1 | tee evidence/demo-live.log
+          docker exec ${{ job.services.postgres.id }} psql --username fixture --dbname litradock_ci_demo_live -Atc 'SELECT provider,day,requests FROM ld_source_usage ORDER BY provider,day' > evidence/demo-source-requests.txt
+      - name: Publish production demo candidate without fixture or paper content
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          dotnet publish src/LitraDock.Hosted -c Release --no-restore --no-build -o .litradock/demo-package 2>&1 | tee evidence/demo-publish.log
+          cp LICENSE THIRD-PARTY-NOTICES.md DEMO.md .litradock/demo-package/
+          test -f .litradock/demo-package/LitraDock.Hosted.dll
+          test -f .litradock/demo-package/wwwroot/hosted.js
+          test -z "$(find .litradock/demo-package -iname '*Fixture*' -o -iname '*BrowserHost*' -o -iname '*Verification*')"
+          find .litradock/demo-package -type f -print0 | sort -z | xargs -0 sha256sum > evidence/demo-package-hashes.txt
+          tar -czf evidence/demo-candidate-linux-framework-dependent.tar.gz -C .litradock/demo-package .
+      - name: Retain bounded verification evidence and code-only package
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

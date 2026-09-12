@@ -14,6 +14,8 @@ namespace LitraDock.Core
         public string RelativePath { get; set; }
         public long Bytes { get; set; }
         public string License { get; set; }
+        public string RightsStatus { get; set; }
+        public string RightsLicenseUri { get; set; }
         public string Validation { get; set; }
         public string ArticleNumber { get; set; }
         public string EqualContribution { get; set; }

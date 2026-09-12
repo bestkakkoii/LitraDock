@@ -10,9 +10,11 @@ namespace Literature.Service;
 public sealed partial class PgStore : IAsyncDisposable
 {
     internal readonly NpgsqlDataSource Data;
+    public DemoPolicy Demo { get; }
 
-    public PgStore(string connection)
+    public PgStore(string connection, DemoPolicy demo = null)
     {
+        Demo = demo;
         var config = new NpgsqlConnectionStringBuilder(connection)
         {
             IncludeErrorDetail = false,
@@ -246,7 +248,10 @@ public sealed partial class PgStore : IAsyncDisposable
             throw new ArgumentException("Library name must be 1–120 characters.");
         var id = Guid.NewGuid();
         await using var db = await Data.OpenConnectionAsync();
+        await using var tx = await db.BeginTransactionAsync();
+        await DemoAdmission(db, account, "library");
         await Exec(db, "INSERT INTO ld_libraries VALUES(@p0,@p1,@p2,true)", id, account, name);
+        await tx.CommitAsync();
         return id;
     }
 

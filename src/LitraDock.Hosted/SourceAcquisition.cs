@@ -161,10 +161,11 @@ public sealed class SourceAcquisition(PubMedSource metadata, HttpClient ncbi, Ht
                 );
                 expected.Pmcid = pmcid;
                 var info = OriginalValidation.Validate(response.Bytes, expected);
-                if (string.IsNullOrWhiteSpace(info.License))
+                var rights = ArticleRights.Assess(response.Bytes);
+                if (!rights.Permitted)
                     throw new SourceException(
                         "unavailable",
-                        "Full-text rights evidence is missing."
+                        "Full-text rights " + rights.Status + ": " + rights.Reason
                     );
                 return response;
             }

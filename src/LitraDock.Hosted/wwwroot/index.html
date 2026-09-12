@@ -11,6 +11,13 @@
       <h1>LitraDock</h1>
       <p>Private literature workspace · source preview</p>
       <span id="status" aria-live="polite"></span>
+      <details id="sourcePrivacy">
+        <summary>Sources, privacy and demo information</summary>
+        <p>Search queries are sent through this host to PubMed and permitted literature providers. Accounts, search history, libraries and acquired originals are stored on this server. Do not submit patient identifiers, confidential clinical text, institutional passwords or private commissioned libraries.</p>
+        <p>NCBI data can include copyrighted abstracts. Read the <a href="https://www.ncbi.nlm.nih.gov/home/about/policies/" target="_blank" rel="noopener noreferrer">NCBI disclaimer and copyright policies</a> and <a href="https://pmc.ncbi.nlm.nih.gov/about/copyright/" target="_blank" rel="noopener noreferrer">article-specific PMC terms</a>. Product sign-in does not grant publisher or institutional access.</p>
+        <p id="serviceInformation">Contact your service operator for access, retention and cleanup. No automatic deletion schedule is assumed.</p>
+        <p><a id="softwareSource" href="https://github.com/bestkakkoii/LitraDock" target="_blank" rel="noopener noreferrer">Software source and AGPL-3.0 license</a></p>
+      </details>
     </header>
     <main>
       <p id="error" role="alert"></p>
@@ -124,6 +131,7 @@
           value="{SearchId}_{Journal}_{FirstAuthor}_{Year}"
         /><button id="previewName">Preview first visible record name</button
         ><button id="acquire">Acquire available full text</button>
+        <p id="acquisitionMeaning">Acquisition saves available originals to your server library. It does not save files to this device. Use a record's Save action afterward; automatic originals may be XML, not publisher PDFs. Unavailable items retain their source links.</p>
         <p id="namePreview"></p>
         <div>
           <label
@@ -151,7 +159,7 @@
           <button id="scopedBundle">Download current scope private bundle</button><label><input id="bundleSelected" type="checkbox">Selected records only</label>
           <p>Private scope bundles contain referenced originals, reading copies and review/citation history; omitted library records are excluded. Whole-library backup remains available above.</p>
         </details>
-        <p>
+        <p id="sourceContinuation">
           Originals retain their actual format; no PDF is invented. Public PMC /
           Europe PMC routes need no publisher account. Publisher login stays in
           your browser; this service does not inherit institutional access. Use

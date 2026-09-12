@@ -10,9 +10,13 @@ public sealed partial class PgStore
     {
         if (string.IsNullOrWhiteSpace(query) || query.Length > 2000 || limit is < 1 or > 10000)
             throw new ArgumentException("Search needs a query and limit 1–10000.");
+        if (Demo != null && limit > DemoPolicy.SearchLimit)
+            throw new ArgumentException("Demo searches support up to 100 results per run; refine the query for more focused results.");
         var run = "RUN-" + Guid.NewGuid().ToString("N");
         await using var db = await Data.OpenConnectionAsync();
         await using var tx = await db.BeginTransactionAsync();
+        await DemoLibraryAdmission(db, library, "search");
+        await DemoLibraryAdmission(db, library, "jobs");
         await Exec(
             db,
             "INSERT INTO ld_runs(library_id,run_id,input,requested_limit,state) VALUES(@p0,@p1,@p2,@p3,'queued')",
@@ -199,6 +203,7 @@ public sealed partial class PgStore
         var id = "SCOPE-" + Guid.NewGuid().ToString("N");
         await using var db = await Data.OpenConnectionAsync();
         await using var tx = await db.BeginTransactionAsync();
+        await DemoLibraryAdmission(db, library, "scope");
         if (parent != null)
             run =
                 await Scalar(
@@ -311,6 +316,9 @@ public sealed partial class PgStore
         );
         if (count is < 1 or > 10000)
             throw new ArgumentException("Choose 1–10000 records; no silent truncation.");
+        if (Demo != null && count > DemoPolicy.BatchLimit)
+            throw new ArgumentException("Demo batches support up to 10 records; select a smaller batch. No records were queued.");
+        await DemoLibraryAdmission(db, library, "jobs", count);
         var rows = await Rows(
             db,
             "SELECT r.metadata,m.rank FROM ld_members m JOIN ld_records r USING(library_id,search_id) WHERE m.library_id=@p0 AND m.scope_id=@p1 AND (NOT @p2 OR selected) ORDER BY m.rank",

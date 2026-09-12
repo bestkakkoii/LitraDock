@@ -80,6 +80,14 @@ public sealed class HostedWorker(PgStore store, OriginalStore originals, ILitera
             {
                 originals.Admit(claim.Library, NcbiTransport.MaximumBytes * 2L);
                 var article = await store.Article(claim.Library, claim.SearchId);
+                if (store.Demo != null)
+                {
+                    store.Demo.RequireActive();
+                    if (!DemoSource.Reviewed(article))
+                        throw new SourceException("unavailable", "This demo acquires only reviewed PMC6836491 XML; open the record source links for other access options.");
+                    if (originals.Measure() + NcbiTransport.MaximumBytes * 2L > DemoPolicy.StorageLimit)
+                        throw new SourceException("unavailable", "Demo storage budget reached; existing originals retained.");
+                }
                 var manual = await store.ManualInput(claim);
                 if (
                     await store.RecoverPublication(

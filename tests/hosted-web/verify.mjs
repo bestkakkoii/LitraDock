@@ -1,5 +1,6 @@
 import { researchFlow } from "./research.mjs";
 import { identityFlow } from "./identity.mjs";
+import { lateResponseFlow } from "./late-response.mjs";
 import { chromium } from "playwright";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -165,7 +166,7 @@ try {
   await page.locator("#libraries").selectOption(library);
   await page.locator("#batches").selectOption(batch);
   await waitStatus(page, "scheduled 1");
-  await page.locator("details").first().evaluate(node=>node.open=true);
+  await page.locator("#bundleFile").evaluate(node=>node.closest("details").open=true);
   await page.waitForFunction(()=>document.getElementById("nextEvents").textContent.includes("next eligible"));
   check(true,"Browser shows persisted automatic next eligible event after browser closure");
   await waitStatus(page, "completed_with_errors");
@@ -306,7 +307,7 @@ try {
     ),
     "Selected batch label agrees with fresh durable cancelled progress",
   );
-  await page.locator("details").first().evaluate(node=>node.open=true);
+  await page.locator("#bundleFile").evaluate(node=>node.closest("details").open=true);
   await page.locator("#health").click();
   await page.waitForFunction(()=>document.getElementById("recoveryStatus").textContent.includes('"physicalBytes"'));
   check(true,"Actual browser performs bounded file-health reconciliation");
@@ -375,6 +376,7 @@ try {
     await page.locator("#search").isVisible(),
     "Narrow viewport retains workflow controls; screenshot captured",
   );
+  await lateResponseFlow({context,origin,library:restoredLibrary,id,check,login,password});
   await identityFlow({page,context,origin,library:restoredLibrary,id,record,output,check,otherLogin,login,password,account,dll,cwd,env});
   await fs.writeFile(
     path.join(output, "result.json"),
