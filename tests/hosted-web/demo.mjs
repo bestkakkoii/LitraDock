@@ -26,6 +26,7 @@ try {
   check(await page.locator('#researchTools').isHidden(),'DEMO11 production demo UI qualifies unsupported research features');
   await page.locator('#sourcePrivacy').evaluate(n=>n.open=true);
   check((await page.locator('#sourcePrivacy').innerText()).includes('NCBI disclaimer')&&(await page.locator('#serviceInformation').innerText()).includes('Destroyed with disposable CI runner'),'DEMO12 visible disclaimer/operator/source/privacy/retention facts');
+  await page.locator('#sourcePrivacy').evaluate(n=>n.open=false);
   const csrf=(await (await context.request.get(origin+'/api/session')).json()).csrf;
   async function request(route,data,headers={}){for(let n=0;n<10;n++){const r=await context.request.fetch(origin+'/api/'+route,{method:data===undefined?'GET':'POST',headers:{Origin:origin,'X-CSRF':csrf,...headers},...(data===undefined?{}:{data})});if(r.status()!==429||r.headers()['x-operation-admission']!=='not-started')return r;await delay(250);}throw new Error('Admission did not settle');}
   await page.locator('#newName').fill('Real source acceptance');await page.locator('#newLibrary').click();await page.waitForFunction(()=>document.querySelector('#libraries').value);
@@ -35,8 +36,8 @@ try {
   check((await context.request.post(origin+'/api/'+base+'search',{headers:{Origin:origin,'X-CSRF':'wrong'},data:{query:'31719837',limit:1}})).status()===403,'DEMO14 CSRF failure cannot queue live source work');
   await page.locator('#query').fill('31719837 OR 31452104');await page.locator('#limit').fill('2');await page.locator('#search').click();
   let catalog;
-  for(let n=0;n<150;n++){catalog=await (await request('libraries/'+library)).json();if(catalog.runs?.[0]&&['completed','partial','failed','unavailable'].includes(catalog.runs[0].state))break;await delay(1000);}
-  evidence.run=catalog.runs?.[0];check(catalog.runs?.[0]&&['completed','partial'].includes(catalog.runs[0].state),'DEMO15 actual PubMed two-identifier search completes without fixtures');
+  for(let n=0;n<150;n++){catalog=await (await request('libraries/'+library)).json();if(catalog.runs?.[0]&&['complete','partial','failed','unavailable'].includes(catalog.runs[0].state))break;await delay(1000);}
+  evidence.run=catalog.runs?.[0];check(catalog.runs?.[0]&&['complete','partial'].includes(catalog.runs[0].state),'DEMO15 actual PubMed two-identifier search completes without fixtures');
   await page.locator('#libraries').dispatchEvent('change');await page.waitForFunction(()=>document.querySelector('#runs').options.length>1);await page.locator('#runs').selectOption(catalog.runs[0].run_id);await page.locator('#runScope').click();await page.waitForFunction(()=>document.querySelectorAll('#records tr').length===2);
   const scope=await page.locator('#scopes').inputValue();const records=(await (await request(base+'scopes/'+scope)).json()).records;
   const reviewed=records.find(r=>r.article.pmid==='31719837'),unreviewed=records.find(r=>r.article.pmid==='31452104');

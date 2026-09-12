@@ -17,6 +17,8 @@ header {
 h1 {
   margin: 0;
 }
+header a { color: #dceef3; }
+#sourcePrivacy[open] { max-height: 45vh; overflow: auto; overflow-wrap: anywhere; }
 main {
   padding: 20px;
 }
