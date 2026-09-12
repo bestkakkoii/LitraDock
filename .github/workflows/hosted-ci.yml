@@ -81,6 +81,8 @@ jobs:
           .litradock/pdf-verification/bin/python tests/documents/pdf_checks.py .litradock/documents 2>&1 | tee evidence/pdf-inspection.log
           cp .litradock/documents/*-result.json .litradock/documents/pdf-inspection.json .litradock/documents/*-page-*.png evidence/
           cp .litradock/documents/result.json evidence/document-result.json
+          dotnet run --project tests/LitraDock.HostedVerification -c Release --no-build -- --derived-identity .litradock/derived-identity 2>&1 | tee evidence/derived-identity.log
+          cp .litradock/derived-identity/result.json evidence/derived-identity-result.json
       - name: Actual PostgreSQL, migration, lease and HTTP isolation checks
         if: ${{ !cancelled() }}
         run: |
@@ -146,7 +148,7 @@ jobs:
           npm ci --prefix tests/hosted-web 2>&1 | tee evidence/browser-npm.log
           tests/hosted-web/node_modules/.bin/playwright install --with-deps chromium 2>&1 | tee evidence/browser-install.log
           python3 tests/recovery/measure.py evidence/browser-resources.json -- node tests/hosted-web/verify.mjs .litradock/hosted-browser 2>&1 | tee evidence/browser.log
-      - name: Production demo real PubMed search and reviewed two-item batch
+      - name: Production demo real PubMed search and reviewed three-item batch
         if: ${{ !cancelled() }}
         env:
           LITRADOCK_PG_TEST_CONNECTION: Host=127.0.0.1;Port=5432;Database=litradock_ci_demo_live;Username=fixture;Password=synthetic-ci-only-password;SSL Mode=Disable

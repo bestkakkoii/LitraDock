@@ -100,7 +100,9 @@ public sealed partial class PgStore
 // Demo 先限經人工檢視的 known-record XML；廣泛 PubMed 搜尋照常，其他作品顯示可用的未解決原因與連結。
 public sealed class DemoSource(ILiteratureSource source, DemoPolicy policy) : ICheckpointSource, IProgressSource
 {
-    public static bool Reviewed(Article article) => article.Pmid == "31719837" && article.Pmcid == "PMC6836491" && article.Doi == "10.1186/s13020-019-0270-9";
+    public static bool Reviewed(Article article) =>
+        article.Pmid == "31719837" && article.Pmcid == "PMC6836491" && article.Doi == "10.1186/s13020-019-0270-9"
+        || article.Pmid == "33782057" && article.Pmcid == "PMC8005924" && article.Doi == "10.1136/bmj.n71";
     public string Name => source.Name;
     public Task SearchAsync(SearchSnapshot snapshot, CancellationToken token) => SearchAsync(snapshot, token, null);
     public Task SearchAsync(SearchSnapshot snapshot, CancellationToken token, Action<SearchSnapshot> checkpoint)
@@ -114,7 +116,7 @@ public sealed class DemoSource(ILiteratureSource source, DemoPolicy policy) : IC
     {
         policy.RequireActive();
         if (!Reviewed(article))
-            throw new SourceException("unavailable", "This demo acquires only the reviewed PMC6836491 XML version; this result remains searchable. Open its source links to review other permitted access options.");
+            throw new SourceException("unavailable", "This demo acquires only the reviewed PMC6836491 and PMC8005924 XML articles; this result remains searchable. Open its source links to review other permitted access options.");
         var response = source is IProgressSource reported ? await reported.FetchFullTextAsync(article, token, progress) : await source.FetchFullTextAsync(article, token);
         OriginalValidation.Validate(response.Bytes, article);
         var rights = ArticleRights.Assess(response.Bytes);

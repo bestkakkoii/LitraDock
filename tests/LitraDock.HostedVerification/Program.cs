@@ -663,6 +663,10 @@ else if (args.FirstOrDefault() == "--demo")
 {
     await DemoChecks.Run(Environment.GetEnvironmentVariable("LITRADOCK_PG_TEST_CONNECTION"), output, Check);
 }
+else if (args.FirstOrDefault() == "--derived-identity")
+{
+    await DerivedIdentityChecks.Run(output, Check);
+}
 else if (args.FirstOrDefault() == "--research-metadata")
 {
     await ResearchMetadataChecks.Run(output, Check);

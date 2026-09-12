@@ -4,6 +4,7 @@ import {promisify} from 'node:util';
 import {createHash} from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import {pathToFileURL} from 'node:url';
 import assert from 'node:assert/strict';
 
 if(process.env.LITRADOCK_ALLOW_EPHEMERAL_TEST!=='yes'||process.env.LITRADOCK_ALLOW_LIVE_SOURCE_PROBE!=='yes')
@@ -34,25 +35,32 @@ try {
   for(const [route,data] of [['restore',{}],[base+'bundle',{}],[base+'projects',{value:'Denied'}]])check((await request(route,data)).status()===403,'DEMO13 expensive feature denied at authenticated production boundary: '+route.split('/').at(-1));
   check((await request(base+'search',{query:'31719837',limit:101})).status()===409,'DEMO14 oversized real-source request denied before network');
   check((await context.request.post(origin+'/api/'+base+'search',{headers:{Origin:origin,'X-CSRF':'wrong'},data:{query:'31719837',limit:1}})).status()===403,'DEMO14 CSRF failure cannot queue live source work');
-  await page.locator('#query').fill('31719837 OR 31452104');await page.locator('#limit').fill('2');await page.locator('#search').click();
+  await page.locator('#query').fill('31719837 OR 33782057 OR 31452104');await page.locator('#limit').fill('3');await page.locator('#search').click();
   let catalog;
   for(let n=0;n<150;n++){catalog=await (await request('libraries/'+library)).json();if(catalog.runs?.[0]&&['complete','partial','failed','unavailable'].includes(catalog.runs[0].state))break;await delay(1000);}
-  evidence.run=catalog.runs?.[0];check(catalog.runs?.[0]&&['complete','partial'].includes(catalog.runs[0].state),'DEMO15 actual PubMed two-identifier search completes without fixtures');
-  await page.locator('#libraries').dispatchEvent('change');await page.waitForFunction(()=>document.querySelector('#runs').options.length>1);await page.locator('#runs').selectOption(catalog.runs[0].run_id);await page.locator('#runScope').click();await page.waitForFunction(()=>document.querySelectorAll('#records tr').length===2);
+  evidence.run=catalog.runs?.[0];check(catalog.runs?.[0]?.total===3&&catalog.runs[0].fetched===3&&catalog.runs[0].state==='complete','DEMO15 actual PubMed three-identifier search completes without fixtures');
+  await page.locator('#libraries').dispatchEvent('change');await page.waitForFunction(()=>document.querySelector('#runs').options.length>1);await page.locator('#runs').selectOption(catalog.runs[0].run_id);await page.locator('#runScope').click();await page.waitForFunction(()=>document.querySelectorAll('#records tr').length===3);
   const scope=await page.locator('#scopes').inputValue();const records=(await (await request(base+'scopes/'+scope)).json()).records;
-  const reviewed=records.find(r=>r.article.pmid==='31719837'),unreviewed=records.find(r=>r.article.pmid==='31452104');
-  check(reviewed?.article.pmcid==='PMC6836491'&&reviewed.article.doi==='10.1186/s13020-019-0270-9'&&unreviewed,'DEMO15 separate original DOI PMID PMCID and both real records retained');
-  for(const pmid of ['31719837','31452104'])await page.getByRole('checkbox',{name:'Select '+pmid,exact:true}).check();
-  await page.waitForFunction(()=>document.querySelector('#counts').textContent.includes('selected 2'));await page.locator('#acquire').click();await page.waitForFunction(()=>document.querySelector('#batches').value);
+  const reviewed=records.find(r=>r.article.pmid==='31719837'),second=records.find(r=>r.article.pmid==='33782057'),unreviewed=records.find(r=>r.article.pmid==='31452104');
+  check(reviewed?.article.pmcid==='PMC6836491'&&reviewed.article.doi==='10.1186/s13020-019-0270-9'&&second?.article.pmcid==='PMC8005924'&&second.article.doi==='10.1136/bmj.n71'&&unreviewed,'DEMO15 separate original DOI PMID PMCID and three real records retained');
+  for(const pmid of ['31719837','33782057','31452104'])await page.getByRole('checkbox',{name:'Select '+pmid,exact:true}).check();
+  await page.waitForFunction(()=>document.querySelector('#counts').textContent.includes('selected 3'));await page.locator('#acquire').click();await page.waitForFunction(()=>document.querySelector('#batches').value);
   const batch=await page.locator('#batches').inputValue();let batchState;
   for(let n=0;n<180;n++){batchState=await (await request(base+'batches/'+batch)).json();if(['completed','completed_with_errors'].includes(batchState.state))break;await delay(1000);}
   evidence.batch=batchState;
-  check(batchState.items.length===2&&batchState.items.find(x=>x.search_id===reviewed.article.searchId)?.state==='completed'&&batchState.items.find(x=>x.search_id===unreviewed.article.searchId)?.state==='unavailable','DEMO16 actual two-item batch saves permitted XML and reports unreviewed item unavailable');
+  check(batchState.items.length===3&&batchState.items.find(x=>x.search_id===reviewed.article.searchId)?.state==='completed'&&batchState.items.find(x=>x.search_id===second.article.searchId)?.state==='completed'&&batchState.items.find(x=>x.search_id===unreviewed.article.searchId)?.state==='unavailable','DEMO16 actual three-item batch saves two distinct permitted papers and reports unreviewed item unavailable');
   const detail=await (await request(base+'records/'+reviewed.article.searchId)).json();const file=detail.files[0];evidence.original={hash:file.hash,kind:file.kind,provenance:detail.provenance};
   check(file.kind==='Source XML'&&detail.provenance.length>0,'DEMO17 actual original format and provider provenance retained');
   await page.locator('#records tr').filter({hasText:'31719837'}).getByRole('button').click();const saving=page.waitForEvent('download');await page.getByRole('button',{name:'Save original to this device '+file.hash,exact:true}).click();const saved=await saving;await saved.saveAs(path.join(output,'private','saved-original.xml'));const bytes=await fs.readFile(path.join(output,'private','saved-original.xml'));
   check(createHash('sha256').update(bytes).digest('hex')===file.hash&&saved.suggestedFilename().endsWith('.xml'),'DEMO18 actual browser device-Save preserves original bytes/hash and XML extension');
   check(bytes.includes(Buffer.from('creativecommons.org/licenses/by/4.0/')),'DEMO18 downloaded original retains its actual license URI');
+  await page.locator('#close').click();
+  const secondDetail=await (await request(base+'records/'+second.article.searchId)).json(),secondFile=secondDetail.files[0];
+  evidence.secondOriginal={hash:secondFile.hash,kind:secondFile.kind,provenance:secondDetail.provenance};
+  await page.locator('#records tr').filter({hasText:'33782057'}).getByRole('button').click();const secondSaving=page.waitForEvent('download');await page.getByRole('button',{name:'Save original to this device '+secondFile.hash,exact:true}).click();const secondSaved=await secondSaving,secondPath=path.join(output,'private','saved-prisma.xml');await secondSaved.saveAs(secondPath);const secondBytes=await fs.readFile(secondPath);
+  check(secondFile.hash!==file.hash&&createHash('sha256').update(secondBytes).digest('hex')===secondFile.hash&&secondBytes.includes(Buffer.from('creativecommons.org/licenses/by/4.0/')),'DEMO18 second distinct article Save retains its own original hash and license');
+  const offline=await browser.newContext({offline:true});const localPage=await offline.newPage();
+  for(const [savedPath,pmcid] of [[path.join(output,'private','saved-original.xml'),'6836491'],[secondPath,'8005924']]){await localPage.goto(pathToFileURL(savedPath).href);check((await localPage.content()).includes(pmcid),'DEMO18 Chromium opens saved XML locally with networking disabled: PMC'+pmcid);}await offline.close();
   await page.locator('#close').click();await page.locator('#records tr').filter({hasText:'31452104'}).getByRole('button').click();
   await page.locator('#detail').waitFor({state:'visible'});
   check(await page.locator('#article a[href="https://pubmed.ncbi.nlm.nih.gov/31452104/"]').count()===1,'DEMO19 unresolved item offers convenient stable PubMed link');await page.locator('#close').click();
