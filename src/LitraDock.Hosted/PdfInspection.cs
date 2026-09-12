@@ -64,12 +64,20 @@ public static class PdfInspection
                 phase = "process";
                 while (!process.HasExited)
                 {
-                    process.Refresh();
-                    if (process.WorkingSet64 > 384L * 1024 * 1024)
-                        throw new SourceException(
-                            "failed",
-                            "PDF validation memory budget exceeded; original not accepted."
-                        );
+                    try
+                    {
+                        process.Refresh();
+                        if (process.WorkingSet64 > 384L * 1024 * 1024)
+                            throw new SourceException(
+                                "failed",
+                                "PDF validation memory budget exceeded; original not accepted."
+                            );
+                    }
+                    catch (InvalidOperationException) when (process.HasExited)
+                    {
+                        // 子程序可在 HasExited 與 RSS 取樣之間結束；仍在下方驗證 exit code 與完整 JSON。
+                        break;
+                    }
                     await Task.Delay(25, timeout.Token);
                 }
                 var text = await stdout;

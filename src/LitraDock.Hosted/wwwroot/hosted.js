@@ -51,12 +51,19 @@ function observeAuthentication(response) {
     location.replace("/");
   }
 }
-async function api(path, body) {
-  const r = await privateFetch("/api/" + path, {
+async function api(path, body, admissionRetries = 0) {
+  const generation = authenticationGeneration;
+  let r;
+  for(let attempt=0;;attempt++) {
+    requireAuthenticationGeneration(generation);
+    r = await privateFetch("/api/" + path, {
     method: body === undefined ? "GET" : "POST",
     headers: { "Content-Type": "application/json", "X-CSRF": csrf },
     body: body === undefined ? undefined : JSON.stringify(body),
-  });
+    });
+    if(r.status!==429 || r.headers.get("X-Operation-Admission")!=="not-started" || attempt>=admissionRetries)break;
+    await new Promise(resolve=>setTimeout(resolve,Math.min(5,Math.max(1,Number(r.headers.get("Retry-After"))||2))*1000));
+  }
   if (!r.ok)
     throw new Error(r.status === 401 ? "Sign in to continue." : await r.text());
   return r;
@@ -70,9 +77,18 @@ function safe(fn) {
     const errorGeneration = authenticationGeneration;
     try {
       $("error").textContent = "";
+      for(const message of document.querySelectorAll("[data-request-error]"))message.textContent="";
       await fn(event);
     } catch (error) {
-      if(errorGeneration===authenticationGeneration) $("error").textContent = error.message;
+      if(errorGeneration===authenticationGeneration) {
+        const dialog=document.querySelector("dialog[open]");
+        let target=$("error");
+        if(dialog) {
+          target=dialog.querySelector("[data-request-error]");
+          if(!target){target=document.createElement("p");target.dataset.requestError="";target.setAttribute("role","alert");dialog.prepend(target);}
+        }
+        target.textContent=error.message;
+      }
     }
   };
 }
@@ -232,7 +248,7 @@ async function progress() {
 }
 async function download(path, body, name) {
   const generation = authenticationGeneration;
-  const response = await api(path, body);
+  const response = await api(path, body, 4);
   if (!name) {
     const encoded = /filename\*=UTF-8''([^;]+)/i.exec(
       response.headers.get("Content-Disposition") || "",
@@ -252,14 +268,15 @@ async function detail(id) {
   const r = await json(base() + "records/" + id);
   $("article").replaceChildren();
   for (const [k, v] of Object.entries(r.article)) {
-    if (["rawXml", "fullTextMetadataXml"].includes(k)) continue;
+    if (["rawXml", "fullTextMetadataXml", "license"].includes(k)) continue;
     const p = document.createElement("p");
     p.textContent = `${k}: ${v}`;
     $("article").append(p);
   }
   for (const f of r.files) {
     const b = document.createElement("button");
-    b.textContent = "Save original to this device " + f.hash;
+    b.textContent = "Save original to this device (" + f.kind + ")";
+    b.dataset.fileHash=f.hash;
     b.onclick = safe(() =>
       download(base() + `records/${id}/files/${f.hash}`, undefined, undefined),
     );
@@ -284,9 +301,14 @@ async function detail(id) {
   });
   if(!demoMode)$("article").append(manualButton);
   const researchButton=document.createElement("button");researchButton.textContent="Review, notes and reading copies";researchButton.onclick=safe(async()=>{$("detail").close();await openResearch(id);});if(!demoMode)$("article").append(researchButton);
+  const rights=document.createElement("p");
+  rights.textContent=demoMode&&r.files.length ? "Rights: verified CC BY 4.0 original XML. Retain attribution and source license when sharing." : "Rights: review the original source license; availability alone does not establish permission.";
+  $("article").append(rights);
+  const technical=document.createElement("details"),summary=document.createElement("summary");
+  summary.textContent="Original rights, file hashes and technical provenance";technical.append(summary);
   const provenance = document.createElement("pre");
-  provenance.textContent = JSON.stringify(r.provenance, null, 2);
-  $("article").append(provenance);
+  provenance.textContent = JSON.stringify({license:r.article.license,files:r.files,provenance:r.provenance}, null, 2);
+  technical.append(provenance);$("article").append(technical);
   $("detail").showModal();
 }
 $("close").onclick = () => $("detail").close();

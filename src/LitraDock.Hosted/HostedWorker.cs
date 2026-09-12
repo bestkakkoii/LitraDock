@@ -84,7 +84,7 @@ public sealed class HostedWorker(PgStore store, OriginalStore originals, ILitera
                 {
                     store.Demo.RequireActive();
                     if (!DemoSource.Reviewed(article))
-                        throw new SourceException("unavailable", "This demo acquires only reviewed PMC6836491 XML; open the record source links for other access options.");
+                        throw new SourceException("unavailable", "This demo acquires only reviewed PMC6836491 and PMC8005924 XML; open the record source links for other access options.");
                     if (originals.Measure() + NcbiTransport.MaximumBytes * 2L > DemoPolicy.StorageLimit)
                         throw new SourceException("unavailable", "Demo storage budget reached; existing originals retained.");
                 }

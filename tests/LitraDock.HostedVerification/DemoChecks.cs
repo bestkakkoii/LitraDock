@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Literature.Service;
 using LitraDock.Core;
 using Npgsql;
@@ -31,6 +32,19 @@ public static class DemoChecks
             var rejected = false;
             try { await action(); } catch (Exception e) when(e is ArgumentException or InvalidOperationException or SourceException) { rejected = true; }
             check(rejected, name);
+        }
+        var settings = new Dictionary<string,string> {
+            ["LITRADOCK_DEMO"]="true",["LITRADOCK_DEMO_OPERATOR"]="Synthetic CI operator",
+            ["LITRADOCK_DEMO_CONTACT"]="Disposable CI; no public contact",["LITRADOCK_DEMO_RETENTION"]="Disposable CI teardown",
+            ["LITRADOCK_SOURCE_REVISION"]=new string('a',40),["LITRADOCK_DEMO_EXPIRES"]="2099-01-01T00:00:00+08:00"};
+        DemoPolicy Config() => DemoPolicy.Read(new ConfigurationBuilder().AddInMemoryCollection(settings).Build());
+        check(Config().ExpiresAt.Offset==TimeSpan.FromHours(8),"DEMO27 explicit-offset configuration preserves its instant");
+        settings["LITRADOCK_DEMO_EXPIRES"]="2099-01-01";
+        await Reject(()=>Task.FromResult(Config()),"DEMO27 timezone-free expiry rejected");
+        settings["LITRADOCK_DEMO_EXPIRES"]="2099-01-01T00:00:00Z";
+        foreach(var key in new[]{"LITRADOCK_DEMO_OPERATOR","LITRADOCK_DEMO_CONTACT","LITRADOCK_DEMO_RETENTION"}) {
+            var value=settings[key];settings[key]="REQUIRED_ACTUAL_VALUE";
+            await Reject(()=>Task.FromResult(Config()),"DEMO27 deployment placeholder rejected: "+key);settings[key]=value;
         }
         const string password = "Synthetic-demo-password-2026";
         var owner = await store.CreateAccount("demo-owner", password);
@@ -76,6 +90,33 @@ public static class DemoChecks
         check(!typeof(PgStore).Assembly.GetTypes().Any(t=>t.Name.Contains("Fixture")||t.Name=="IdentityBarrier"),"DEMO09 production assembly excludes fixture and identity barrier types");
         await using var normal = new PgStore(config.ConnectionString);
         check((await normal.Article(library,rows[0].GetProperty("article").GetProperty("SearchId").GetString())).Title.Contains("測試"),"DEMO10 original multilingual research records remain readable outside demo policy");
+        await Sql("UPDATE ld_jobs SET state='paused' WHERE state IN ('queued','running','scheduled') RETURNING 1");
+        await store.Select(library,scope,null,false);
+        await store.Select(library,scope,rows[0].GetProperty("article").GetProperty("SearchId").GetString(),true);
+        var stable = await store.Batch(library,scope,true,Naming.DefaultTemplate);
+        check(await Sql($"SELECT count(*) FROM ld_items WHERE batch_id='{stable}'")==1,"DEMO25 stable one-record batch positive control");
+        await using(var gate = new NpgsqlConnection(config.ConnectionString))
+        {
+            await gate.OpenAsync();
+            await using(var hold = new NpgsqlCommand("SELECT pg_advisory_lock(724913015)",gate)) await hold.ExecuteNonQueryAsync();
+            var pending = store.Batch(library,scope,true,Naming.DefaultTemplate);
+            try
+            {
+                var waiting = false;
+                for(var n=0;n<100;n++)
+                {
+                    if(await Sql("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event='advisory' AND query LIKE '%pg_advisory_xact_lock(724913015)%'")>0) {waiting=true;break;}
+                    await Task.Delay(10);
+                }
+                check(waiting,"DEMO25 actual batch reaches PostgreSQL quota lock before selection mutation");
+                await store.Select(library,scope,null,true);
+                check(await Sql($"SELECT count(*) FROM ld_members WHERE scope_id='{scope}' AND selected")==20,"DEMO25 concurrent selection expands to twenty committed rows");
+            }
+            finally {await using var release = new NpgsqlCommand("SELECT pg_advisory_unlock(724913015)",gate);await release.ExecuteNonQueryAsync();}
+            var raced = await pending;
+            check(await Sql($"SELECT count(*) FROM ld_items WHERE batch_id='{raced}'")==1,"DEMO25 quota admission and insertion use the same original one-record snapshot");
+            await Reject(()=>store.Batch(library,scope,true,Naming.DefaultTemplate),"DEMO25 next batch sees twenty selected rows and rejects oversized admission");
+        }
         await File.WriteAllTextAsync(Path.Combine(output,"demo-environment.json"),JsonSerializer.Serialize(new {postgres=await db.PostgresVersionAsync(), sourceRequests=0, concurrency=8, scope="Actual disposable PostgreSQL with production admission methods; synthetic metadata, no external requests"}));
     }
     private sealed class NoNetwork : HttpMessageHandler

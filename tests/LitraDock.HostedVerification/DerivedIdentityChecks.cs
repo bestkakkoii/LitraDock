@@ -6,6 +6,12 @@ public static class DerivedIdentityChecks
 {
     public static async Task Run(string output, Action<bool,string> check)
     {
+        var record=SourceChecks.Record(); var original=SourceChecks.Pdf(record);
+        for(var n=0;n<12;n++)
+        {
+            var validated=await PdfInspection.Inspect(original,record,false);
+            check(validated.Hash==Artifacts.Hash(original),"PDFPROC01 fast real PDF inspection child exit retains validated output "+n);
+        }
         foreach(var id in new[]{"LD-00112233445566778899aabbccddeeff","LD-ffffffffffffffffffffffffffffffff"})
         {
             var result=await DocumentProcess.Run(new {operation="reading",id,title="Synthetic identifier shaping regression",source="Synthetic body 中文",format="text",mode="original",inputHash=new string('b',64)},CancellationToken.None);

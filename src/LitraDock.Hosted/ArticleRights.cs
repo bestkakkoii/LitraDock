@@ -15,7 +15,9 @@ public static class ArticleRights
         var doc = Metadata.ParseXml(bytes);
         var article = doc.Descendants().FirstOrDefault(e => e.Name.LocalName == "article");
         var front = article?.Elements().FirstOrDefault(e => e.Name.LocalName == "front");
-        var licenses = front?.Descendants().Where(e => e.Name.LocalName == "license").ToArray() ?? [];
+        var metadata = front?.Elements().Where(e => e.Name.LocalName == "article-meta").ToArray() ?? [];
+        var licenses = metadata.Length == 1 ? metadata[0].Elements().Where(e => e.Name.LocalName == "permissions")
+            .SelectMany(e => e.Elements().Where(child => child.Name.LocalName == "license")).ToArray() : [];
         if (licenses.Length == 0)
             return new("unknown", "", "No article license element; access is not reuse permission.");
         var accepted = new List<string>();
@@ -24,6 +26,8 @@ public static class ArticleRights
             var links = license.DescendantsAndSelf().Attributes().Where(a => a.Name.LocalName == "href").Select(a => a.Value).Distinct().ToArray();
             if (license.Value.Contains("all rights reserved", StringComparison.OrdinalIgnoreCase))
                 return new("restricted", "", "Conflicting restrictive article license requires review.");
+            if (System.Text.RegularExpressions.Regex.IsMatch(license.Value, @"non[\s-]?commercial|no[\s-]?derivatives", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+                return new("unknown", "", "Potentially conflicting license prose requires article-level review.");
             var recognised = links.Where(x => Uri.TryCreate(x, UriKind.Absolute, out var uri)
                 && uri.Scheme is "http" or "https" && uri.Host == "creativecommons.org"
                 && uri.UserInfo == "" && uri.Query == "" && uri.Fragment == "" && uri.IsDefaultPort

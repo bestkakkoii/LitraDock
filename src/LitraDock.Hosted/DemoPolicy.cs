@@ -15,14 +15,16 @@ public sealed record DemoPolicy(string Operator, string Contact, string Retentio
         string Required(string key)
         {
             var value = config[key];
-            if (string.IsNullOrWhiteSpace(value) || value.Length > 500)
+            if (string.IsNullOrWhiteSpace(value) || value.Length > 500 || value.Contains("REQUIRED", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("Configure the required demo operator, contact, retention, expiry and exact source revision.");
             return value;
         }
         var revision = Required("LITRADOCK_SOURCE_REVISION");
         if (!System.Text.RegularExpressions.Regex.IsMatch(revision, "^[0-9a-f]{40}$"))
             throw new InvalidOperationException("Demo requires an exact public source commit.");
-        if (!DateTimeOffset.TryParse(Required("LITRADOCK_DEMO_EXPIRES"), out var expiry))
+        var expiryText = Required("LITRADOCK_DEMO_EXPIRES");
+        if (!System.Text.RegularExpressions.Regex.IsMatch(expiryText, @"T.*(?:Z|[+-]\d{2}:\d{2})$")
+            || !DateTimeOffset.TryParse(expiryText, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var expiry))
             throw new InvalidOperationException("Demo expiry must be an explicit timestamp.");
         return new(Required("LITRADOCK_DEMO_OPERATOR"), Required("LITRADOCK_DEMO_CONTACT"), Required("LITRADOCK_DEMO_RETENTION"), revision, expiry);
     }

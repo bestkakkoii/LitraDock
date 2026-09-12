@@ -15,13 +15,15 @@ const dll=path.join(root,'build/LitraDock.Hosted/Release/net10.0/LitraDock.Hoste
 const env={...process.env,LITRADOCK_POSTGRES:process.env.LITRADOCK_PG_TEST_CONNECTION,LITRADOCK_OBJECTS:path.join(output,'private'),LITRADOCK_ORIGIN:origin,LITRADOCK_LOCAL_TEST:'true',LITRADOCK_PORT:'5282',LITRADOCK_INITIAL_LOGIN:login,LITRADOCK_INITIAL_PASSWORD:password,LITRADOCK_DEMO:'true',LITRADOCK_DEMO_OPERATOR:'Synthetic CI operator',LITRADOCK_DEMO_CONTACT:'No public service: disposable CI only',LITRADOCK_DEMO_RETENTION:'Destroyed with disposable CI runner; public evidence excludes account/query secrets and paper bytes',LITRADOCK_SOURCE_REVISION:process.env.GITHUB_SHA,LITRADOCK_DEMO_EXPIRES:new Date(Date.now()+3600000).toISOString()};
 const run=promisify(execFile);for(const command of ['--migrate','--create-account'])await run('dotnet',[dll,command],{cwd,env,windowsHide:true});
 await run('dotnet',[dll,'--create-account'],{cwd,env:{...env,LITRADOCK_INITIAL_LOGIN:login+'-other'},windowsHide:true});
-let server,browser,page;const checks=[],evidence={started:new Date().toISOString(),sourceRevision:env.LITRADOCK_SOURCE_REVISION,live:true,scope:'Production assembly, actual PostgreSQL/Chromium and low-rate PubMed/PMC; loopback HTTP only, no deployed HTTPS or actual mobile device'};
+let server,browser,page,admission;const checks=[],evidence={started:new Date().toISOString(),sourceRevision:env.LITRADOCK_SOURCE_REVISION,live:true,scope:'Production assembly, actual PostgreSQL/Chromium and low-rate PubMed/PMC; loopback HTTP only, no deployed HTTPS or actual mobile device'};
 const check=(value,name)=>{assert.ok(value,name);checks.push(name);console.log('PASS '+name);};
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function start(){server=spawn('dotnet',[dll],{cwd,env,windowsHide:true,stdio:['ignore','pipe','pipe']});server.stdout.on('data',()=>{});server.stderr.on('data',()=>{});for(let n=0;n<100;n++){try{if((await fetch(origin)).ok)return;}catch{}await delay(100);}throw new Error('Production demo did not start.');}
 async function stop(){if(server?.exitCode==null){server.kill('SIGKILL');await new Promise(r=>server.once('exit',r));}}
 try {
   await start();browser=await chromium.launch({headless:true});const context=await browser.newContext({viewport:{width:1440,height:1000}});page=await context.newPage();
+  evidence.fileResponses=[];
+  page.on('response',response=>{if(response.url().includes('/files/'))evidence.fileResponses.push({path:new URL(response.url()).pathname,status:response.status(),admission:response.headers()['x-operation-admission']??null});});
   await page.goto(origin);await page.locator('[name=login]').fill(login);await page.locator('[name=password]').fill(password);await page.locator('#login button').click();await page.locator('#workspace').waitFor({state:'visible'});
   await page.waitForFunction(()=>document.querySelector('#serviceInformation').textContent.includes('Synthetic CI operator'));
   check(await page.locator('#researchTools').isHidden(),'DEMO11 production demo UI qualifies unsupported research features');
@@ -51,13 +53,18 @@ try {
   check(batchState.items.length===3&&batchState.items.find(x=>x.search_id===reviewed.article.searchId)?.state==='completed'&&batchState.items.find(x=>x.search_id===second.article.searchId)?.state==='completed'&&batchState.items.find(x=>x.search_id===unreviewed.article.searchId)?.state==='unavailable','DEMO16 actual three-item batch saves two distinct permitted papers and reports unreviewed item unavailable');
   const detail=await (await request(base+'records/'+reviewed.article.searchId)).json();const file=detail.files[0];evidence.original={hash:file.hash,kind:file.kind,provenance:detail.provenance};
   check(file.kind==='Source XML'&&detail.provenance.length>0,'DEMO17 actual original format and provider provenance retained');
-  await page.locator('#records tr').filter({hasText:'31719837'}).getByRole('button').click();const saving=page.waitForEvent('download');await page.getByRole('button',{name:'Save original to this device '+file.hash,exact:true}).click();const saved=await saving;await saved.saveAs(path.join(output,'private','saved-original.xml'));const bytes=await fs.readFile(path.join(output,'private','saved-original.xml'));
+  await page.locator('#records tr').filter({hasText:'31719837'}).getByRole('button').click();await page.locator('#detail').waitFor({state:'visible'});
+  const heldDirectory=path.join(output,'admission-holder');await fs.mkdir(heldDirectory,{recursive:true});
+  admission=spawn('dotnet',[path.join(root,'build/LitraDock.HostedVerification/Release/net10.0/LitraDock.HostedVerification.dll'),'--recovery-admission-hold',heldDirectory],{cwd:root,env,windowsHide:true,stdio:'ignore'});
+  let held=false;for(let n=0;n<200;n++){try{await fs.access(path.join(heldDirectory,'held'));held=true;break;}catch{}await delay(25);}check(held,'DEMO26 actual PostgreSQL heavy admission held before device Save');
+  const saving=page.waitForEvent('download');await page.locator('[data-file-hash="'+file.hash+'"]').click();const saved=await saving;await saved.saveAs(path.join(output,'private','saved-original.xml'));const bytes=await fs.readFile(path.join(output,'private','saved-original.xml'));
+  check(evidence.fileResponses.some(r=>r.status===429&&r.admission==='not-started')&&evidence.fileResponses.filter(r=>r.status===200).length===1,'DEMO26 device Save retries only marked not-started admission and receives exactly one file');
   check(createHash('sha256').update(bytes).digest('hex')===file.hash&&saved.suggestedFilename().endsWith('.xml'),'DEMO18 actual browser device-Save preserves original bytes/hash and XML extension');
   check(bytes.includes(Buffer.from('creativecommons.org/licenses/by/4.0/')),'DEMO18 downloaded original retains its actual license URI');
   await page.locator('#close').click();
   const secondDetail=await (await request(base+'records/'+second.article.searchId)).json(),secondFile=secondDetail.files[0];
   evidence.secondOriginal={hash:secondFile.hash,kind:secondFile.kind,provenance:secondDetail.provenance};
-  await page.locator('#records tr').filter({hasText:'33782057'}).getByRole('button').click();const secondSaving=page.waitForEvent('download');await page.getByRole('button',{name:'Save original to this device '+secondFile.hash,exact:true}).click();const secondSaved=await secondSaving,secondPath=path.join(output,'private','saved-prisma.xml');await secondSaved.saveAs(secondPath);const secondBytes=await fs.readFile(secondPath);
+  await page.locator('#records tr').filter({hasText:'33782057'}).getByRole('button').click();const secondSaving=page.waitForEvent('download');await page.locator('[data-file-hash="'+secondFile.hash+'"]').click();const secondSaved=await secondSaving,secondPath=path.join(output,'private','saved-prisma.xml');await secondSaved.saveAs(secondPath);const secondBytes=await fs.readFile(secondPath);
   check(secondFile.hash!==file.hash&&createHash('sha256').update(secondBytes).digest('hex')===secondFile.hash&&secondBytes.includes(Buffer.from('creativecommons.org/licenses/by/4.0/')),'DEMO18 second distinct article Save retains its own original hash and license');
   const offline=await browser.newContext({offline:true});const localPage=await offline.newPage();
   for(const [savedPath,pmcid] of [[path.join(output,'private','saved-original.xml'),'6836491'],[secondPath,'8005924']]){await localPage.goto(pathToFileURL(savedPath).href);check((await localPage.content()).includes(pmcid),'DEMO18 Chromium opens saved XML locally with networking disabled: PMC'+pmcid);}await offline.close();
@@ -75,5 +82,5 @@ try {
   check(reopened.files[0].hash===file.hash&&createHash('sha256').update(again).digest('hex')===file.hash,'DEMO23 actual server process restart retains database identity and original object hash');
   const logout=await request('logout',{});check(logout.status()===200&&(await request(fileRoute)).status()===401,'DEMO24 logout immediately denies future private original access');
   evidence.browser=await browser.version();evidence.node=process.version;evidence.platform=process.platform;
-}catch(error){evidence.failure=String(error.stack||error);if(page)await page.screenshot({path:path.join(output,'demo-failure.png'),fullPage:true}).catch(()=>{});throw error;}
-finally {await fs.writeFile(path.join(output,'result.json'),JSON.stringify({...evidence,checks:checks.length,names:checks,finished:new Date().toISOString()},null,2));await browser?.close();await stop();}
+}catch(error){evidence.failure=String(error.stack||error);if(page){evidence.visibleErrors=await page.locator('#error,[data-request-error]').allTextContents().catch(()=>[]);await page.screenshot({path:path.join(output,'demo-failure.png'),fullPage:true}).catch(()=>{});}throw error;}
+finally {if(admission?.exitCode==null)admission?.kill('SIGKILL');await fs.writeFile(path.join(output,'result.json'),JSON.stringify({...evidence,checks:checks.length,names:checks,finished:new Date().toISOString()},null,2));await browser?.close();await stop();}

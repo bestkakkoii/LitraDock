@@ -50,6 +50,8 @@ public static class SourceChecks
         foreach (var (rightsXml, expected) in new[]
         {
             (licensed, "permitted"),
+            (licensed.Replace("<permissions>", "<abstract><boxed-text><permissions>").Replace("</permissions>", "</permissions></boxed-text></abstract>"), "unknown"),
+            (licensed.Replace("CC BY 4.0 synthetic fixture only", "Use permitted for non-commercial purposes only"), "unknown"),
             (licensed.Replace("href='https://creativecommons.org/licenses/by/4.0/'", ""), "unknown"),
             (licensed.Replace("<license", "<notice").Replace("</license>", "</notice>"), "unknown"),
             (licensed.Replace("/by/4.0/", "/by-nc/4.0/"), "restricted"),

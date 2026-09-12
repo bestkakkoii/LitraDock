@@ -126,3 +126,6 @@ select {
 }
 
 #recoveryStatus, #nextEvents { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 35vh; overflow: auto; }
+
+dialog { overflow: auto; overflow-wrap: anywhere; }
+dialog [data-request-error] { color: #a12620; position: sticky; top: 0; background: white; }

@@ -305,20 +305,7 @@ public sealed partial class PgStore
             scope,
             template
         );
-        var count = Convert.ToInt32(
-            await Scalar(
-                db,
-                "SELECT count(*) FROM ld_members WHERE library_id=@p0 AND scope_id=@p1 AND (NOT @p2 OR selected)",
-                library,
-                scope,
-                selected
-            )
-        );
-        if (count is < 1 or > 10000)
-            throw new ArgumentException("Choose 1–10000 records; no silent truncation.");
-        if (Demo != null && count > DemoPolicy.BatchLimit)
-            throw new ArgumentException("Demo batches support up to 10 records; select a smaller batch. No records were queued.");
-        await DemoLibraryAdmission(db, library, "jobs", count);
+        // 先具體化選取集合；配額與新增項目共用此快照，並行選取只影響下一批。
         var rows = await Rows(
             db,
             "SELECT r.metadata,m.rank FROM ld_members m JOIN ld_records r USING(library_id,search_id) WHERE m.library_id=@p0 AND m.scope_id=@p1 AND (NOT @p2 OR selected) ORDER BY m.rank",
@@ -326,6 +313,12 @@ public sealed partial class PgStore
             scope,
             selected
         );
+        var count = rows.Count;
+        if (count is < 1 or > 10000)
+            throw new ArgumentException("Choose 1–10000 records; no silent truncation.");
+        if (Demo != null && count > DemoPolicy.BatchLimit)
+            throw new ArgumentException("Demo batches support up to 10 records; select a smaller batch. No records were queued.");
+        await DemoLibraryAdmission(db, library, "jobs", count);
         var index = 0;
         foreach (var row in rows)
         {
