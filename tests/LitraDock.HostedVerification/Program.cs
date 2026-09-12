@@ -655,6 +655,10 @@ if (args.FirstOrDefault() == "--postgres")
     );
     await HostedSourceChecks.Run(store, connection, output, Check);
 }
+else if (args.FirstOrDefault() == "--identity")
+{
+    await IdentityChecks.Run(Environment.GetEnvironmentVariable("LITRADOCK_PG_TEST_CONNECTION"), output, Check);
+}
 else if (args.FirstOrDefault() == "--research-metadata")
 {
     await ResearchMetadataChecks.Run(output, Check);

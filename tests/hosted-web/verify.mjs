@@ -1,4 +1,5 @@
 import { researchFlow } from "./research.mjs";
+import { identityFlow } from "./identity.mjs";
 import { chromium } from "playwright";
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -23,6 +24,7 @@ const env = {
   LITRADOCK_PORT: "5281",
   LITRADOCK_INITIAL_LOGIN: login,
   LITRADOCK_INITIAL_PASSWORD: password,
+  LITRADOCK_IDENTITY_BARRIER: output,
 };
 const dll = path.join(
   root,
@@ -30,11 +32,13 @@ const dll = path.join(
 );
 const cwd = path.join(root, "src/LitraDock.Hosted");
 await promisify(execFile)("dotnet", [dll, "--migrate"], {cwd,env,windowsHide:true});
-await promisify(execFile)("dotnet", [dll, "--create-account"], {
+const createdAccount=await promisify(execFile)("dotnet", [dll, "--create-account"], {
   cwd,
   env,
   windowsHide: true,
 });
+const account=createdAccount.stdout.match(/Account created: ([0-9a-f-]{36})/i)?.[1];
+assert.ok(account,'Operator account UUID receipt required');
 const otherLogin=login+"-other";
 await promisify(execFile)("dotnet",[dll,"--create-account"],{cwd,env:{...env,LITRADOCK_INITIAL_LOGIN:otherLogin},windowsHide:true});
 let server, browser;
@@ -371,6 +375,7 @@ try {
     await page.locator("#search").isVisible(),
     "Narrow viewport retains workflow controls; screenshot captured",
   );
+  await identityFlow({page,context,origin,library:restoredLibrary,id,record,output,check,otherLogin,login,password,account,dll,cwd,env});
   await fs.writeFile(
     path.join(output, "result.json"),
     JSON.stringify(

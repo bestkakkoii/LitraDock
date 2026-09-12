@@ -88,6 +88,14 @@ jobs:
           dotnet run --project tests/LitraDock.HostedVerification -c Release --no-build -- --postgres .litradock/postgres 2>&1 | tee evidence/postgres.log
           cp .litradock/postgres/result.json evidence/postgres-result.json
           cp .litradock/postgres/source-scale.json evidence/source-scale.json
+      - name: Actual account lifecycle, rollback and lock concurrency
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          dotnet run --project tests/LitraDock.HostedVerification -c Release --no-build -- --identity .litradock/identity 2>&1 | tee evidence/identity.log
+          cp .litradock/identity/result.json evidence/identity-result.json
+          cp .litradock/identity/environment.json evidence/identity-environment.json
+          cp .litradock/identity/operator-results.json evidence/identity-operator-results.json
       - name: Actual research decisions, conversions and selected relocation
         if: ${{ !cancelled() }}
         run: |

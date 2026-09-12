@@ -162,16 +162,19 @@ public sealed partial class PgStore : IAsyncDisposable
         if (login.Length > 120 || password.Length > 256)
             return null;
         await using var db = await Data.OpenConnectionAsync();
+        await using var tx = await db.BeginTransactionAsync();
+        await Exec(db, "SET LOCAL lock_timeout='3s'");
+        // 登入與管理交易均先鎖同一帳號，再驗證最新狀態並寫入工作階段，避免撤銷後插入舊授權。
         var account = (
             await Rows(
                 db,
-                "SELECT account_id,password_hash FROM ld_accounts WHERE login=@p0 AND enabled",
+                "SELECT account_id,password_hash,enabled FROM ld_accounts WHERE login=@p0 FOR UPDATE",
                 login.Trim().ToLowerInvariant()
             )
         ).SingleOrDefault();
         // 不在日誌輸出帳密或雜湊；不存在的帳號也執行同成本雜湊以降低列舉訊號。
         var hasher = new PasswordHasher<string>();
-        if (account == null)
+        if (account == null || !(bool)account["enabled"])
         {
             hasher.HashPassword("missing", password);
             return null;
@@ -188,8 +191,30 @@ public sealed partial class PgStore : IAsyncDisposable
             session.Account,
             session.Csrf
         );
-        await Exec(db, "DELETE FROM ld_sessions WHERE expires_at<now()");
+        await Exec(db, "DELETE FROM ld_sessions WHERE account_id=@p0 AND expires_at<now()", session.Account);
+        await tx.CommitAsync();
         return (token, session);
+    }
+
+    public async Task<AccountControlResult> ControlAccount(string accountId, string action)
+    {
+        if (!Guid.TryParseExact(accountId, "D", out var account) || account == Guid.Empty)
+            throw new ArgumentException("A nonempty canonical account UUID is required.");
+        if (action is not ("disable" or "enable" or "revoke-sessions"))
+            throw new ArgumentException("Unknown account action.");
+        // 維護鎖先於帳號鎖；已准入的 HTTP/背景作業使本次操作明確失敗，不假裝排入即完成。
+        await using var admission = await ResourceAdmission.Enter(this, maintenance: true);
+        await using var db = await Data.OpenConnectionAsync();
+        await using var tx = await db.BeginTransactionAsync();
+        await Exec(db, "SET LOCAL lock_timeout='3s'");
+        var current = await Scalar(db, "SELECT enabled FROM ld_accounts WHERE account_id=@p0 FOR UPDATE", account);
+        if (current == null)
+            throw new KeyNotFoundException("Account does not exist.");
+        var enabled = action == "enable" || (action == "revoke-sessions" && (bool)current);
+        await Exec(db, "UPDATE ld_accounts SET enabled=@p1 WHERE account_id=@p0", account, enabled);
+        var revoked = await Exec(db, "DELETE FROM ld_sessions WHERE account_id=@p0", account);
+        await tx.CommitAsync();
+        return new AccountControlResult(account, action, enabled, revoked);
     }
 
     public async Task<Session> Authenticate(string token)
@@ -325,6 +350,7 @@ public sealed partial class PgStore : IAsyncDisposable
 }
 
 public sealed record Session(Guid Account, string Csrf, string Hash);
+public sealed record AccountControlResult(Guid Account, string Action, bool Enabled, int Revoked);
 
 public sealed record Claim(
     Guid Library,

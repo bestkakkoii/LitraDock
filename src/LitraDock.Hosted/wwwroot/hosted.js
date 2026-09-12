@@ -8,12 +8,27 @@ let csrf = "",
   catalogOffset = 0,
   itemOffset = 0,
   historyOffset = 0;
+function observeAuthentication(response) {
+  if (response.status !== 401) return;
+  const signedIn = Boolean(csrf);
+  csrf = library = scope = batch = "";
+  progressGeneration++;
+  clearResearchContext();
+  // 收到 401 即撤銷本頁準備連結並丟棄私人 DOM；重新載入也終止舊頁尚未完成的回應處理。
+  if (signedIn) {
+    for (const dialog of document.querySelectorAll("dialog")) {dialog.close();dialog.replaceChildren();}
+    $("workspace").replaceChildren();
+    $("workspace").hidden = true;
+    location.replace("/");
+  }
+}
 async function api(path, body) {
   const r = await fetch("/api/" + path, {
     method: body === undefined ? "GET" : "POST",
     headers: { "Content-Type": "application/json", "X-CSRF": csrf },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  observeAuthentication(r);
   if (!r.ok)
     throw new Error(r.status === 401 ? "Sign in to continue." : await r.text());
   return r;
@@ -445,6 +460,7 @@ $("manualUpload").onclick = safe(async () => {
       body: file,
     },
   );
+  observeAuthentication(r);
   if (!r.ok) throw new Error(await r.text());
   $("manualStatus").textContent = (await r.json()).message;
   await progress();
@@ -493,6 +509,7 @@ $("restoreBundle").onclick=safe(async()=>{
       if(csrf!==initialCsrf || library!==initialLibrary) throw new Error("Account or library changed; choose the restore context again.");
       $("recoveryStatus").textContent="Validating and restoring into a new library; no completion is assumed.";
       response=await fetch("/api/restore",{method:"POST",headers:{"Content-Type":"application/octet-stream","X-CSRF":initialCsrf},body:file});
+      observeAuthentication(response);
       if(response.status!==429 || response.headers.get("X-Operation-Admission")!=="not-started" || attempt===3) break;
       const admission=await response.clone().json().catch(()=>null);
       if(admission?.code!=="admission_not_started") break;

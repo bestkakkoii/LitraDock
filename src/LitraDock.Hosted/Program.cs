@@ -103,6 +103,35 @@ if (args.Contains("--operator-clear-guard"))
     return;
 }
 await store.VerifyOperational();
+if (args.Contains("--account-control"))
+{
+    var accountText = builder.Configuration["LITRADOCK_ACCOUNT_ID"];
+    var action = builder.Configuration["LITRADOCK_ACCOUNT_ACTION"];
+    try
+    {
+        var result = await store.ControlAccount(accountText, action);
+        Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new
+        {
+            operation = "account_control", result.Account, result.Action,
+            outcome = "succeeded", result.Enabled, result.Revoked,
+        }));
+    }
+    catch (Exception error)
+    {
+        // 僅輸出封閉原因碼與有效 UUID，避免資料庫例外、任意 action 或秘密混入日誌。
+        Console.Error.WriteLine(System.Text.Json.JsonSerializer.Serialize(new
+        {
+            operation = "account_control",
+            account = Guid.TryParseExact(accountText, "D", out var id) ? id.ToString() : null,
+            action = action is "disable" or "enable" or "revoke-sessions" ? action : null,
+            outcome = "failed",
+            reason = error is ResourceBusyException ? "busy" : error is ArgumentException ? "invalid_input"
+                : error is KeyNotFoundException ? "unknown_account" : "database_failure",
+        }));
+        Environment.ExitCode = 1;
+    }
+    return;
+}
 if (args.Contains("--operator-backup"))
 {
     await OperatorRecovery.Backup(
@@ -285,6 +314,9 @@ app.Use(
         bool handlerEntered = false;
         try
         {
+#if HOSTED_BROWSER_FIXTURE
+            await Literature.Verification.IdentityBarrier.Wait(context, "before-admission");
+#endif
             await using var admission = context.Request.Path.StartsWithSegments("/api")
                 ? await ResourceAdmission.Enter(
                     store,
@@ -303,6 +335,23 @@ app.Use(
                         )
                 )
                 : null;
+            if (context.Items.ContainsKey("session"))
+            {
+                // 初次驗證與准入之間可能完成撤銷；持有准入鎖後必須重新查詢，不能沿用舊 Session。
+                var session = await store.Authenticate(
+                    context.Request.Cookies["__Host-LitraDock"]
+                        ?? (local ? context.Request.Cookies["LitraDockTest"] : null)
+                );
+                if (session == null)
+                {
+                    context.Response.StatusCode = 401;
+                    return;
+                }
+                context.Items["session"] = session;
+            }
+#if HOSTED_BROWSER_FIXTURE
+            await Literature.Verification.IdentityBarrier.Wait(context, "after-admission");
+#endif
             handlerEntered = true;
             await next();
         }
