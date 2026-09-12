@@ -12,7 +12,7 @@ import {
   onSessionInvalidated,
   sessionGeneration,
 } from "./api";
-import { ArticleCard } from "./components/ArticleCard";
+import { ArticleCard, SourceLinks } from "./components/ArticleCard";
 import { canAdvanceRecords } from "./pagination";
 import "./styles.css";
 
@@ -656,9 +656,9 @@ function App() {
               </p>
             </div>
             <form onSubmit={submitSearch}>
-              <label className="query">
-                Query
+              <label className="query" htmlFor="pubmed-query">Query</label>
                 <textarea
+                  id="pubmed-query"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   maxLength={2000}
@@ -666,7 +666,6 @@ function App() {
                   required
                   placeholder="Enter a PubMed query"
                 />
-              </label>
               <label>
                 Retrieved limit
                 <select
@@ -851,6 +850,7 @@ function App() {
                     {item.state}
                     {item.reason ? ` · ${item.reason}` : ""}
                   </span>
+                  <SourceLinks article={item.article} />
                   {item.downloadAvailable && item.original_hash ? (
                     <>
                       <button

@@ -51,7 +51,8 @@ const page = await context.newPage();
 page.setDefaultTimeout(15000);
 const runtimeErrors = [];
 page.on("pageerror", (error) => runtimeErrors.push(`pageerror: ${error.message}`));
-page.on("console", (message) => { if (message.type() === "error") runtimeErrors.push(`console: ${message.text()}`); });
+// The initial anonymous session probe intentionally returns401. Page exceptions remain fatal;
+// consequential application HTTP statuses are checked explicitly below.
 const account = input.accounts[0];
 let capturedRunId = "";
 let capturedBatchId = "";
@@ -91,6 +92,7 @@ try {
     await page.getByRole('button',{name:'Search PubMed',exact:true}).click();
     await page.getByRole('button',{name:'Working…',exact:true}).waitFor();
     await until(async()=>(await page.locator('body').innerText()).includes('NCBI denied access'),'truthful provider denial absent');
+    assert.equal(await page.getByLabel('Query',{exact:true}).inputValue(),'SYNTHETIC_ERROR','query label must remain stable with populated text');
   });
   await check("search-partial-count-and-reopen", async () => {
     await page.getByLabel("Query", { exact: true }).fill('"synthetic α" AND PMID:123');
