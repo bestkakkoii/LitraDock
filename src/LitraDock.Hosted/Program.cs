@@ -271,6 +271,7 @@ app.Use(
                 }
             }
         }
+        bool handlerEntered = false;
         try
         {
             await using var admission = context.Request.Path.StartsWithSegments("/api")
@@ -290,14 +291,25 @@ app.Use(
                         )
                 )
                 : null;
+            handlerEntered = true;
             await next();
         }
         catch (ResourceBusyException)
         {
-            context.Response.StatusCode = 429;
-            context.Response.Headers.RetryAfter = "2";
+            context.Response.StatusCode = handlerEntered ? 503 : 429;
+            if (!handlerEntered)
+            {
+                context.Response.Headers.RetryAfter = "2";
+                context.Response.Headers["X-LitraDock-Admission"] = "not-started";
+            }
             await context.Response.WriteAsJsonAsync(
-                new { error = "Service resource capacity is in use; retry shortly." }
+                new
+                {
+                    code = handlerEntered ? "operation_interrupted" : "admission_not_started",
+                    error = handlerEntered
+                        ? "Operation interrupted; inspect transfer history before retrying."
+                        : "Service resource capacity is in use; operation has not started.",
+                }
             );
         }
         catch (KeyNotFoundException)

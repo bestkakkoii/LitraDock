@@ -315,13 +315,13 @@ try {
   let held=false;
   for(let n=0;n<200;n++){try{await fs.stat(path.join(heldDirectory,"held"));held=true;break;}catch{}if(admission.exitCode!==null)break;await new Promise(r=>setTimeout(r,50));}
   check(held,"Separate process actually holds PostgreSQL heavy admission before restore");
-  page.on("response",response=>{if(response.url()===origin+"/api/restore"){restoreResponses.push({status:response.status()});console.log("RESTORE_HTTP_STATUS",response.status());}});
+  page.on("response",response=>{if(response.url()===origin+"/api/restore"){restoreResponses.push({status:response.status(),admission:response.headers()["x-litradock-admission"]||null});console.log("RESTORE_HTTP_STATUS",response.status());}});
   await page.locator("#restoreBundle").click();
   await page.waitForFunction(()=>document.getElementById("recoveryStatus").textContent.includes("admission retry"));
   check(true,"Browser truthfully shows bounded pre-handler admission wait without another click");
   await page.waitForFunction(()=>{const text=document.getElementById("recoveryStatus").textContent;return text.includes("Library restored under your account")||text.includes("Restore response ");},{},{timeout:60000});
   check((await page.locator("#recoveryStatus").textContent()).includes("Library restored under your account"),"Restore response confirms new library after bounded admission wait");
-  check(restoreResponses.some(x=>x.status===429) && restoreResponses.filter(x=>x.status===200).length===1,"Actual429 admission retry creates exactly one successful restore response");
+  check(restoreResponses.some(x=>x.status===429 && x.admission==="not-started") && restoreResponses.filter(x=>x.status===200).length===1,"Actual429 admission retry creates exactly one successful restore response");
   const restoredLibrary=await page.locator("#libraries").inputValue();
   check(restoredLibrary!==library,"Browser restore creates a distinct owned library without replacing source");
   const restoredRecords=await context.request.get(origin+"/api/libraries/"+restoredLibrary+"/records/"+id);
@@ -330,6 +330,15 @@ try {
   const restoredOriginal=await context.request.get(origin+"/api/libraries/"+restoredLibrary+"/records/"+id+"/files/"+restoredDetails.files[0].hash);
   check(restoredOriginal.ok() && (await restoredOriginal.body()).equals(Buffer.from(xml)),"Relocated original download uses restored library association");
   await page.screenshot({path:path.join(output,"browser-recovery.png"),fullPage:true});
+  let genericRefusals=0;
+  await page.route("**/api/restore",route=>{genericRefusals++;return route.fulfill({status:429,contentType:"application/json",body:JSON.stringify({error:"Synthetic unmarked proxy refusal"})});});
+  await page.locator("#restoreBundle").click();
+  await page.waitForFunction(()=>document.getElementById("recoveryStatus").textContent.includes("Restore response 429"));
+  await page.waitForTimeout(2500);
+  const libraryListing=await context.request.get(origin+"/api/libraries");
+  check(genericRefusals===1 && (await libraryListing.json()).total===2,"Unmarked proxy429 is not automatically replayed and actual account still has exactly two libraries");
+  check((await page.locator("#recoveryStatus").textContent()).includes("Synthetic unmarked proxy refusal"),"Restore failure reason persists across background polling");
+  await page.unroute("**/api/restore");
   await stop(server);server=launch();await ready();await page.reload();
   await page.locator("#libraries").selectOption(restoredLibrary);
   const afterRestart=await context.request.get(origin+"/api/libraries/"+restoredLibrary+"/records/"+id+"/files/"+restoredDetails.files[0].hash);
