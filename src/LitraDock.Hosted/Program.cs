@@ -354,8 +354,6 @@ app.Use(
                     await context.Response.WriteAsJsonAsync(new { error = "This feature is not enabled in the invited demo; existing research data is preserved." });
                     return;
                 }
-                if (context.Request.Method == "POST" && originals.Measure() > DemoPolicy.StorageLimit)
-                    throw new InvalidOperationException("Demo storage limit reached; existing originals are retained. Contact the operator.");
             }
             if (context.Items.ContainsKey("session"))
             {

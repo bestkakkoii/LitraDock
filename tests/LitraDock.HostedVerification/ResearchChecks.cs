@@ -132,15 +132,21 @@ public static class ResearchChecks
         var second = await store.ClaimConversion();
         check(second == null, "Concurrent-equivalent claim cannot duplicate running conversion");
         var reading = new ReadingWorker(store, originals);
+        var reachedPublication = false;
         await reading.Execute(
             claim,
             CancellationToken.None,
             point =>
             {
                 if (point == "published")
+                {
+                    reachedPublication = true;
                     throw new IOException("Synthetic interrupted association.");
+                }
             }
         );
+        if (!reachedPublication)
+            throw new Exception("Conversion never reached injected publication checkpoint: " + await Sql("SELECT reason FROM ld_conversions WHERE library_id=@p0 AND conversion_id=@p1", library, key));
         check(
             (string)
                 await Sql(

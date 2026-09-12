@@ -53,6 +53,7 @@ public static class PdfInspection
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             var stdout = process.StandardOutput.ReadToEndAsync(timeout.Token);
             var stderr = process.StandardError.ReadToEndAsync(timeout.Token);
+            var phase = "input";
             try
             {
                 var input = JsonSerializer.Serialize(
@@ -60,6 +61,7 @@ public static class PdfInspection
                 );
                 await process.StandardInput.WriteAsync(input.AsMemory(), timeout.Token);
                 process.StandardInput.Close();
+                phase = "process";
                 while (!process.HasExited)
                 {
                     process.Refresh();
@@ -84,6 +86,10 @@ public static class PdfInspection
                         result.Error ?? "PDF validation failed."
                     );
                 return result.Info;
+            }
+            catch (IOException)
+            {
+                throw new SourceException("failed", "PDF validation communication failed during " + phase + "; child " + (process.HasExited ? "exit " + process.ExitCode : "still active") + ". Original and staging evidence retained.");
             }
             catch (OperationCanceledException)
             {

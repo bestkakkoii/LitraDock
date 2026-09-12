@@ -263,8 +263,10 @@ async function detail(id) {
     );
     $("article").append(b);
   }
+  const shownLocations=new Set();
   for(const [label,uri] of Object.entries(r.locations)) {
-    if(!["doi","pubMed","pmc","publisher","landing"].includes(label)||!uri)continue;
+    if(!["doi","pubMed","pmc","publisher","landing"].includes(label)||!uri||shownLocations.has(uri))continue;
+    shownLocations.add(uri);
     const link=document.createElement("a");link.href=uri;link.textContent="Open source: "+label;link.target="_blank";link.rel="noopener noreferrer";$("article").append(link,document.createElement("br"));
   }
   const manualButton = document.createElement("button");

@@ -156,6 +156,7 @@ jobs:
           docker exec ${{ job.services.postgres.id }} createdb --username fixture litradock_ci_demo_live
           retain_demo_evidence() {
             taskExitCode=$?
+            docker exec ${{ job.services.postgres.id }} psql --username fixture --dbname litradock_ci_demo_live -Atc 'SELECT provider,day,requests FROM ld_source_usage ORDER BY provider,day' > evidence/demo-source-requests.txt
             if [ -f .litradock/demo-live/result.json ]; then cp .litradock/demo-live/result.json evidence/demo-live-result.json; fi
             for artifact in .litradock/demo-live/demo-*.png; do
               if [ -f "$artifact" ]; then cp "$artifact" evidence/; fi
@@ -164,7 +165,6 @@ jobs:
           }
           trap retain_demo_evidence EXIT
           python3 tests/recovery/measure.py evidence/demo-live-resources.json -- node tests/hosted-web/demo.mjs .litradock/demo-live 2>&1 | tee evidence/demo-live.log
-          docker exec ${{ job.services.postgres.id }} psql --username fixture --dbname litradock_ci_demo_live -Atc 'SELECT provider,day,requests FROM ld_source_usage ORDER BY provider,day' > evidence/demo-source-requests.txt
       - name: Publish production demo candidate without fixture or paper content
         if: ${{ !cancelled() }}
         run: |

@@ -321,6 +321,19 @@ public static class SourceChecks
                 && result.Bytes.SequenceEqual(xml),
             "Unavailable PMC falls back to validated Europe PMC XML"
         );
+        foreach (var missingGrant in new[] {
+            Encoding.UTF8.GetString(xml).Replace("href='https://creativecommons.org/licenses/by/4.0/'", ""),
+            Encoding.UTF8.GetString(xml).Replace("<license", "<notice").Replace("</license>", "</notice>"),
+            Encoding.UTF8.GetString(xml).Replace("/by/4.0/", "/by-nc/4.0/"),
+        })
+        {
+            using var deniedClient = new HttpClient(new Routes((_, _) => XmlResponse(Encoding.UTF8.GetBytes(missingGrant))));
+            var guarded = new SourceAcquisition(new PubMedSource(transport), ncbi, deniedClient);
+            var denied = false;
+            try { await guarded.FetchFullTextAsync(article, CancellationToken.None); }
+            catch(SourceException error) { denied = error.State == "unavailable"; }
+            check(denied, "PDR002 actual automatic acquisition rejects absent, unknown or restricted grants despite nonempty display text");
+        }
         var root = "https://pmc.ncbi.nlm.nih.gov/api/oai/v1/mh/?verb=Identify";
         foreach (
             var scenario in new[]

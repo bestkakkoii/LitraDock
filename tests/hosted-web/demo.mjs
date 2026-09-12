@@ -54,6 +54,7 @@ try {
   check(createHash('sha256').update(bytes).digest('hex')===file.hash&&saved.suggestedFilename().endsWith('.xml'),'DEMO18 actual browser device-Save preserves original bytes/hash and XML extension');
   check(bytes.includes(Buffer.from('creativecommons.org/licenses/by/4.0/')),'DEMO18 downloaded original retains its actual license URI');
   await page.locator('#close').click();await page.locator('#records tr').filter({hasText:'31452104'}).getByRole('button').click();
+  await page.locator('#detail').waitFor({state:'visible'});
   check(await page.locator('#article a[href="https://pubmed.ncbi.nlm.nih.gov/31452104/"]').count()===1,'DEMO19 unresolved item offers convenient stable PubMed link');await page.locator('#close').click();
   const csvDownload=page.waitForEvent('download');await page.locator('#csv').click();const csv=await csvDownload;check(csv.suggestedFilename().endsWith('.zip'),'DEMO20 actual browser CSV export download is available');
   const anonymous=await browser.newContext(),foreign=await browser.newContext();
