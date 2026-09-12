@@ -202,6 +202,7 @@ def main(argv=None):
     for name in ("artifact-dir", "source-repository", "nuget-cache", "helper", "output"):
         parser.add_argument("--" + name, required=True, type=Path)
     args = parser.parse_args(argv)
+    args.output = q.no_links(args.output)
     if args.output.exists():
         raise FileExistsError("Evidence output already exists.")
     result = generate(args.release, args.artifact_dir, args.source_repository, args.nuget_cache, args.helper)

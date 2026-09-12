@@ -134,6 +134,31 @@ class RetainedControls(unittest.TestCase):
         with self.assertRaises(inv.q.Rejected):
             inv.source_reader(self.repository, "0" * 40)
 
+    def test_ri10_linked_output_parent_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            actual, linked = root / "actual", root / "linked"
+            actual.mkdir()
+            if os.name == "nt":
+                quote = lambda p: "'" + str(p).replace("'", "''") + "'"
+                result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                    "New-Item -ItemType Junction -Path " + quote(linked) + " -Target " + quote(actual) + " | Out-Null"], capture_output=True, timeout=15,
+                    creationflags=subprocess.CREATE_NO_WINDOW)
+                self.assertEqual(0, result.returncode, result.stderr.decode(errors="replace"))
+            else:
+                linked.symlink_to(actual, target_is_directory=True)
+            args = ["demo", "--artifact-dir", str(self.inputs / "demo"), "--source-repository", str(self.repository),
+                    "--nuget-cache", str(self.cache), "--helper", str(self.helper), "--output", str(linked / "new.json")]
+            try:
+                with self.assertRaises(inv.q.Rejected):
+                    inv.main(args)
+                self.assertEqual([], list(actual.iterdir()))
+            finally:
+                if os.name == "nt":
+                    os.rmdir(linked)
+                else:
+                    linked.unlink()
+
 
 if __name__ == "__main__":
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromModule(sys.modules[__name__]))

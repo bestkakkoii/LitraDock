@@ -1,0 +1,87 @@
+{
+  "scope": "Companion upstream notices; not a modification of frozen 55-file packages or ownership clearance",
+  "files": [
+    {
+      "path": "sqlitepclraw-license.txt",
+      "url": "https://raw.githubusercontent.com/ericsink/SQLitePCL.raw/ca835d21508bff43121c65081035840ac5006c4c/LICENSE.TXT",
+      "commit": "ca835d21508bff43121c65081035840ac5006c4c",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358
+    },
+    {
+      "path": "sqlitepclraw-notice.txt",
+      "url": "https://raw.githubusercontent.com/ericsink/SQLitePCL.raw/ca835d21508bff43121c65081035840ac5006c4c/NOTICE.TXT",
+      "commit": "ca835d21508bff43121c65081035840ac5006c4c",
+      "sha256": "485b276b3d2bfaa26df348e1e5c84df3648981e09b88531a6a53006f0705c24b",
+      "bytes": 9756
+    },
+    {
+      "path": "pdfpig-license.txt",
+      "url": "https://raw.githubusercontent.com/UglyToad/PdfPig/88172af1c4d4f440949f59c94966c3880e3f6032/LICENSE",
+      "commit": "88172af1c4d4f440949f59c94966c3880e3f6032",
+      "sha256": "4c510e162f896ea43b4b1cf1b743641d7c756f1004d0e5eaf0615b28b7ded409",
+      "bytes": 14227
+    },
+    {
+      "path": "pdfpig-notices.txt",
+      "url": "https://raw.githubusercontent.com/UglyToad/PdfPig/88172af1c4d4f440949f59c94966c3880e3f6032/NOTICES.txt",
+      "commit": "88172af1c4d4f440949f59c94966c3880e3f6032",
+      "sha256": "d7a07a105f64d9240ed40a8ebe0c45658616c1660bf9fd8a36e2dbf3165f6e92",
+      "bytes": 414
+    },
+    {
+      "path": "npgsql-license.txt",
+      "url": "https://raw.githubusercontent.com/npgsql/npgsql/d3768398c17877b3a916c3c4d87e8e11698991fc/LICENSE",
+      "commit": "d3768398c17877b3a916c3c4d87e8e11698991fc",
+      "sha256": "2e1d9cc6ed4eb7fe6fa82091846c06b4f58571a2c3b54777db6baeca10dd2d74",
+      "bytes": 903
+    },
+    {
+      "path": "efcore-license.txt",
+      "url": "https://raw.githubusercontent.com/dotnet/efcore/001bfac21c1910cdf1110ca256c9ea0a06f374ca/LICENSE.txt",
+      "commit": "001bfac21c1910cdf1110ca256c9ea0a06f374ca",
+      "sha256": "ae48df11a335dc1a615f4f938b69cba73bcf4485c4f97af49b38efb0f216353b",
+      "bytes": 1115
+    },
+    {
+      "path": "dotnet-hostpack-10.0.11-license.txt",
+      "package": "Microsoft.NETCore.App.Host.linux-x64/10.0.11",
+      "packageSha256": "d4ccdc456bee52865f908ba99be6c99c778bad65f851c51f8e2fdf62f6348195",
+      "member": "LICENSE.TXT",
+      "sha256": "cfc21f5e8bd655ae997eec916138b707b1d290b83272c02a95c9f821b8c87310",
+      "bytes": 1116
+    },
+    {
+      "path": "dotnet-hostpack-10.0.11-third-party-notices.txt",
+      "package": "Microsoft.NETCore.App.Host.linux-x64/10.0.11",
+      "packageSha256": "d4ccdc456bee52865f908ba99be6c99c778bad65f851c51f8e2fdf62f6348195",
+      "member": "THIRD-PARTY-NOTICES.TXT",
+      "sha256": "66f1d4e44973185519bb4aa8a9718eb22fc7af2cc532e3ae9cfc4c127ee7fc54",
+      "bytes": 76623
+    },
+    {
+      "path": "aspnetcore-runtime-10.0.12-license.txt",
+      "archiveSha512": "c489fc3a9dcc85f24f2d52e9a81b46fdf51affc8a360d008dbd5e3b7ce524969adc4a54f555ad13e29b822f59ed1cae9785608cbac2282f2c9c4fda45c21c7d1",
+      "member": "./LICENSE.txt",
+      "sha256": "cfc21f5e8bd655ae997eec916138b707b1d290b83272c02a95c9f821b8c87310",
+      "bytes": 1116
+    },
+    {
+      "path": "aspnetcore-runtime-10.0.12-thirdpartynotices.txt",
+      "archiveSha512": "c489fc3a9dcc85f24f2d52e9a81b46fdf51affc8a360d008dbd5e3b7ce524969adc4a54f555ad13e29b822f59ed1cae9785608cbac2282f2c9c4fda45c21c7d1",
+      "member": "./ThirdPartyNotices.txt",
+      "sha256": "2dc8f8c5a39401e928b5784ab564eb8b3ceb99ead3df8f260e0cab7e0bbecc7a",
+      "bytes": 77436
+    },
+    {
+      "path": "sqlite-3.53.3-source-header.txt",
+      "url": "https://sqlite.org/2026/sqlite-amalgamation-3530300.zip",
+      "archiveSha256": "646421e12aac110282ef8cc68f1a62d4bb15fc7b8f09da0b53e29ee690500431",
+      "member": "sqlite-amalgamation-3530300/sqlite3.c",
+      "memberSha3_256": "28e484abdaa43630e34040ef6ed92be973a1ad54107803d8af5145b889c23ed7",
+      "sha256": "49cf7bcb103eb3244150a23bb23d840370a4762914faf1b450072a4b03c14670",
+      "bytes": 427,
+      "scope": "Unmodified source comment containing public-domain dedication"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "apphost": {
+    "url": "https://api.nuget.org/v3-flatcontainer/microsoft.netcore.app.host.linux-x64/10.0.11/microsoft.netcore.app.host.linux-x64.10.0.11.nupkg",
+    "packageSha256": "d4ccdc456bee52865f908ba99be6c99c778bad65f851c51f8e2fdf62f6348195",
+    "templateSha256": "cabd3e33a7250b7375ddf779a6f14a47cd82a99ab820ea5e7e0fc256c99fdc59",
+    "actualSha256": "7ed47f699405392812cc1d707958a7a3593e1ebf0c08f5e246f2005c928f4db1",
+    "templateBytes": 78256,
+    "actualBytes": 78256,
+    "diffCount": 63,
+    "diffStart": 74560,
+    "diffEnd": 74623,
+    "releases": [
+      "demo cfd36df",
+      "operator f7b7a1d"
+    ],
+    "exactTemplateSubstitution": true,
+    "templateMember": "runtimes/linux-x64/native/apphost",
+    "sourceExplanation": "https://github.com/dotnet/runtime/blob/v10.0.11/src/installer/managed/Microsoft.NET.HostModel/AppHost/HostWriter.cs"
+  },
+  "sqliteLinuxX64": {
+    "member": "runtimes/linux-x64/native/libe_sqlite3.so",
+    "sha256": "b0f5c48026fedcf9f05cf31c6fadf9e1e001ca59cd85aa68b8b6814e52c18a07",
+    "version": "3.53.3",
+    "sourceId": "2026-06-26 20:14:12 d4c0e51e4aeb96955b99185ab9cde75c339e2c29c3f3f12428d364a10d782c62",
+    "primaryRelease": "https://sqlite.org/releaselog/3_53_3.html",
+    "sourceSha3_256": "28e484abdaa43630e34040ef6ed92be973a1ad54107803d8af5145b889c23ed7",
+    "scope": "Version/source ID called from exact hash-verified library on actual Debian x64; matches pinned upstream source archive; not independent native rebuild or all-RID execution"
+  },
+  "limitations": [
+    "No current vulnerability or certificate-trust clearance",
+    "No complete legal ownership assertion",
+    "Compiler flags and independent native reproducible build remain unverified",
+    "Runtime supplied separately; no frozen archive modified"
+  ]
+}

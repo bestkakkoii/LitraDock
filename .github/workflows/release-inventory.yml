@@ -1,7 +1,7 @@
 name: Offline release inventory and scoped operator correction
 on:
   push:
-    branches: [release-inventory-001]
+    branches: [release-inventory-001, deployment-003]
   workflow_dispatch:
 permissions:
   contents: read
@@ -43,6 +43,10 @@ jobs:
           export INVENTORY_HELPER="$PWD/build/NugetProof/Release/net10.0/NugetProof.dll"
           export INVENTORY_OUTPUT="$PWD/evidence"
           python3 tests/deployment/test_inventory.py evidence/inventory-tests.json 2>&1 | tee evidence/inventory-tests.log
+          python3 tests/deployment/test_stage_release.py 2>&1 | tee evidence/staging-tests.log
+          mkdir -m 700 .litradock/staging-parent
+          python3 deployment/qualification/stage_release.py --release operator --inputs .litradock/inventory-inputs/operator --destination .litradock/staging-parent/operator > evidence/staged-operator.json
+          python3 -c 'import hashlib,json,pathlib; p=pathlib.Path("deployment/notices"); m=json.loads((p/"manifest.json").read_text()); assert all(hashlib.sha256((p/x["path"]).read_bytes()).hexdigest()==x["sha256"] for x in m["files"]); print("All 11 retained upstream notice digests verified")' > evidence/notices.txt
       - name: Retain bounded inventory evidence, no binaries or source papers
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -52,6 +56,7 @@ jobs:
           retention-days: 7
           if-no-files-found: error
   isolated:
+    if: github.ref != 'refs/heads/deployment-003'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     services:

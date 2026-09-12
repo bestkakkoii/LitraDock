@@ -3,5 +3,11 @@ build/
 **/__pycache__/
 **/obj/
 .litradock/
+.private/
+ops-private/
+.ssh/
+*.key
+*.pem
+*_ed25519*
 evidence/
 .env
