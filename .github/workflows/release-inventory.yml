@@ -44,6 +44,8 @@ jobs:
           export INVENTORY_OUTPUT="$PWD/evidence"
           python3 tests/deployment/test_inventory.py evidence/inventory-tests.json 2>&1 | tee evidence/inventory-tests.log
           python3 tests/deployment/test_stage_release.py 2>&1 | tee evidence/staging-tests.log
+          python3 tests/deployment/test_retire_demo.py 2>&1 | tee evidence/retirement-registration-tests.log
+          python3 tests/deployment/test_qualification.py evidence/qualification-local.json 2>&1 | tee evidence/qualification-local.log
           mkdir -m 700 .litradock/staging-parent
           python3 deployment/qualification/stage_release.py --release operator --inputs .litradock/inventory-inputs/operator --destination .litradock/staging-parent/operator > evidence/staged-operator.json
           python3 -c 'import hashlib,json,pathlib; p=pathlib.Path("deployment/notices"); m=json.loads((p/"manifest.json").read_text()); assert all(hashlib.sha256((p/x["path"]).read_bytes()).hexdigest()==x["sha256"] for x in m["files"]); print("All 11 retained upstream notice digests verified")' > evidence/notices.txt

@@ -226,8 +226,12 @@ def database_settings(connection):
         key = key.strip().lower()
         require(separator and key not in fields, "Invalid database connection field.")
         fields[key] = value.strip()
-    require(set(fields) <= {"host", "port", "database", "username", "password", "ssl mode"},
+    require(set(fields) <= {"host", "port", "database", "username", "password", "ssl mode", "maximum pool size"},
             "Unsupported database connection options require operator review.")
+    if "maximum pool size" in fields:
+        pool = fields["maximum pool size"]
+        require(pool.isascii() and pool.isdecimal() and 1 <= int(pool) <= 20,
+                "Reviewed application pool size must be an integer from1 through20.")
     require(fields.get("host") in {"127.0.0.1", "::1", "localhost"}, "Only the reviewed loopback database is probed.")
     require(fields.get("ssl mode", "prefer").lower() == "disable", "This probe is limited to explicit loopback database configuration.")
     require(all(fields.get(key) for key in ("database", "username", "password")), "Database identity/credential fields missing.")

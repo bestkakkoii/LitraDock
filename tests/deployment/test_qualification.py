@@ -206,6 +206,14 @@ class QualificationTests(unittest.TestCase):
             found.update(re.findall(r"CREATE TABLE (ld_\w+)", path.read_text(encoding="utf-8")))
         self.assertEqual(found, set(q.SCHEMA_TABLES))
 
+    def test_qp17_bounded_application_pool_option(self):
+        base = "Host=127.0.0.1;Database=literature_demo_control;Username=service;Password=synthetic;SSL Mode=Disable"
+        for value in ("1", "8", "20"):
+            self.assertEqual(q.database_settings(base), q.database_settings(base + ";Maximum Pool Size=" + value))
+        for value in ("", "0", "21", "-1", "1.5", "NaN", "８", "8;Maximum Pool Size=9", "8;Pooling=false"):
+            with self.subTest(value=value), self.assertRaises(q.Rejected):
+                q.database_settings(base + ";Maximum Pool Size=" + value)
+
     def test_qp14_cli_missing_host_never_becomes_pass(self):
         output = self.root / "host.json"
         args = ["host", "--manifest", str(self.manifest), "--manifest-sha256", q.digest(self.manifest),

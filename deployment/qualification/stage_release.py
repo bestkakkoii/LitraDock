@@ -34,6 +34,7 @@ def stage(release, inputs, destination):
     # Copy into our exclusive directory first: verification and extraction use
     # the same private bytes, never an externally mutable source archive.
     work = Path(tempfile.mkdtemp(prefix=".stage-", dir=parent))
+    published = None
     try:
         package = work / "package.tar.gz"
         manifest = work / "manifest.txt"
@@ -66,11 +67,17 @@ def stage(release, inputs, destination):
         # operational prerequisite, not a claim of safety against the caller.
         q.require(not destination.exists(), "Destination appeared during staging.")
         content.rename(destination)
-        return {"status": "STAGED", "release": release, "source": anchor["source"],
+        published = {"status": "STAGED", "release": release, "source": anchor["source"],
                 "archiveSha256": anchor["archiveSha256"], **proof,
-                "activation": "NOT_PERFORMED", "deploymentAcceptance": "UNVERIFIED"}
+                "activation": "NOT_PERFORMED", "deploymentAcceptance": "UNVERIFIED", "cleanup": "COMPLETE"}
+        return published
     finally:
-        shutil.rmtree(work)
+        try:
+            shutil.rmtree(work)
+        except OSError:
+            if published is None:
+                raise
+            published["cleanup"] = "PENDING; validated destination retained; inspect private staging temporary directory"
 
 
 def main():

@@ -91,6 +91,16 @@ class Staging(unittest.TestCase):
         with patch.object(m.q, "verify_installed", side_effect=OSError):
             self.reject()
 
+    def test_post_publication_cleanup_failure_preserves_success(self):
+        with patch.object(m.shutil, "rmtree", side_effect=OSError):
+            result = m.stage("operator", self.inputs, self.dest)
+        self.assertEqual("STAGED", result["status"])
+        self.assertTrue(result["cleanup"].startswith("PENDING"))
+        for name, data in self.rows.items():
+            self.assertEqual(data, (self.dest / name).read_bytes())
+        for directory in self.root.glob(".stage-*"):
+            m.shutil.rmtree(directory)
+
     @unittest.skipUnless(os.name == "posix", "POSIX permission and symlink control")
     def test_parent_permissions_and_symlink(self):
         self.root.chmod(0o755)
