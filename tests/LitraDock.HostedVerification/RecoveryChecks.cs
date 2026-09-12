@@ -509,6 +509,7 @@ public static class RecoveryChecks
         var dumpTool = Environment.GetEnvironmentVariable("LITRADOCK_PG_DUMP") ?? "pg_dump";
         var restoreTool =
             Environment.GetEnvironmentVariable("LITRADOCK_PG_RESTORE") ?? "pg_restore";
+        bool failedCopyCheckpoint = false;
         await Reject(
             () =>
                 OperatorRecovery.Backup(
@@ -520,10 +521,19 @@ public static class RecoveryChecks
                     phase =>
                     {
                         if (phase == "copied")
+                        {
+                            failedCopyCheckpoint = true;
                             throw new IOException("Synthetic backup interruption");
+                        }
                     }
                 ),
             "Failed operator backup leaves an incomplete destination and releases maintenance"
+        );
+        check(
+            failedCopyCheckpoint
+                && File.Exists(Path.Combine(output, "failed-backup", "INCOMPLETE"))
+                && !File.Exists(Path.Combine(output, "failed-backup", "pair.json")),
+            "Injected post-copy operator failure actually reaches checkpoint and retains incomplete marker without manifest"
         );
         await using (var admission = await ResourceAdmission.Enter(store))
             check(true, "Failed backup does not leave application maintenance lock held");
@@ -641,12 +651,77 @@ public static class RecoveryChecks
                 ),
             "Operator restore refuses existing target rather than overwriting"
         );
+        await using (var restoredDb = new NpgsqlConnection(config.ConnectionString))
+        {
+            await restoredDb.OpenAsync();
+            foreach (
+                var table in new[]
+                {
+                    "ld_accounts",
+                    "ld_libraries",
+                    "ld_records",
+                    "ld_identifiers",
+                    "ld_results",
+                    "ld_scopes",
+                    "ld_members",
+                    "ld_events",
+                    "ld_files",
+                    "ld_article_files",
+                    "ld_publications",
+                    "ld_manual_inputs",
+                    "ld_object_provenance",
+                    "ld_legacy_rows",
+                }
+            )
+            {
+                var query =
+                    "SELECT md5(coalesce(string_agg(value,E'\\n' ORDER BY value),'')) FROM (SELECT to_jsonb(t)::text AS value FROM "
+                    + table
+                    + " t) rows";
+                await using var restoredQuery = new NpgsqlCommand(query, restoredDb);
+                check(
+                    Equals(await Sql(query), await restoredQuery.ExecuteScalarAsync()),
+                    "Independent operator SQL content comparison across all libraries: " + table
+                );
+            }
+        }
+        var pair = JsonSerializer.Deserialize<RecoveryPair>(
+            await File.ReadAllTextAsync(Path.Combine(backup, "pair.json"))
+        );
+        bool pairedHashes = true;
+        foreach (var entry in pair.Files)
+        {
+            using var file = File.OpenRead(
+                Path.Combine(relocated.Root, entry.Path.Replace('/', Path.DirectorySeparatorChar))
+            );
+            pairedHashes &=
+                Convert
+                    .ToHexString(System.Security.Cryptography.SHA256.HashData(file))
+                    .Equals(entry.Hash, StringComparison.OrdinalIgnoreCase)
+                && file.Length == entry.Bytes;
+        }
+        check(
+            pairedHashes && pair.Files.Count > 8,
+            "Independent hash/length check covers every relocated operator-pair file including retained evidence"
+        );
         var measure = new
         {
             records = 120,
             liveRequests = 0,
             bundleBytes = new FileInfo(archive).Length,
             sourceDiskBytes = originals.Measure(),
+            sourceDatabaseBytes = Convert.ToInt64(
+                await Sql("SELECT pg_database_size(current_database())")
+            ),
+            restoredDatabaseBytes = Convert.ToInt64(
+                await Sql("SELECT pg_database_size(@p0)", targetName)
+            ),
+            operatorDumpBytes = new FileInfo(Path.Combine(backup, "database.dump")).Length,
+            pairedFiles = pair.Files.Count,
+            verificationDirectoryBytes = Directory
+                .EnumerateFiles(output, "*", SearchOption.AllDirectories)
+                .Sum(path => new FileInfo(path).Length),
+            excludedDisk = "PG shared WAL/cluster-global files, OS/CI infrastructure and later browser workload; verificationDirectory includes source/restored objects, operator pairs and synthetic attack archives (not database directories).",
             restoredDiskBytes = relocated.Measure(),
             clientPeakBytes = Process.GetCurrentProcess().PeakWorkingSet64,
             processorCount = Environment.ProcessorCount,
