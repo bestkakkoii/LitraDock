@@ -315,7 +315,7 @@ try {
   let held=false;
   for(let n=0;n<200;n++){try{await fs.stat(path.join(heldDirectory,"held"));held=true;break;}catch{}if(admission.exitCode!==null)break;await new Promise(r=>setTimeout(r,50));}
   check(held,"Separate process actually holds PostgreSQL heavy admission before restore");
-  page.on("response",response=>{if(response.url()===origin+"/api/restore"){restoreResponses.push({status:response.status(),admission:response.headers()["x-litradock-admission"]||null});console.log("RESTORE_HTTP_STATUS",response.status());}});
+  page.on("response",response=>{if(response.url()===origin+"/api/restore"){restoreResponses.push({status:response.status(),admission:response.headers()["x-operation-admission"]||null});console.log("RESTORE_HTTP_STATUS",response.status());}});
   await page.locator("#restoreBundle").click();
   await page.waitForFunction(()=>document.getElementById("recoveryStatus").textContent.includes("admission retry"));
   check(true,"Browser truthfully shows bounded pre-handler admission wait without another click");

@@ -492,7 +492,7 @@ $("restoreBundle").onclick=safe(async()=>{
       if(csrf!==initialCsrf || library!==initialLibrary) throw new Error("Account or library changed; choose the restore context again.");
       $("recoveryStatus").textContent="Validating and restoring into a new library; no completion is assumed.";
       response=await fetch("/api/restore",{method:"POST",headers:{"Content-Type":"application/octet-stream","X-CSRF":initialCsrf},body:file});
-      if(response.status!==429 || response.headers.get("X-LitraDock-Admission")!=="not-started" || attempt===3) break;
+      if(response.status!==429 || response.headers.get("X-Operation-Admission")!=="not-started" || attempt===3) break;
       const admission=await response.clone().json().catch(()=>null);
       if(admission?.code!=="admission_not_started") break;
       const seconds=Math.min(10,Math.max(1,Number(response.headers.get("Retry-After"))||2));

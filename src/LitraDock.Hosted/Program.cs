@@ -300,7 +300,7 @@ app.Use(
             if (!handlerEntered)
             {
                 context.Response.Headers.RetryAfter = "2";
-                context.Response.Headers["X-LitraDock-Admission"] = "not-started";
+                context.Response.Headers["X-Operation-Admission"] = "not-started";
             }
             await context.Response.WriteAsJsonAsync(
                 new
