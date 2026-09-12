@@ -325,6 +325,15 @@ public static class ResearchChecks
                 "New store process boundary retains relocated canonical identity"
             );
         }
+        await ResearchBundleChecks.Run(
+            store,
+            config.ConnectionString,
+            other,
+            bundle,
+            originals,
+            output,
+            check
+        );
         await ResearchLifecycleChecks.Run(
             store,
             config.ConnectionString,

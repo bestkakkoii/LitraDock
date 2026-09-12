@@ -24,7 +24,10 @@ public static class BudgetFailureChecks
         }
         await Reset();
         var sent = false;
-        var time = DateTimeOffset.Parse("2026-09-11T12:00:00Z");
+        var futureMonday = DateTime.UtcNow.Date.AddDays(7);
+        while (futureMonday.DayOfWeek != DayOfWeek.Monday)
+            futureMonday = futureMonday.AddDays(1);
+        var time = new DateTimeOffset(futureMonday.AddHours(12), TimeSpan.Zero);
         using var client = new HttpMessageInvoker(
             new SourceRequestHandler(
                 store,

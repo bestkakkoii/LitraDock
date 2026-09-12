@@ -62,9 +62,15 @@ jobs:
           node src/document-worker/node_modules/playwright/cli.js install --with-deps chromium 2>&1 | tee evidence/document-browser-install.log
           python3 -m venv .litradock/pdf-verification
           .litradock/pdf-verification/bin/python -m pip install --only-binary=:all: pymupdf==1.28.2 2>&1 | tee evidence/pdf-dependencies.log
-          test -u /opt/google/chrome/chrome-sandbox
-          stat -c '%U %a %n' /opt/google/chrome/chrome-sandbox | tee evidence/chromium-sandbox-helper.txt
-          export CHROME_DEVEL_SANDBOX=/opt/google/chrome/chrome-sandbox
+          # Install only the helper shipped with this pinned Chromium download; preserve AppArmor policy.
+          browser_path=$(node --input-type=module -e "import {chromium} from './src/document-worker/node_modules/playwright/index.mjs'; console.log(chromium.executablePath())")
+          helper_path="$(dirname "$browser_path")/chrome_sandbox"
+          test -f "$helper_path"
+          sha256sum "$helper_path" | tee evidence/chromium-sandbox-helper.txt
+          sudo install -d -o root -g root -m 0755 /opt/document-worker-sandbox
+          sudo install -o root -g root -m 4755 "$helper_path" /opt/document-worker-sandbox/chrome-sandbox
+          export CHROME_DEVEL_SANDBOX=/opt/document-worker-sandbox/chrome-sandbox
+          stat -c '%U %a %n' "$CHROME_DEVEL_SANDBOX" >> evidence/chromium-sandbox-helper.txt
           echo "CHROME_DEVEL_SANDBOX=$CHROME_DEVEL_SANDBOX" >> "$GITHUB_ENV"
           node tests/documents/preflight.mjs 2>&1 | tee evidence/document-preflight.log
           python3 tests/recovery/measure.py evidence/document-resources.json -- node tests/documents/verify.mjs .litradock/documents 2>&1 | tee evidence/document-tests.log

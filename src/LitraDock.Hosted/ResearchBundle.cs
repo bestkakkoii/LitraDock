@@ -18,6 +18,14 @@ public sealed partial class PgStore
 
     private static void ProjectBundle(JsonObject tables, HashSet<string> ids)
     {
+        var runSizes = tables["ld_results"]
+            .AsArray()
+            .GroupBy(x => x["run_id"].ToString())
+            .ToDictionary(g => g.Key, g => g.Count());
+        var scopeSizes = tables["ld_members"]
+            .AsArray()
+            .GroupBy(x => x["scope_id"].ToString())
+            .ToDictionary(g => g.Key, g => g.Count());
         void Keep(string table, Func<JsonNode, bool> keep)
         {
             var a = tables[table].AsArray();
@@ -51,11 +59,29 @@ public sealed partial class PgStore
             Keep(table, x => ids.Contains(x["search_id"]?.ToString() ?? ""));
         var runs = Keys("ld_results", "run_id");
         Keep("ld_runs", x => runs.Contains(x["run_id"].ToString()));
+        foreach (var run in tables["ld_runs"].AsArray())
+            if (
+                tables["ld_results"]
+                    .AsArray()
+                    .Count(x => x["run_id"].ToString() == run["run_id"].ToString())
+                < runSizes[run["run_id"].ToString()]
+            )
+            {
+                run["input"] = "[Query omitted for partial private transfer]";
+                run["snapshot"] = "{}";
+            }
         var scopes = Keys("ld_members", "scope_id");
         // 只保留選取關聯；被省略的父範圍不製造不存在的參照。
         Keep("ld_scopes", x => scopes.Contains(x["scope_id"].ToString()));
         foreach (var x in tables["ld_scopes"].AsArray())
         {
+            if (
+                tables["ld_members"]
+                    .AsArray()
+                    .Count(m => m["scope_id"].ToString() == x["scope_id"].ToString())
+                < scopeSizes[x["scope_id"].ToString()]
+            )
+                x["description"] = "Partial selected projection; original filter omitted.";
             if (x["parent_id"] != null && !scopes.Contains(x["parent_id"].ToString()))
                 x["parent_id"] = null;
             if (x["run_id"] != null && !runs.Contains(x["run_id"].ToString()))
@@ -118,6 +144,53 @@ public sealed partial class PgStore
                 || !records.ContainsKey(article.SearchId)
             )
                 throw new IOException("Conversion input identity differs from canonical record.");
+            var detailText = conversion["details"].ToString();
+            ValidateUniqueJson(System.Text.Encoding.UTF8.GetBytes(detailText));
+            var details = JsonNode.Parse(detailText).AsObject();
+            if (details.Count > 0)
+            {
+                if (
+                    details.Any(x =>
+                        x.Key
+                            is not (
+                                "warnings"
+                                or "kind"
+                                or "nodes"
+                                or "images"
+                                or "renderer"
+                                or "inputHash"
+                                or "blockedRequests"
+                                or "fontHash"
+                                or "hash"
+                                or "stage"
+                                or "converter"
+                            )
+                    )
+                )
+                    throw new IOException("Unknown prepared conversion field.");
+                var expectedInput =
+                    conversion["input_hash"]?.ToString()
+                    ?? Artifacts.Hash(
+                        System.Text.Encoding.UTF8.GetBytes(conversion["input_metadata"].ToString())
+                    );
+                if (
+                    details["inputHash"]?.ToString() != expectedInput
+                    || details["kind"]?.ToString()
+                        is not ("Formatted Reading Copy" or "Abstract Only")
+                    || (
+                        conversion["mode"].ToString() == "abstract"
+                        && details["kind"].ToString() != "Abstract Only"
+                    )
+                    || !Guid.TryParseExact(details["stage"]?.ToString(), "N", out _)
+                    || !System.Text.RegularExpressions.Regex.IsMatch(
+                        details["hash"]?.ToString() ?? "",
+                        "^[a-f0-9]{64}$"
+                    )
+                )
+                    throw new IOException(
+                        "Prepared conversion identity, kind, hash or stage is invalid."
+                    );
+            }
             var hash = conversion["input_hash"]?.ToString();
             if (
                 conversion["mode"].ToString() == "original"
@@ -148,6 +221,8 @@ public sealed partial class PgStore
                     "Derived provenance graph differs from its completed conversion."
                 );
             var info = JsonNode.Parse(derived["provenance"].ToString());
+            if (!JsonNode.DeepEquals(info, JsonNode.Parse(c["details"].ToString())))
+                throw new IOException("Derived and conversion provenance disagree.");
             var inputHash =
                 c["input_hash"]?.ToString()
                 ?? Artifacts.Hash(
@@ -172,6 +247,28 @@ public sealed partial class PgStore
                     )
             )
                 throw new IOException("Review current revision has no retained event.");
+            var current = tables["ld_review_events"]
+                .AsArray()
+                .Single(x =>
+                    x["search_id"].ToString() == review["search_id"].ToString()
+                    && x["project_id"].ToString() == review["project_id"].ToString()
+                    && x["revision"].ToString() == review["revision"].ToString()
+                );
+            var eventData = System.Text.Json.JsonSerializer.Deserialize<ReviewInput>(
+                current["data"].ToString()
+            );
+            if (
+                eventData.State != review["state"].ToString()
+                || eventData.Tags != review["tags"].ToString()
+                || eventData.Note != review["note"].ToString()
+                || eventData.Reason != review["reason"].ToString()
+                || !JsonNode.DeepEquals(
+                    JsonNode.Parse(eventData.Evidence),
+                    JsonNode.Parse(review["evidence"].ToString())
+                )
+                || current["actor"].ToString() != review["actor"].ToString()
+            )
+                throw new IOException("Current review differs from its immutable event.");
             var evidence = JsonNode.Parse(review["evidence"].ToString());
             var hash = evidence?["hash"]?.ToString();
             if (

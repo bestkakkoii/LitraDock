@@ -796,6 +796,15 @@ public sealed partial class PgStore
                     throw new IOException(
                         "Prepared conversion is missing its retained output bytes."
                     );
+                var declared = manifest.Files.First(x =>
+                    x.Hash == hash && (x.Path == "objects/" + hash + ".pdf" || x.Path == staged)
+                );
+                await PdfInspection.Inspect(
+                    ReadEntry(entries[declared.Path], NcbiTransport.MaximumBytes),
+                    new Article { SearchId = conversion["search_id"].ToString() },
+                    false,
+                    details["kind"].ToString()
+                );
             }
             foreach (var row in tables["ld_manual_inputs"].AsArray())
             {
