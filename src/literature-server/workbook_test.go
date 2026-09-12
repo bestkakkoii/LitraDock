@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -32,6 +33,31 @@ func workbookFixture(t *testing.T) []map[string]any {
 		r["metadata"] = string(raw)
 	}
 	return v.Rows
+}
+
+func TestWorkbookConcurrentBound(t *testing.T) {
+	// Synthetic near-limit text, two concurrent exports matching the handler slot cap.
+	rows := make([]map[string]any, 1000)
+	for i := range rows {
+		article := map[string]any{"SearchId": fmt.Sprintf("%025d", i), "Title": strings.Repeat("x", 3000), "Authors": "SYNTHETIC α 中文", "Pmid": "00001"}
+		b, _ := json.Marshal(article)
+		rows[i] = map[string]any{"metadata": string(b), "reason": "SYNTHETIC workload, no source data"}
+	}
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Go(func() {
+			if b, e := encodeWorkbook(context.Background(), rows, "RUN-SYNTHETIC-LOAD", ""); e != nil || len(b) == 0 {
+				t.Errorf("concurrent bounded workbook: %v", e)
+			}
+		})
+	}
+	wg.Wait()
+	for i := range rows {
+		rows[i]["reason"] = strings.Repeat("y", 2000)
+	}
+	if b, e := encodeWorkbook(context.Background(), rows, "RUN-SYNTHETIC-EXCESS", ""); e == nil || len(b) != 0 {
+		t.Fatal("text byte limit accepted a partial workbook")
+	}
 }
 func TestWorkbookFidelityAndBounds(t *testing.T) {
 	rows := workbookFixture(t)

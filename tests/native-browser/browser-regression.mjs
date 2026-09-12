@@ -268,9 +268,12 @@ try {
     await until(async()=>await choose.locator('option').count()===3,'second library not refreshed');
     const other=(await choose.locator('option').evaluateAll(xs=>xs.map(x=>x.value))).find(x=>x&&x!==libraryId);
     await choose.selectOption(other);assert.equal(await boxes.count(),0);assert(await page.getByRole('button',{name:'Create batch (0/10)',exact:true}).isDisabled());
-    const csrf=(await (await page.request.get(target+'/api/session')).json()).csrf;
-    const denied=await page.request.post(`${target}/api/libraries/${other}/exports`,{headers:{'X-CSRF':csrf,Origin:target},data:{format:'xlsx',batchID:capturedBatchId}});
-    assert.equal(denied.status(),409);assert(!denied.headers()['content-disposition']);
+    const denied=await page.evaluate(async ({other,batch})=>{
+      const session=await fetch('/api/session');if(session.status!==200)throw Error('session precondition');const {csrf}=await session.json();if(typeof csrf!=='string'||!csrf)throw Error('CSRF precondition');
+      const response=await fetch(`/api/libraries/${other}/exports`,{method:'POST',headers:{'X-CSRF':csrf,'Content-Type':'application/json'},body:JSON.stringify({format:'xlsx',batchID:batch})});
+      return {status:response.status,attachment:response.headers.get('Content-Disposition'),body:await response.text()};
+    },{other,batch:capturedBatchId});
+    assert.equal(denied.status,409,JSON.stringify(denied));assert(!denied.attachment);
     await choose.selectOption(libraryId);
     await page.getByLabel('Saved searches',{exact:true}).selectOption(capturedRunId);
     await page.getByLabel('Saved batches',{exact:true}).selectOption(capturedBatchId);
