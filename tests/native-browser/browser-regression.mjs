@@ -59,11 +59,15 @@ let capturedBatchId = "";
 let libraryId = '', searchPosts = 0, batchPosts = 0;
 page.on('request', r => { if(r.method()==='POST' && r.url().endsWith('/search')) searchPosts++; if(r.method()==='POST' && r.url().endsWith('/batches')) batchPosts++; });
 const until = async (predicate, reason) => { const end=Date.now()+20000; while(Date.now()<end){if(await predicate())return;await new Promise(r=>setTimeout(r,150));}throw Error(reason); };
+let lastLoginCompleted = 0;
 const login = async (credentials = account) => {
+  // Production intentionally holds the single login gate for one second after completion.
+  await new Promise(r => setTimeout(r, Math.max(0, 1100 - (Date.now() - lastLoginCompleted))));
   await page.getByLabel("Login", { exact: true }).fill(credentials.login);
   await page.getByLabel("Password", { exact: true }).fill(credentials.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.getByLabel("Choose library", { exact: true }).waitFor();
+  lastLoginCompleted = Date.now();
 };
 
 try {
@@ -133,18 +137,24 @@ try {
     assert.equal(originalEntries.length, 2, "ZIP must contain exactly two permitted originals");
     assert.equal(zipManifest.items.filter((item) => item.file).length, 2, "held item must have no ZIP file");
     const held=zipManifest.items.find(item=>!item.file);assert.equal(held.pmid,'990000003');assert.match(held.reason,/clarification/);assert(held.sourceLinks.includes('https://pubmed.ncbi.nlm.nih.gov/990000003/'));
+    const zipObserved = new Set();
     for (const name of originalEntries) {
       const bytes = Buffer.from(entries[name]);
       const item = zipManifest.items.find((candidate) => candidate.file === name);
       assert(item && item.sha256 && item.bytes, `ZIP manifest must identify ${name}`);
       assert.equal(hash(bytes), item.sha256, `ZIP CRC/hash payload mismatch for ${name}`);
       assert.equal(bytes.length, item.bytes, `ZIP byte count mismatch for ${name}`);
+      const expected=expectedOriginals.get(String(item.pmid));assert(expected,'ZIP identity must match independent receipt');
+      assert(!zipObserved.has(String(item.pmid)),'ZIP identities must be distinct');zipObserved.add(String(item.pmid));
+      assert.equal(hash(bytes),expected.sha256);assert.equal(bytes.length,expected.bytes);
     }
+    assert.deepEqual([...zipObserved].sort(),[...expectedOriginals.keys()].sort());
     assert.equal(Buffer.compare(Buffer.from(entries["records.csv"]), csvBytes), 0, "ZIP records.csv must equal CSV export bytes");
   });
   await check("original-rights-and-fidelity", async () => {
     const saves = page.getByRole("button", { name: "Save XML", exact: true });
     assert.equal(await saves.count(), 2, "exactly two permitted originals must have Save XML actions");
+    const observed = new Set();
     for (const save of await saves.all()) {
       const download = page.waitForEvent("download");
       await save.click();
@@ -153,9 +163,11 @@ try {
       const pmid = bytes.toString("utf8").match(/pub-id-type="pmid">([^<]+)<\/article-id>/)?.[1];
       const expected = expectedOriginals.get(pmid);
       assert(expected, `original PMID ${pmid} missing from protected receipt`);
+      assert(!observed.has(pmid), 'Save controls must return distinct expected originals');observed.add(pmid);
       assert.equal(hash(bytes), expected.sha256, `original ${pmid} hash mismatch`);
       assert.equal(bytes.length, expected.bytes, `original ${pmid} byte count mismatch`);
     }
+    assert.deepEqual([...observed].sort(), [...expectedOriginals.keys()].sort());
     assert(await page.getByText(/unavailable|blocked|denied/i).count() > 0, "held original reason must remain visible");
     assert(await page.getByText(/PDF.*not|publisher.*not|login.*not|not.*publisher/i).count() > 0, "unsupported publisher PDF/login disclaimer must be visible");
   });
