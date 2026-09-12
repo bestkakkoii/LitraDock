@@ -95,9 +95,20 @@ export async function researchFlow({page,context,origin,library,id,record,output
   await page.waitForFunction(()=>document.querySelector('#recoveryStatus').textContent.includes('Library restored under your account'),{},{timeout:60000});
   const restored=await page.locator('#libraries').inputValue();
   check(await page.locator('#citationSave').getAttribute('href')===null,'Library restore clears prior private prepared citation link');
+  check((await page.locator('#citationReady').textContent())==='' && (await page.locator('#citationOutput').textContent())==='' && await page.locator('#projectRecords button').count()===0,'Library switch clears prior citation readiness, private preview and collection display');
   const projected=await (await context.request.get(origin+`/api/libraries/${restored}/records/${id}/research`)).json();
   check(restored!==library && projected.reviews.length===2 && projected.derivations[0].hash===derived.hash,'Actual browser selected transfer retains opposite reviews and derived provenance under new library');
   const relocated=await context.request.get(origin+`/api/libraries/${restored}/records/${id}/derived/${derived.derivation_id}/files`);
   check(relocated.ok() && (await relocated.body()).equals(await pdf.body()),'Actual relocated derived download preserves byte identity');
+  let release;const delayed=new Promise(resolve=>release=resolve);
+  const projectUrl=origin+`/api/libraries/${restored}/projects`;
+  await page.route(projectUrl,async route=>{const response=await route.fetch();await delayed;await route.fulfill({response});});
+  const requested=page.waitForRequest(projectUrl);await page.locator('#loadProjects').click();await requested;
+  await page.locator('#libraries').selectOption(library);
+  const responded=page.waitForResponse(projectUrl);release();await responded;await page.waitForTimeout(150);
+  check(await page.locator('#projects option').count()===0,'Delayed prior-library project response cannot repopulate new library controls');
+  await page.unroute(projectUrl);
+  const catalog=page.waitForResponse(response=>response.url().includes(`/api/libraries/${restored}?`));
+  await page.locator('#libraries').selectOption(restored);await catalog;
   await page.screenshot({path:path.join(output,'browser-research-restored.png'),fullPage:true});
 }

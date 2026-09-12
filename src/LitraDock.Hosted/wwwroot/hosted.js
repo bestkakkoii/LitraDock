@@ -515,9 +515,9 @@ $("restoreBundle").onclick=safe(async()=>{
 
 $("transferHistory").onclick=safe(async()=>{$("recoveryStatus").textContent=JSON.stringify(await json("transfers"),null,2);});
 
-let projectOffset=0,researchOffset=0,researchRecord="",researchLibrary="",researchData=null,reviewRevision=0;
-async function loadProjects(){const rows=await json(base()+"projects");options("projects",rows,"project_id",x=>x.name,$("projects").value);return rows;}
-async function projectPage(){if(!$("projects").value)return;const r=await json(base()+`projects/${$("projects").value}?offset=${projectOffset}`);$("projectCounts").textContent=`Project records ${r.total}; starting ${projectOffset+1}`;$("projectPrevious").disabled=projectOffset===0;$("projectNext").disabled=projectOffset+50>=r.total;$("projectRecords").replaceChildren();for(const row of r.records){const b=document.createElement("button");b.textContent=`${row.search_id}: ${row.state} · ${JSON.parse(row.metadata).Title}`;b.onclick=safe(()=>openResearch(row.search_id));$("projectRecords").append(b);}}
+let researchEpoch=0,projectOffset=0,researchOffset=0,researchRecord="",researchLibrary="",researchData=null,reviewRevision=0;
+async function loadProjects(){const epoch=researchEpoch;const rows=await json(base()+"projects");if(epoch!==researchEpoch)return [];options("projects",rows,"project_id",x=>x.name,$("projects").value);return rows;}
+async function projectPage(){const epoch=researchEpoch;if(!$("projects").value)return;const r=await json(base()+`projects/${$("projects").value}?offset=${projectOffset}`);if(epoch!==researchEpoch)return;$("projectCounts").textContent=`Project records ${r.total}; starting ${projectOffset+1}`;$("projectPrevious").disabled=projectOffset===0;$("projectNext").disabled=projectOffset+50>=r.total;$("projectRecords").replaceChildren();for(const row of r.records){const b=document.createElement("button");b.textContent=`${row.search_id}: ${row.state} · ${JSON.parse(row.metadata).Title}`;b.onclick=safe(()=>openResearch(row.search_id));$("projectRecords").append(b);}}
 $("loadProjects").onclick=safe(loadProjects);
 $("createProject").onclick=safe(async()=>{const r=await json(base()+"projects",{name:$("projectName").value});await loadProjects();$("projects").value=r.id;await projectPage();});
 $("projects").onchange=safe(async()=>{projectOffset=0;await projectPage();});
@@ -526,14 +526,14 @@ $("projectNext").onclick=safe(async()=>{projectOffset+=50;await projectPage();})
 function researchBase(){if(library!==researchLibrary)throw new Error("Library changed; reopen the research record.");return `libraries/${researchLibrary}/`;}
 function loadReviewForm(){const r=researchData?.reviews.find(x=>x.project_id===$("reviewProject").value);reviewRevision=r?.revision??0;$("reviewState").value=r?.state??"unscreened";$("reviewTags").value=r?.tags??"";$("reviewReason").value=r?.reason??"";$("reviewNote").value=r?.note??"";const e=JSON.parse(r?.evidence??"{}");$("reviewVersion").value=e.hash??"";$("reviewQuote").value=e.quote??"";$("reviewSection").value=e.section??"";$("reviewPage").value=e.page??"";$("reviewPageKind").value=e.pageKind??"source";}
 async function refreshResearch(){
-  const r=await json(researchBase()+`records/${researchRecord}/research?offset=${researchOffset}`);researchData=r;
+  const epoch=researchEpoch;const r=await json(researchBase()+`records/${researchRecord}/research?offset=${researchOffset}`);if(epoch!==researchEpoch)return;researchData=r;
   $("researchCounts").textContent=`Conversions ${r.counts.conversions}; derived files ${r.counts.derivations}; decision events ${r.counts.history}; page starts ${researchOffset+1}`;
   $("researchPrevious").disabled=researchOffset===0;$("researchNext").disabled=researchOffset+100>=Math.max(r.counts.conversions,r.counts.derivations,r.counts.history);
   $("conversionList").replaceChildren();for(const c of r.conversions){const row=document.createElement("section");const p=document.createElement("p");p.textContent=`${c.conversion_id}: ${c.state}; attempts ${c.attempts}. ${c.reason}`;row.append(p);for(const action of c.state==="completed"?[]:c.state==="running"||c.state==="queued"?["pause","cancel"]:["resume","cancel"]){const b=document.createElement("button");b.textContent=action+" conversion";b.onclick=safe(async()=>{await json(researchBase()+`conversions/${c.conversion_id}/control`,{action});await refreshResearch();});row.append(b);}$("conversionList").append(row);}
   $("derivedList").replaceChildren();for(const d of r.derivations){const b=document.createElement("button");b.textContent=`Download ${d.kind} ${d.hash.slice(0,12)}`;b.onclick=safe(()=>download(researchBase()+`records/${researchRecord}/derived/${d.derivation_id}/files`,undefined,undefined));const p=document.createElement("p");const details=JSON.parse(d.provenance);p.textContent=`Input ${details.inputHash}; ${details.renderer}; ${details.warnings?.join(" ")||"Inspect saved conversion coverage."}`;$("derivedList").append(b,p);if(!Array.from($("reviewVersion").options).some(x=>x.value===d.hash))$("reviewVersion").add(new Option(`Derived: ${d.kind} ${d.hash}`,d.hash));}
   $("reviewHistory").textContent=r.history.map(x=>`${x.created_at} · ${x.actor} · revision ${x.revision}\n${x.data}`).join("\n\n");
 }
-async function openResearch(id){researchRecord=id;researchLibrary=library;researchOffset=0;const original=await json(researchBase()+`records/${id}`);$("researchTitle").textContent=original.article.title;$("researchIdentity").textContent=`${id} · DOI ${original.article.doi} · PMID ${original.article.pmid} · PMCID ${original.article.pmcid}`;const projects=await loadProjects();options("reviewProject",projects,"project_id",x=>x.name,$("projects").value);options("conversionOriginal",original.files,"hash",x=>x.kind+" "+x.hash,original.files[0]?.hash??"");options("reviewVersion",original.files,"hash",x=>"Original: "+x.hash,"");await refreshResearch();loadReviewForm();$("reviewStatus").textContent="";$("researchDialog").showModal();}
+async function openResearch(id){const epoch=researchEpoch;researchRecord=id;researchLibrary=library;researchOffset=0;const original=await json(researchBase()+`records/${id}`);if(epoch!==researchEpoch)return;$("researchTitle").textContent=original.article.title;$("researchIdentity").textContent=`${id} · DOI ${original.article.doi} · PMID ${original.article.pmid} · PMCID ${original.article.pmcid}`;const projects=await loadProjects();if(epoch!==researchEpoch)return;options("reviewProject",projects,"project_id",x=>x.name,$("projects").value);options("conversionOriginal",original.files,"hash",x=>x.kind+" "+x.hash,original.files[0]?.hash??"");options("reviewVersion",original.files,"hash",x=>"Original: "+x.hash,"");await refreshResearch();if(epoch!==researchEpoch)return;loadReviewForm();$("reviewStatus").textContent="";$("researchDialog").showModal();}
 $("researchClose").onclick=()=>$("researchDialog").close();
 $("reviewProject").onchange=loadReviewForm;
 $("saveReview").onclick=safe(async()=>{if(!$("reviewProject").value)throw new Error("Choose or create a project first.");const evidence={hash:$("reviewVersion").value,quote:$("reviewQuote").value,section:$("reviewSection").value,pageKind:$("reviewPageKind").value};if($("reviewPage").value)evidence.page=$("reviewPage").value;const r=await json(researchBase()+`projects/${$("reviewProject").value}/records/${researchRecord}`,{state:$("reviewState").value,tags:$("reviewTags").value,note:$("reviewNote").value,reason:$("reviewReason").value,evidence:JSON.stringify(evidence),revision:reviewRevision});reviewRevision=r.revision;$("reviewStatus").textContent=`Project decision saved at revision ${r.revision}; acquisition is unchanged.`;await refreshResearch();});
@@ -543,7 +543,7 @@ $("researchPrevious").onclick=safe(async()=>{researchOffset=Math.max(0,researchO
 $("researchNext").onclick=safe(async()=>{researchOffset+=100;await refreshResearch();});
 setInterval(()=>{if($("researchDialog").open)refreshResearch().catch(error=>{$("reviewStatus").textContent=error.message;});},2500);
 let citationUrl=null,citationExpiry=null,citationGeneration=0;
-function clearCitationDownload(){citationGeneration++;if(citationUrl)URL.revokeObjectURL(citationUrl);citationUrl=null;clearTimeout(citationExpiry);$("citationSave").hidden=true;$("citationSave").removeAttribute("href");}
+function clearCitationDownload(){citationGeneration++;if(citationUrl)URL.revokeObjectURL(citationUrl);citationUrl=null;clearTimeout(citationExpiry);$("citationSave").hidden=true;$("citationSave").removeAttribute("href");$("citationReady").textContent="";}
 async function prepareCitation(path,request,name){
   clearCitationDownload();const generation=citationGeneration,ownerLibrary=library,ownerScope=scope;
   $("citationReady").textContent="Preparing citation file…";
@@ -553,10 +553,14 @@ async function prepareCitation(path,request,name){
   $("citationReady").textContent=`File ready for ${ownerScope}. Use Save; the private link expires in two minutes.`;
   citationExpiry=setTimeout(()=>{clearCitationDownload();$("citationReady").textContent="Prepared citation expired; prepare it again when needed.";},120000);
 }
-$("libraries").addEventListener("change",clearCitationDownload);
-$("newLibrary").addEventListener("click",clearCitationDownload);
-$("restoreBundle").addEventListener("click",clearCitationDownload);
-$("logout").addEventListener("click",clearCitationDownload);
+function clearResearchContext(){
+  researchEpoch++;clearCitationDownload();$("citationOutput").textContent="";$("projectRecords").replaceChildren();$("projects").replaceChildren();$("projectCounts").textContent="Load projects for this library.";
+  $("researchDialog").close();researchRecord="";researchLibrary="";researchData=null;researchOffset=0;projectOffset=0;
+}
+$("libraries").addEventListener("change",clearResearchContext);
+$("newLibrary").addEventListener("click",clearResearchContext);
+$("restoreBundle").addEventListener("click",clearResearchContext);
+$("logout").addEventListener("click",clearResearchContext);
 async function citationAction(format){if(!scope)throw new Error("Choose a saved result scope.");const request={style:$("citationStyle").value,format,selectedOnly:$("citationSelected").checked};if(format==="preview"){const r=await json(base()+`scopes/${scope}/citations`,request);$("citationOutput").textContent=`${r.processor} · ${r.style} · ${r.styleHash}\n${r.citation}\n\n${r.bibliography.join("\n\n")}\n\n${r.items.map(x=>`${x.id}: ${x.custom.missingMetadata.join(" ")}`).join("\n")}`;}else await prepareCitation(base()+`scopes/${scope}/citations`,request,{ris:"references.ris",bibtex:"references.bib","csl-json":"references.csl.json",text:"bibliography.txt"}[format]);}
 for(const [id,format] of [["citationPreview","preview"],["citationRis","ris"],["citationBib","bibtex"],["citationJson","csl-json"],["citationText","text"]])$(id).onclick=safe(()=>citationAction(format));
 $("scopedBundle").onclick=safe(async()=>{if(!scope)throw new Error("Choose a saved scope.");await download(base()+`scopes/${scope}/bundle`,{selectedOnly:$("bundleSelected").checked},"selected-library.zip");});
