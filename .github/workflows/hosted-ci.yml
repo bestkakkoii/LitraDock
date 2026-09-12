@@ -62,11 +62,13 @@ jobs:
           node src/document-worker/node_modules/playwright/cli.js install --with-deps chromium 2>&1 | tee evidence/document-browser-install.log
           python3 -m venv .litradock/pdf-verification
           .litradock/pdf-verification/bin/python -m pip install --only-binary=:all: pymupdf==1.28.2 2>&1 | tee evidence/pdf-dependencies.log
+          node tests/documents/preflight.mjs 2>&1 | tee evidence/document-preflight.log
           python3 tests/recovery/measure.py evidence/document-resources.json -- node tests/documents/verify.mjs .litradock/documents 2>&1 | tee evidence/document-tests.log
           .litradock/pdf-verification/bin/python tests/documents/pdf_checks.py .litradock/documents 2>&1 | tee evidence/pdf-inspection.log
           cp .litradock/documents/*-result.json .litradock/documents/pdf-inspection.json .litradock/documents/*-page-*.png evidence/
           cp .litradock/documents/result.json evidence/document-result.json
       - name: Actual PostgreSQL, migration, lease and HTTP isolation checks
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           dotnet run --project tests/LitraDock.HostedVerification -c Release --no-build -- --postgres .litradock/postgres 2>&1 | tee evidence/postgres.log
