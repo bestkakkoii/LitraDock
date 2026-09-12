@@ -17,3 +17,4 @@ runtime/
 server
 server.exe
 *.test
+/SOURCE-MANIFEST.json
