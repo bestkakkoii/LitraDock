@@ -289,11 +289,13 @@ try {
     await page.getByLabel("Login", { exact: true }).waitFor();
     assert.equal(await page.getByText(/Batch /).count(), 0, "private batch must clear on logout");
     await login(account);
+    await page.getByLabel('Choose library',{exact:true}).selectOption(libraryId);
     await page.getByLabel("Saved searches", { exact: true }).selectOption(capturedRunId);
     await page.getByLabel("Saved batches", { exact: true }).selectOption(capturedBatchId);
     await until(async()=>await page.getByRole('button',{name:'Save XML',exact:true}).count()===2,'relogin batch not reopened');
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.getByLabel("Choose library", { exact: true }).waitFor();
+    await page.getByLabel('Choose library',{exact:true}).selectOption(libraryId);
     await page.getByLabel("Saved searches", { exact: true }).selectOption(capturedRunId);
     await page.getByLabel("Saved batches", { exact: true }).selectOption(capturedBatchId);
     await until(async()=>await page.getByRole('button',{name:'Save XML',exact:true}).count()===2,'reload batch not reopened');
