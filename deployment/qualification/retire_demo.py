@@ -70,6 +70,14 @@ def sql(statement):
                     "-X", "-d", "postgres", "-At", "-v", "ON_ERROR_STOP=1", "-c", statement])
 
 
+def service_processes(output, uid):
+    # Numeric IDs avoid ps truncating long login names (for example literature).
+    rows = [line.split() for line in output.splitlines() if line.strip()]
+    q.require(all(len(row) == 2 and all(value.isascii() and value.isdigit() for value in row) for row in rows),
+              "Process identity output is invalid.")
+    return any(int(row[0]) == uid for row in rows)
+
+
 def retire(config, apply=False):
     q.require(os.name == "posix" and os.geteuid() == 0, "Linux administrator required.")
     config = q.protected_file(config, 0)
@@ -106,8 +114,9 @@ def retire(config, apply=False):
             return {"status": "RETIRED", "repeated": True}
         command(["systemctl", "stop", SERVICE])
         # A stopped systemd unit does not establish absence of external operator children.
-        active = command(["ps", "-eo", "user=,pid="])
-        q.require(not any(line.split()[0] == "literature" for line in active.splitlines()),
+        import pwd
+        active = command(["ps", "-eo", "uid=,pid="])
+        q.require(not service_processes(active, pwd.getpwnam("literature").pw_uid),
                   "Service-user processes remain; retirement refused.")
         inspect_storage()
         db = policy["database"]  # strictly validated ASCII identifier, never a credential

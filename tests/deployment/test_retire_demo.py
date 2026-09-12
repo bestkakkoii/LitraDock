@@ -25,6 +25,13 @@ class Registration(unittest.TestCase):
     def test_due_registration(self):
         self.assertEqual(64, len(m.validate(self.policy, self.now)))
 
+    def test_numeric_process_identity(self):
+        self.assertTrue(m.service_processes("0 1\n 997 60705\n", 997))
+        self.assertFalse(m.service_processes("0 1\n998 123\n", 997))
+        for text in ("literat+ 60705", "997", "997 60705 extra", "NaN 1"):
+            with self.subTest(text=text), self.assertRaises(m.q.Rejected):
+                m.service_processes(text, 997)
+
     def test_early_never_mutates(self):
         with self.assertRaises(m.q.Rejected):
             m.validate(self.policy, self.now-timedelta(seconds=1))
