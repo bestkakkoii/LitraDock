@@ -35,6 +35,7 @@ await promisify(execFile)("dotnet", [dll, "--create-account"], {
   windowsHide: true,
 });
 let server, browser;
+const restoreResponses=[];
 const checks = [],
   start = Date.now();
 const check = (value, name) => {
@@ -314,8 +315,7 @@ try {
   let held=false;
   for(let n=0;n<200;n++){try{await fs.stat(path.join(heldDirectory,"held"));held=true;break;}catch{}if(admission.exitCode!==null)break;await new Promise(r=>setTimeout(r,50));}
   check(held,"Separate process actually holds PostgreSQL heavy admission before restore");
-  const restoreResponses=[];
-  page.on("response",async response=>{if(response.url()===origin+"/api/restore"){const status=response.status();const body=await response.text();restoreResponses.push({status,body});await fs.writeFile(path.join(output,"restore-responses.json"),JSON.stringify(restoreResponses));}});
+  page.on("response",response=>{if(response.url()===origin+"/api/restore"){restoreResponses.push({status:response.status()});console.log("RESTORE_HTTP_STATUS",response.status());}});
   await page.locator("#restoreBundle").click();
   await page.waitForFunction(()=>document.getElementById("recoveryStatus").textContent.includes("admission retry"));
   check(true,"Browser truthfully shows bounded pre-handler admission wait without another click");
@@ -388,10 +388,11 @@ try {
       .catch(() => {});
   await fs.writeFile(
     path.join(output, "failure.json"),
-    JSON.stringify({ message: error.message, passed: checks }, null, 2),
+    JSON.stringify({ message: error.message, passed: checks, restoreResponses, recoveryPanel: pages.length ? await pages.at(-1).locator("#recoveryStatus").textContent().catch(()=>"Unavailable") : "Unavailable" }, null, 2),
   );
   throw error;
 } finally {
+  await fs.writeFile(path.join(output,"restore-responses.json"),JSON.stringify(restoreResponses));
   await browser?.close();
   await stop(server);
 }
