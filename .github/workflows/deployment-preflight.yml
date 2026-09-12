@@ -1,0 +1,80 @@
+name: Operator deployment qualification
+on:
+  push:
+    branches: [operator-preflight-002]
+    paths:
+      - deployment/qualification/**
+      - tests/deployment/**
+      - .github/workflows/deployment-preflight.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: operator-preflight-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  isolated:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18.6-bookworm@sha256:1c59e2c3c818eaa0f0628f695b36e7c9e362d6b219b36a54a32df645cbd7e1af
+        env:
+          POSTGRES_USER: fixture
+          POSTGRES_PASSWORD: synthetic-ci-only-password
+          POSTGRES_DB: litradock_ci_qualification_admin
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+      LITRADOCK_ALLOW_EPHEMERAL_TEST: 'yes'
+      QUALIFICATION_TEST_POSTGRES: Host=127.0.0.1;Port=5432;Database=litradock_ci_qualification;Username=qualification;Password=synthetic-qualification-password;SSL Mode=Disable
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.400'
+      - name: Verify the existing frozen production package without rebuilding it
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence .litradock/frozen-package
+          python3 --version > evidence/environment.txt
+          dotnet --info >> evidence/environment.txt
+          gh run download 34691326605 --repo bestkakkoii/LitraDock --name hosted-verification-34691326605 --dir .litradock/frozen-evidence
+          python3 deployment/qualification/verify_deployment.py package --manifest .litradock/frozen-evidence/demo-package-hashes.txt --manifest-sha256 6cb0ea98300fe3369482636a331acb161f897090032bd8d463a46ccc90ec7d1e --archive .litradock/frozen-evidence/demo-candidate-linux-framework-dependent.tar.gz --archive-sha256 1e385385217310681a86efe65f901b1a69cd9fb8b7a138d62ea270047da16d33 --output evidence/frozen-package.json
+          python3 -c "import tarfile; tarfile.open('.litradock/frozen-evidence/demo-candidate-linux-framework-dependent.tar.gz').extractall('.litradock/frozen-package', filter='data')"
+          python3 deployment/qualification/verify_deployment.py package --manifest .litradock/frozen-evidence/demo-package-hashes.txt --manifest-sha256 6cb0ea98300fe3369482636a331acb161f897090032bd8d463a46ccc90ec7d1e --installed .litradock/frozen-package --output evidence/frozen-installed.json
+      - name: Prepare only a disposable database using the frozen production migration command
+        env:
+          PGHOST: 127.0.0.1
+          PGUSER: fixture
+          PGDATABASE: litradock_ci_qualification_admin
+          PGPASSWORD: synthetic-ci-only-password
+        run: |
+          set -euo pipefail
+          psql -X -v ON_ERROR_STOP=1 -c "CREATE ROLE qualification LOGIN PASSWORD 'synthetic-qualification-password'"
+          psql -X -v ON_ERROR_STOP=1 -c 'CREATE DATABASE litradock_ci_qualification OWNER qualification'
+          export LITRADOCK_POSTGRES="$QUALIFICATION_TEST_POSTGRES"
+          export LITRADOCK_OBJECTS="$PWD/.litradock/qualification-objects"
+          dotnet .litradock/frozen-package/LitraDock.Hosted.dll --migrate --contentRoot "$PWD/.litradock/frozen-package" > evidence/migrate.txt
+      - name: Safe isolated archive, permission, redaction and actual PostgreSQL controls
+        run: |
+          set -euo pipefail
+          python3 tests/deployment/test_qualification.py evidence/qualification-result.json 2>&1 | tee evidence/qualification.log
+      - name: Keep only bounded qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: deployment-qualification-${{ github.run_id }}
+          path: evidence/
+          retention-days: 7
+          if-no-files-found: error
