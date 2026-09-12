@@ -11,6 +11,7 @@ export async function researchFlow({page,context,origin,library,id,record,output
     projectIds.push(await page.locator('#projects').inputValue());
   }
   await page.locator('#snapshot').click();
+  await page.waitForFunction(()=>document.querySelector('#counts').textContent.includes('Scope 120;'));
   await page.locator('#records tr').first().waitFor();
   await page.locator('#filter').fill(record.pmid);
   await page.locator('#refine').click();
@@ -64,6 +65,7 @@ export async function researchFlow({page,context,origin,library,id,record,output
   await page.locator('#loadProjects').click();
   await page.locator('#projects').selectOption(projectIds[0]);
   await page.locator('#projectRecords button').first().click();
+  await page.locator('#researchDialog').waitFor({state:'visible'});
   check((await page.locator('#reviewNote').inputValue())==='Independent 中文 note','Project collection reopens saved note after browser reload');
   await page.locator('#reviewVersion').selectOption(derived.hash);
   await page.locator('#reviewPageKind').selectOption('derived');
@@ -75,6 +77,7 @@ export async function researchFlow({page,context,origin,library,id,record,output
   await page.screenshot({path:path.join(output,'browser-research.png'),fullPage:true});
   await page.locator('#researchClose').click();
   await page.locator('#snapshot').click();
+  await page.waitForFunction(()=>document.querySelector('#counts').textContent.includes('Scope 120;'));
   await page.locator('#filter').fill(record.pmid);
   await page.locator('#refine').click();
   await page.waitForFunction(()=>document.querySelector('#counts').textContent.includes('Scope 1;'));
@@ -86,6 +89,7 @@ export async function researchFlow({page,context,origin,library,id,record,output
     check((await fs.readFile(path.join(output,filename),'utf8')).includes(id),'Browser scoped citation download preserves canonical ID: '+filename);
   }
   const waiting=page.waitForEvent('download');await page.locator('#scopedBundle').click();const download=await waiting;const bundle=path.join(output,'selected-research.zip');await download.saveAs(bundle);
+  await page.locator('#bundleFile').evaluate(x=>x.closest('details').open=true);
   await page.locator('#bundleFile').setInputFiles(bundle);await page.locator('#restoreBundle').click();
   await page.waitForFunction(()=>document.querySelector('#recoveryStatus').textContent.includes('Library restored under your account'),{},{timeout:60000});
   const restored=await page.locator('#libraries').inputValue();

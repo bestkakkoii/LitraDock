@@ -37,7 +37,7 @@ function base() {
   return "libraries/" + library + "/";
 }
 function options(id, rows, key, label, value) {
-  $(id).replaceChildren(new Option("Choose " + id, ""));
+  $(id).replaceChildren(new Option(({reviewVersion:"No exact version selected",conversionOriginal:"Choose saved original",reviewProject:"Choose project"})[id] ?? "Choose " + id, ""));
   for (const row of rows) $(id).add(new Option(label(row), row[key]));
   $(id).value = value;
 }
