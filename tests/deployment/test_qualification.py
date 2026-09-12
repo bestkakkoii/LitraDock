@@ -167,13 +167,13 @@ class QualificationTests(unittest.TestCase):
     def database_result(self):
         return {"schema": 4, "readOnly": True, "superuser": False, "databaseOwner": True,
                 "guard": False, "manual": 0, "conversions": 0, "libraries": 0, "records": 0,
-                "accounts": 0, "sessions": 0, "jobs": 0, "files": 0, "sourceRequests": 0, "foreignTables": 0, "postgres": "180006"}
+                "accounts": 0, "sessions": 0, "jobs": 0, "files": 0, "sourceRequests": 0, "relations": [["public", name, "r"] for name in sorted(q.SCHEMA_TABLES)], "postgres": "180006"}
 
     def test_qp11_database_validation_negatives(self):
         self.assertTrue(q.validate_database(self.database_result(), True)["initialEmptyChecked"])
         for key, value in [("schema", 3), ("readOnly", False), ("superuser", True),
                            ("databaseOwner", False), ("guard", True), ("manual", 1),
-                           ("conversions", 1), ("foreignTables", 1), ("postgres", "170000"),
+                           ("conversions", 1), ("relations", []), ("relations", [["public", name, "v"] for name in sorted(q.SCHEMA_TABLES)]), ("postgres", "170000"),
                            ("libraries", 1), ("accounts", 1), ("sourceRequests", 1)]:
             with self.subTest(field=key):
                 data = self.database_result()
@@ -261,6 +261,23 @@ class ActualPostgresTests(unittest.TestCase):
                 q.probe_database(values, True)
         finally:
             sql("DROP TABLE public.ld_unrelated_qualification")
+        # Actual missing table and same-name wrong relation kind, followed by restoration.
+        migration = (ROOT / "src/LitraDock.Hosted/migrations/003.sql").read_text(encoding="utf-8")
+        definition = "\n".join(line for line in migration.splitlines() if line.startswith(("CREATE TABLE ld_retry(", "CREATE INDEX ld_retry_due ")))
+        self.assertEqual(len(definition.splitlines()), 2)
+        sql("DROP TABLE public.ld_retry")
+        try:
+            with self.assertRaises(q.Rejected):
+                q.probe_database(values, True)
+            sql("CREATE VIEW public.ld_retry AS SELECT 1 AS replacement")
+            try:
+                with self.assertRaises(q.Rejected):
+                    q.probe_database(values, True)
+            finally:
+                sql("DROP VIEW public.ld_retry")
+        finally:
+            sql(definition)
+        self.assertTrue(q.probe_database(values, True)["initialEmptyChecked"])
         sql("INSERT INTO public.ld_source_usage VALUES('synthetic-control','2000-01-01',1)")
         try:
             with self.assertRaises(q.Rejected):

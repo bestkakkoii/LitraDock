@@ -48,6 +48,11 @@ if (args.FirstOrDefault() == "--inspect-pdf")
     }
     return;
 }
+if (args.Contains("--rotate-credential"))
+{
+    await OperatorCredentials.Run(args);
+    return;
+}
 var builder = WebApplication.CreateBuilder(args);
 var connection = builder.Configuration["LITRADOCK_POSTGRES"];
 var storage = builder.Configuration["LITRADOCK_OBJECTS"];

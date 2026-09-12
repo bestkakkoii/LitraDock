@@ -259,7 +259,7 @@ SELECT json_build_object(
 'jobs',(SELECT count(*) FROM public.ld_jobs),
 'files',(SELECT count(*) FROM public.ld_files),
 'sourceRequests',(SELECT coalesce(sum(requests),0) FROM public.ld_source_usage),
-'foreignTables',(SELECT count(*) FROM pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema') AND (schemaname <> 'public' OR tablename NOT IN ('ld_accounts','ld_article_files','ld_batches','ld_citations','ld_conversion_events','ld_conversions','ld_derivations','ld_events','ld_files','ld_health','ld_health_scans','ld_identifiers','ld_items','ld_jobs','ld_legacy_rows','ld_libraries','ld_manual_inputs','ld_members','ld_object_provenance','ld_projects','ld_publications','ld_records','ld_recovery_guard','ld_results','ld_retry','ld_review_events','ld_reviews','ld_runs','ld_schema','ld_scopes','ld_sessions','ld_source_budget','ld_source_usage','ld_transfer_attempts','ld_transfers'))),
+'relations',(SELECT coalesce(json_agg(json_build_array(n.nspname,c.relname,c.relkind) ORDER BY n.nspname,c.relname),'[]'::json) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp_%' AND c.relkind IN ('r','p','v','m','f')),
 'postgres',current_setting('server_version_num'));
 ROLLBACK;"""
 
@@ -269,8 +269,10 @@ def validate_database(data, initial):
             "Database schema, read-only probe or recovery guard check failed.")
     require(data.get("superuser") is False and data.get("databaseOwner") is True,
             "Dedicated database owner must have no cluster administration privileges.")
-    require(data.get("manual") == 0 and data.get("conversions") == 0 and data.get("foreignTables") == 0,
-            "Database contains unsupported demo work or unrelated tables.")
+    require(data.get("manual") == 0 and data.get("conversions") == 0,
+            "Database contains unsupported demo work.")
+    require(data.get("relations") == [["public", name, "r"] for name in sorted(SCHEMA_TABLES)],
+            "Database relation inventory differs from the reviewed schema.")
     require(str(data.get("postgres", "")).startswith("18"), "Reviewed PostgreSQL major version required.")
     if initial:
         require(all(data.get(key) == 0 for key in ("accounts", "sessions", "libraries", "records", "jobs", "files", "sourceRequests")),
