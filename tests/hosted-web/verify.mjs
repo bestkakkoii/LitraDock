@@ -35,6 +35,8 @@ await promisify(execFile)("dotnet", [dll, "--create-account"], {
   env,
   windowsHide: true,
 });
+const otherLogin=login+"-other";
+await promisify(execFile)("dotnet",[dll,"--create-account"],{cwd,env:{...env,LITRADOCK_INITIAL_LOGIN:otherLogin},windowsHide:true});
 let server, browser;
 const restoreResponses=[];
 const checks = [],
@@ -346,7 +348,7 @@ try {
   check(afterRestart.ok() && (await afterRestart.body()).equals(Buffer.from(xml)),"Actual API process restart retains relocated original bytes and user authorization");
   const csrfRejected=await context.request.post(origin+"/api/restore",{headers:{Origin:origin,"Content-Type":"application/octet-stream"},data:await fs.readFile(bundlePath)});
   check(csrfRejected.status()===403,"Actual restore upload fails without session CSRF capability");
-  await researchFlow({page,context,origin,library:restoredLibrary,id,record,output,check});
+  await researchFlow({page,context,origin,library:restoredLibrary,id,record,output,check,otherLogin,password});
   await page.screenshot({
     path: path.join(output, "browser-wide.png"),
     fullPage: true,

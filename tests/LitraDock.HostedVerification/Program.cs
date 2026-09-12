@@ -655,6 +655,10 @@ if (args.FirstOrDefault() == "--postgres")
     );
     await HostedSourceChecks.Run(store, connection, output, Check);
 }
+else if (args.FirstOrDefault() == "--research-metadata")
+{
+    await ResearchMetadataChecks.Run(output, Check);
+}
 else if (args.FirstOrDefault() == "--research")
 {
     await ResearchChecks.Run(
@@ -681,6 +685,8 @@ else if (args.FirstOrDefault() == "--sources")
 }
 else if (args.FirstOrDefault() == "--static")
 {
+    System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(typeof(PgStore).TypeHandle);
+    Check(true, "PgStore static registries initialize before any database connection");
     var hasher = new PasswordHasher<string>();
     var hash = hasher.HashPassword("user", "long synthetic password");
     Check(
@@ -1093,6 +1099,20 @@ static async Task HttpNegativeTests(
                 ("/records/" + record + "/manual-item", new { }),
                 ("/records/" + record + "/manual/ITEM-guessed/confirm", new { }),
                 ("/scopes/" + scope + "/csv", new { }),
+                ("/projects", new { name = "Unauthorized" }),
+                ("/projects/PROJECT-guessed/records/" + record, new { state = "included" }),
+                ("/records/" + record + "/conversions", new { hash, mode = "original" }),
+                ("/conversions/CONVERT-guessed/control", new { action = "resume" }),
+                (
+                    "/scopes/" + scope + "/citations",
+                    new
+                    {
+                        style = "apa",
+                        format = "preview",
+                        selectedOnly = false,
+                    }
+                ),
+                ("/scopes/" + scope + "/bundle", new { selectedOnly = false }),
             }
         )
             check(

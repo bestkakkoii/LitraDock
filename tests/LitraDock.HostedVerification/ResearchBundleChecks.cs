@@ -8,6 +8,52 @@ using Npgsql;
 
 public static class ResearchBundleChecks
 {
+    public static string Legacy(string input, string output)
+    {
+        File.Copy(input, output);
+        using var zip = ZipFile.Open(output, ZipArchiveMode.Update);
+        JsonObject Read(string path)
+        {
+            using var reader = new StreamReader(zip.GetEntry(path).Open());
+            return JsonNode.Parse(reader.ReadToEnd()).AsObject();
+        }
+        void Put(string path, byte[] bytes)
+        {
+            zip.GetEntry(path).Delete();
+            using var stream = zip.CreateEntry(path, CompressionLevel.NoCompression).Open();
+            stream.Write(bytes);
+        }
+        var tables = Read("metadata.json");
+        var manifest = Read("manifest.json");
+        foreach (
+            var table in new[]
+            {
+                "ld_projects",
+                "ld_reviews",
+                "ld_review_events",
+                "ld_conversions",
+                "ld_derivations",
+                "ld_conversion_events",
+                "ld_citations",
+            }
+        )
+        {
+            if (tables[table].AsArray().Count != 0)
+                throw new InvalidOperationException(
+                    "Legacy fixture must have no research data to omit."
+                );
+            tables.Remove(table);
+            manifest["Counts"].AsObject().Remove(table);
+        }
+        manifest["Format"] = 1;
+        manifest["Schema"] = 3;
+        var data = Encoding.UTF8.GetBytes(tables.ToJsonString());
+        manifest["MetadataHash"] = Artifacts.Hash(data);
+        Put("metadata.json", data);
+        Put("manifest.json", Encoding.UTF8.GetBytes(manifest.ToJsonString()));
+        return output;
+    }
+
     private static string Rewrite(string input, string output, string attack)
     {
         File.Copy(input, output);
@@ -63,6 +109,12 @@ public static class ResearchBundleChecks
         }
         if (attack == "review-event")
             tables["ld_reviews"][0]["note"] = "Altered current note without event";
+        if (attack == "review-gap")
+        {
+            var events = tables["ld_review_events"].AsArray();
+            var oldest = events.First(x => x["revision"].GetValue<int>() == 1);
+            events.Remove(oldest);
+        }
         if (attack == "citation-id")
         {
             var citation = tables["ld_citations"][0];
@@ -106,6 +158,7 @@ public static class ResearchBundleChecks
                 "prepared-stage",
                 "prepared-extra",
                 "review-event",
+                "review-gap",
                 "citation-id",
             }
         )

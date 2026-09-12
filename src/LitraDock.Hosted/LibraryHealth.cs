@@ -36,6 +36,31 @@ public sealed partial class PgStore
                 throw new IOException("Unsafe stored staging reference.");
             expected["staging/" + input["stage_token"] + ".part"] = (string)input["hash"];
         }
+        var conversions = await Rows(
+            db,
+            "SELECT details FROM ld_conversions WHERE library_id=@p0 AND state<>'completed' AND details<>'{}' LIMIT 10001",
+            library
+        );
+        if (conversions.Count > 10000)
+            throw new IOException("Health conversion reference limit exceeded.");
+        foreach (var conversion in conversions)
+        {
+            var details = System.Text.Json.Nodes.JsonNode.Parse((string)conversion["details"]);
+            var hash = details?["hash"]?.ToString();
+            var stage = details?["stage"]?.ToString();
+            if (hash == null)
+                continue;
+            if (!Guid.TryParseExact(stage, "N", out _))
+                throw new IOException("Unsafe prepared conversion stage reference.");
+            var published = File.Exists(
+                originals.ObjectPath(library, hash, OriginalValidation.PdfKind)
+            );
+            var staged = File.Exists(originals.RetainedStage(library, stage));
+            if (published)
+                expected["objects/" + hash.ToLowerInvariant() + ".pdf"] = hash;
+            if (staged || !published)
+                expected["staging/" + stage + ".part"] = hash;
+        }
         var root = Path.Combine(originals.Root, library.ToString("N"));
         var physical = new SortedSet<string>(expected.Keys, StringComparer.Ordinal);
         var pending = new Stack<string>();

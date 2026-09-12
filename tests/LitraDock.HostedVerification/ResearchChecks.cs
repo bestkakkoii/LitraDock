@@ -153,6 +153,46 @@ public static class ResearchChecks
                 ) == 0,
             "Post-publication interruption retains failed evidence without a derived association"
         );
+        var preparedInfo = JsonNode.Parse(
+            (string)
+                await Sql(
+                    "SELECT details FROM ld_conversions WHERE library_id=@p0 AND conversion_id=@p1",
+                    library,
+                    key
+                )
+        );
+        var preparedHash = preparedInfo["hash"].ToString();
+        var preparedPath = originals.ObjectPath(library, preparedHash);
+        async Task<bool> HasHealth(string state)
+        {
+            var result = JsonSerializer.SerializeToElement(
+                await store.InspectHealth(library, originals)
+            );
+            return result
+                .GetProperty("items")
+                .EnumerateArray()
+                .Any(x =>
+                    x.GetProperty("expectedHash").GetString() == preparedHash
+                    && x.GetProperty("state").GetString() == state
+                );
+        }
+        check(
+            await HasHealth("valid"),
+            "Prepared published-only output is a referenced valid health object"
+        );
+        var preparedBytes = File.ReadAllBytes(preparedPath);
+        File.WriteAllText(preparedPath, "Synthetic corrupted prepared output");
+        check(
+            await HasHealth("corrupt"),
+            "Corrupt prepared output remains visible without deletion"
+        );
+        File.WriteAllBytes(preparedPath, preparedBytes);
+        File.Move(preparedPath, preparedPath + ".retained");
+        check(
+            await HasHealth("missing"),
+            "Missing prepared output stays visible even before file association exists"
+        );
+        File.Move(preparedPath + ".retained", preparedPath);
         await store.ControlConversion(library, key, "retry", owner);
         var recovered = await store.ClaimConversion();
         await reading.Execute(recovered, CancellationToken.None);
@@ -277,12 +317,29 @@ public static class ResearchChecks
                     })
             );
             check(
-                text.Contains("Reviews") && text.Contains("Citations") && !text.Contains(excluded),
+                (
+                    csv
+                        ? zip.GetEntry("Reviews.csv") != null
+                            && zip.GetEntry("Citations.csv") != null
+                        : text.Contains("Reviews") && text.Contains("Citations")
+                ) && !text.Contains(excluded),
                 "Scoped report includes reviews/citations/derived details without unselected identity; CSV="
                     + csv
             );
         }
         var bundle = await store.ExportBundle(library, originals, scope, true);
+        using (var selectedZip = ZipFile.OpenRead(bundle))
+        {
+            using var reader = new StreamReader(selectedZip.GetEntry("metadata.json").Open());
+            var metadata = await reader.ReadToEndAsync();
+            check(
+                !metadata.Contains(excluded)
+                    && !metadata.Contains(
+                        records[1].GetProperty("article").GetProperty("Title").GetString()
+                    ),
+                "Selected private bundle excludes unselected metadata_saved events and source snapshots"
+            );
+        }
         var imported = await store.ImportBundle(other, bundle, originals);
         check(
             Convert.ToInt64(

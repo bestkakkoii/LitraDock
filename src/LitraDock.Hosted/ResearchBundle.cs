@@ -102,6 +102,14 @@ public sealed partial class PgStore
             var table in new[] { "ld_events", "ld_publications", "ld_manual_inputs", "ld_retry" }
         )
             Keep(table, x => jobs.Contains(x["job_id"]?.ToString() ?? ""));
+        Keep(
+            "ld_events",
+            x =>
+                x["state"].ToString() != "metadata_saved"
+                || ids.Contains(
+                    JsonNode.Parse(x["reason"].ToString())?["SearchId"]?.ToString() ?? ""
+                )
+        );
         var conversions = Keys("ld_conversions", "conversion_id");
         Keep("ld_conversion_events", x => conversions.Contains(x["conversion_id"].ToString()));
         var projects = Keys("ld_reviews", "project_id");
@@ -237,6 +245,29 @@ public sealed partial class PgStore
         }
         foreach (var review in tables["ld_reviews"].AsArray())
         {
+            var events = tables["ld_review_events"]
+                .AsArray()
+                .Where(x =>
+                    x["search_id"].ToString() == review["search_id"].ToString()
+                    && x["project_id"].ToString() == review["project_id"].ToString()
+                )
+                .OrderBy(x => x["revision"].GetValue<int>())
+                .ToArray();
+            if (
+                events.Length != review["revision"].GetValue<int>()
+                || events
+                    .Where(
+                        (x, i) =>
+                            x["revision"].GetValue<int>() != i + 1
+                            || System
+                                .Text.Json.JsonSerializer.Deserialize<ReviewInput>(
+                                    x["data"].ToString()
+                                )
+                                .Revision != i
+                    )
+                    .Any()
+            )
+                throw new IOException("Review event revision history is incomplete or reordered.");
             if (
                 !tables["ld_review_events"]
                     .AsArray()

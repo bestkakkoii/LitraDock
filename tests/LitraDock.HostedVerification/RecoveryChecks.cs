@@ -505,6 +505,59 @@ public static class RecoveryChecks
             check
         );
         await RecoveryScaleChecks.Run(store, owner, originals, output, check);
+        var legacy = ResearchBundleChecks.Legacy(
+            archive,
+            Path.Combine(output, "legacy-schema3.zip")
+        );
+        var legacyRestored = await store.ImportBundle(other, legacy, originals);
+        check(
+            (await store.Article(legacyRestored, id)).SearchId == id
+                && originals.Read(legacyRestored, hash).SequenceEqual(original),
+            "Format1 schema3 bundle maps to additive schema4 without losing legacy identities or original bytes"
+        );
+        var researchProject = await store.CreateProject(
+            library,
+            "Operator recovery research project"
+        );
+        await store.SaveReview(
+            library,
+            researchProject,
+            id,
+            owner,
+            new("included", "drill;中文", "Operator paired note", "Synthetic evidence", "{}", 0)
+        );
+        var conversion = await store.QueueConversion(
+            library,
+            id,
+            hash,
+            "original",
+            owner,
+            originals
+        );
+        await new ReadingWorker(store, originals).Execute(
+            await store.ClaimConversion(),
+            CancellationToken.None
+        );
+        check(
+            (string)
+                await Sql(
+                    "SELECT state FROM ld_conversions WHERE library_id=@p0 AND conversion_id=@p1",
+                    library,
+                    conversion
+                ) == "completed",
+            "Operator drill source includes actual derived PDF publication"
+        );
+        var secondVersion = (await store.Files(library, id)).First(x => (string)x["hash"] != hash);
+        var pausedConversion = await store.QueueConversion(
+            library,
+            id,
+            (string)secondVersion["hash"],
+            "original",
+            owner,
+            originals
+        );
+        await store.ControlConversion(library, pausedConversion, "pause", owner);
+        await store.CitationExport(library, scope, true, "apa", CancellationToken.None);
         var backup = Path.Combine(output, "operator-backup");
         var dumpTool = Environment.GetEnvironmentVariable("LITRADOCK_PG_DUMP") ?? "pg_dump";
         var restoreTool =
@@ -671,6 +724,13 @@ public static class RecoveryChecks
                     "ld_manual_inputs",
                     "ld_object_provenance",
                     "ld_legacy_rows",
+                    "ld_projects",
+                    "ld_reviews",
+                    "ld_review_events",
+                    "ld_conversions",
+                    "ld_derivations",
+                    "ld_conversion_events",
+                    "ld_citations",
                 }
             )
             {

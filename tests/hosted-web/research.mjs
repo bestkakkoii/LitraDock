@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-export async function researchFlow({page,context,origin,library,id,record,output,check}) {
+export async function researchFlow({page,context,origin,library,id,record,output,check,otherLogin,password}) {
   await page.locator('#researchTools').evaluate(x=>x.open=true);
   const projectIds=[];
   for(const name of ['Include collection 中文','Exclude collection']) {
@@ -47,6 +47,19 @@ export async function researchFlow({page,context,origin,library,id,record,output
   const pdf=await context.request.get(origin+`/api/libraries/${library}/records/${id}/derived/${derived.derivation_id}/files`);
   check(pdf.ok() && (await pdf.body()).subarray(0,5).toString()==='%PDF-','Authorized exact-record derived PDF download');
   await fs.writeFile(path.join(output,'browser-reading.pdf'),await pdf.body());
+  const foreign=await context.browser().newContext();
+  try {
+    const signed=await foreign.request.post(origin+'/api/login',{headers:{Origin:origin},data:{login:otherLogin,password}});
+    check(signed.ok(),'Independent browser session authenticates a different real account');
+    const token=(await signed.json()).csrf;
+    for(const route of [`records/${id}/research`,`records/${id}/derived/${derived.derivation_id}/files`,`projects/${projectIds[0]}`]) {
+      const response=await foreign.request.get(origin+`/api/libraries/${library}/`+route);
+      check(response.status()===404 && !(await response.text()).includes('Independent 中文 note'),'Foreign browser account denied existing research resource: '+route.split('/')[0]);
+    }
+    const response=await foreign.request.post(origin+`/api/libraries/${library}/records/${id}/conversions`,{headers:{Origin:origin,'X-CSRF':token},data:{mode:'abstract'}});
+    check(response.status()===404,'Foreign authenticated browser cannot mutate conversion of existing record');
+  } finally {await foreign.close();}
+
   await page.locator('#researchTools').evaluate(x=>x.open=true);
   await page.locator('#loadProjects').click();
   await page.locator('#projects').selectOption(projectIds[0]);

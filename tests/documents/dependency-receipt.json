@@ -1,0 +1,103 @@
+[
+  {
+    "name": "pymupdf",
+    "version": "1.28.2",
+    "url": "https://pypi.org/pypi/pymupdf/1.28.2/json",
+    "licenseExpression": null,
+    "license": "Dual Licensed - GNU AFFERO GPL 3.0 or Artifex Commercial License",
+    "wheels": [
+      {
+        "filename": "pymupdf-1.28.2-cp310-abi3-macosx_10_15_x86_64.whl",
+        "sha256": "5fc315b425ff1f7afdd1ea2f348205cb19b806767daae7ce4d64115799c2bae1",
+        "bytes": 24645079
+      },
+      {
+        "filename": "pymupdf-1.28.2-cp310-abi3-macosx_11_0_arm64.whl",
+        "sha256": "7113846b35dbf0a033f088e4f4fb543dabeb4b0b12c112966a1ca1ee2d5eacae",
+        "bytes": 23875605
+      },
+      {
+        "filename": "pymupdf-1.28.2-cp310-abi3-manylinux_2_28_aarch64.whl",
+        "sha256": "3050a233dde1211efe89ada74e2add6238436434159f46097a1423aad2842545",
+        "bytes": 25095554
+      },
+      {
+        "filename": "pymupdf-1.28.2-cp310-abi3-manylinux_2_28_x86_64.whl",
+        "sha256": "397d6715c1f0df7548a92d0afd8ce370fc48fa47aeefac16be2bc04a16a8227f",
+        "bytes": 25762500
+      },
+      {
+        "filename": "pymupdf-1.28.2-cp310-abi3-musllinux_1_2_x86_64.whl",
+        "sha256": "f89fb2d86d07d643a269f17a093105057e20c79c1d06c103b53600067b6d2b01",
+        "bytes": 25986309
+      },
+      {
+        "filename": "pymupdf-1.28.2-cp310-abi3-win32.whl",
+        "sha256": "530ef543a3885b3b81cb72a854e7c5a625a9233201221132bb6c31698c6a2bdb",
+        "bytes": 18525353
+      },
+      {
+        "filename": "pymupdf-1.28.2-cp310-abi3-win_amd64.whl",
+        "sha256": "ebd244918798502d7b4504c90410d1711a4d7675a32584ca30f1bab419ecbffe",
+        "bytes": 19826532
+      },
+      {
+        "filename": "pymupdf-1.28.2-cp310-abi3-win_arm64.whl",
+        "sha256": "ffe91a24edc75c80da2a4b62f50fc0f54632d34fc8fe4cbc48e5c7ff07cf8fb4",
+        "bytes": 19759252
+      },
+      {
+        "filename": "pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl",
+        "sha256": "2e1b574c0fd2cb238021033fd3c0f9c4388816638df064e4bfb56d9d81736dc8",
+        "bytes": 18399403
+      },
+      {
+        "filename": "pymupdf-1.28.2-cp314-cp314t-manylinux_2_28_x86_64.whl",
+        "sha256": "fd481ed48bef56305c41fb7e05a055c03345c899c7b101dad086258b438f8168",
+        "bytes": 25802333
+      }
+    ]
+  },
+  {
+    "name": "rispy",
+    "version": "0.10.0",
+    "url": "https://pypi.org/pypi/rispy/0.10.0/json",
+    "licenseExpression": null,
+    "license": null,
+    "wheels": [
+      {
+        "filename": "rispy-0.10.0-py3-none-any.whl",
+        "sha256": "acc8b941ab5e7b65b5365e468af2e00f0cb031a9e5c5a6b06538d856151e61be",
+        "bytes": 15260
+      }
+    ]
+  },
+  {
+    "name": "bibtexparser",
+    "version": "2.0.1",
+    "url": "https://pypi.org/pypi/bibtexparser/2.0.1/json",
+    "licenseExpression": "MIT",
+    "license": null,
+    "wheels": [
+      {
+        "filename": "bibtexparser-2.0.1-py3-none-any.whl",
+        "sha256": "aa263e252f4340c0fc50f9f7e5d63a9799b31b01a5aa460a261db3f2a01c6c38",
+        "bytes": 50013
+      }
+    ]
+  },
+  {
+    "name": "pylatexenc",
+    "version": "2.11",
+    "url": "https://pypi.org/pypi/pylatexenc/2.11/json",
+    "licenseExpression": null,
+    "license": "MIT",
+    "wheels": [
+      {
+        "filename": "pylatexenc-2.11-py2.py3-none-any.whl",
+        "sha256": "e78e7391d6c104f1ed150e21cfaa58016cdb50aa54406a2eecb793649ffdfdd0",
+        "bytes": 137533
+      }
+    ]
+  }
+]
