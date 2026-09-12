@@ -33,6 +33,7 @@ jobs:
     env:
       DOTNET_CLI_TELEMETRY_OPTOUT: '1'
       LITRADOCK_ALLOW_EPHEMERAL_TEST: 'yes'
+      QUALIFICATION_TEST_ADMIN: Host=127.0.0.1;Port=5432;Database=litradock_ci_qualification_admin;Username=fixture;Password=synthetic-ci-only-password;SSL Mode=Disable
       QUALIFICATION_TEST_POSTGRES: Host=127.0.0.1;Port=5432;Database=litradock_ci_qualification;Username=qualification;Password=synthetic-qualification-password;SSL Mode=Disable
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5

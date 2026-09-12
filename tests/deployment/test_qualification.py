@@ -241,6 +241,20 @@ class ActualPostgresTests(unittest.TestCase):
             result = subprocess.run(["psql", "-X", "-q", "-A", "-t", "--no-password", "-v", "ON_ERROR_STOP=1", "-c", command],
                                     env={**os.environ, **settings}, capture_output=True, text=True, timeout=15)
             self.assertEqual(result.returncode, 0, "Disposable database control failed.")
+        admin = os.environ.get("QUALIFICATION_TEST_ADMIN")
+        self.assertIsNotNone(admin, "Explicit disposable admin connection required for role negative control.")
+        admin_settings = q.database_settings(admin)
+        self.assertTrue(admin_settings["PGDATABASE"].startswith("litradock_ci_"))
+        def role_control(command):
+            result = subprocess.run(["psql", "-X", "-q", "--no-password", "-v", "ON_ERROR_STOP=1", "-c", command],
+                                    env={**os.environ, **admin_settings}, capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 0, "Disposable role control failed.")
+        role_control("GRANT pg_read_all_data TO qualification")
+        try:
+            with self.assertRaises(q.Rejected):
+                q.probe_database(values, True)
+        finally:
+            role_control("REVOKE pg_read_all_data FROM qualification")
         sql("CREATE TABLE public.ld_unrelated_qualification(value integer)")
         try:
             with self.assertRaises(q.Rejected):

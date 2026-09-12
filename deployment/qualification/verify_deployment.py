@@ -245,7 +245,9 @@ DB_SQL = """BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SELECT json_build_object(
 'schema',(SELECT max(version) FROM public.ld_schema),
 'readOnly',current_setting('transaction_read_only')='on',
-'superuser',(SELECT rolsuper OR rolcreatedb OR rolcreaterole FROM pg_roles WHERE rolname=current_user),
+'superuser',(SELECT rolsuper OR rolcreatedb OR rolcreaterole OR rolreplication OR rolbypassrls
+ OR EXISTS(SELECT 1 FROM pg_auth_members WHERE member=pg_roles.oid)
+ FROM pg_roles WHERE rolname=current_user),
 'databaseOwner',(SELECT pg_get_userbyid(datdba)=current_user FROM pg_database WHERE datname=current_database()),
 'guard',(SELECT bool_or(required) FROM public.ld_recovery_guard),
 'manual',(SELECT count(*) FROM public.ld_manual_inputs),
