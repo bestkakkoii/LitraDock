@@ -401,7 +401,7 @@ try {
       .catch(() => {});
   await fs.writeFile(
     path.join(output, "failure.json"),
-    JSON.stringify({ message: error.message, passed: checks, restoreResponses, recoveryPanel: pages.length ? await pages.at(-1).locator("#recoveryStatus").textContent().catch(()=>"Unavailable") : "Unavailable" }, null, 2),
+    JSON.stringify({ message: error.message, passed: checks, restoreResponses, visibleError: pages.length ? await pages.at(-1).locator("#error").textContent().catch(()=>"Unavailable") : "Unavailable", recoveryPanel: pages.length ? await pages.at(-1).locator("#recoveryStatus").textContent().catch(()=>"Unavailable") : "Unavailable" }, null, 2),
   );
   throw error;
 } finally {

@@ -542,6 +542,21 @@ $("refreshResearch").onclick=safe(refreshResearch);
 $("researchPrevious").onclick=safe(async()=>{researchOffset=Math.max(0,researchOffset-100);await refreshResearch();});
 $("researchNext").onclick=safe(async()=>{researchOffset+=100;await refreshResearch();});
 setInterval(()=>{if($("researchDialog").open)refreshResearch().catch(error=>{$("reviewStatus").textContent=error.message;});},2500);
-async function citationAction(format){if(!scope)throw new Error("Choose a saved result scope.");const request={style:$("citationStyle").value,format,selectedOnly:$("citationSelected").checked};if(format==="preview"){const r=await json(base()+`scopes/${scope}/citations`,request);$("citationOutput").textContent=`${r.processor} · ${r.style} · ${r.styleHash}\n${r.citation}\n\n${r.bibliography.join("\n\n")}\n\n${r.items.map(x=>`${x.id}: ${x.custom.missingMetadata.join(" ")}`).join("\n")}`;}else await download(base()+`scopes/${scope}/citations`,request,{ris:"references.ris",bibtex:"references.bib","csl-json":"references.csl.json",text:"bibliography.txt"}[format]);}
+let citationUrl=null,citationExpiry=null,citationGeneration=0;
+function clearCitationDownload(){citationGeneration++;if(citationUrl)URL.revokeObjectURL(citationUrl);citationUrl=null;clearTimeout(citationExpiry);$("citationSave").hidden=true;$("citationSave").removeAttribute("href");}
+async function prepareCitation(path,request,name){
+  clearCitationDownload();const generation=citationGeneration,ownerLibrary=library,ownerScope=scope;
+  $("citationReady").textContent="Preparing citation file…";
+  const response=await api(path,request);const blob=await response.blob();
+  if(generation!==citationGeneration||library!==ownerLibrary||scope!==ownerScope)throw new Error("Library or scope changed; prepare the citation file again.");
+  citationUrl=URL.createObjectURL(blob);const link=$("citationSave");link.href=citationUrl;link.download=name;link.textContent="Save "+name;link.hidden=false;
+  $("citationReady").textContent=`File ready for ${ownerScope}. Use Save; the private link expires in two minutes.`;
+  citationExpiry=setTimeout(()=>{clearCitationDownload();$("citationReady").textContent="Prepared citation expired; prepare it again when needed.";},120000);
+}
+$("libraries").addEventListener("change",clearCitationDownload);
+$("newLibrary").addEventListener("click",clearCitationDownload);
+$("restoreBundle").addEventListener("click",clearCitationDownload);
+$("logout").addEventListener("click",clearCitationDownload);
+async function citationAction(format){if(!scope)throw new Error("Choose a saved result scope.");const request={style:$("citationStyle").value,format,selectedOnly:$("citationSelected").checked};if(format==="preview"){const r=await json(base()+`scopes/${scope}/citations`,request);$("citationOutput").textContent=`${r.processor} · ${r.style} · ${r.styleHash}\n${r.citation}\n\n${r.bibliography.join("\n\n")}\n\n${r.items.map(x=>`${x.id}: ${x.custom.missingMetadata.join(" ")}`).join("\n")}`;}else await prepareCitation(base()+`scopes/${scope}/citations`,request,{ris:"references.ris",bibtex:"references.bib","csl-json":"references.csl.json",text:"bibliography.txt"}[format]);}
 for(const [id,format] of [["citationPreview","preview"],["citationRis","ris"],["citationBib","bibtex"],["citationJson","csl-json"],["citationText","text"]])$(id).onclick=safe(()=>citationAction(format));
 $("scopedBundle").onclick=safe(async()=>{if(!scope)throw new Error("Choose a saved scope.");await download(base()+`scopes/${scope}/bundle`,{selectedOnly:$("bundleSelected").checked},"selected-library.zip");});

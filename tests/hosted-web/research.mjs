@@ -85,7 +85,8 @@ export async function researchFlow({page,context,origin,library,id,record,output
   await page.waitForFunction(()=>document.querySelector('#citationOutput').textContent.includes('citeproc-js/2.4.63'));
   check((await page.locator('#citationOutput').textContent()).includes(record.title),'Actual CSL preview contains current filtered record');
   for(const [button,filename] of [['citationRis','browser.ris'],['citationBib','browser.bib'],['citationJson','browser.csl.json']]) {
-    const waiting=page.waitForEvent('download');await page.locator('#'+button).click();const download=await waiting;await download.saveAs(path.join(output,filename));
+    await page.locator('#'+button).click();await page.locator('#citationSave').waitFor({state:'visible'});
+    const waiting=page.waitForEvent('download');await page.locator('#citationSave').click();const download=await waiting;await download.saveAs(path.join(output,filename));
     check((await fs.readFile(path.join(output,filename),'utf8')).includes(id),'Browser scoped citation download preserves canonical ID: '+filename);
   }
   const waiting=page.waitForEvent('download');await page.locator('#scopedBundle').click();const download=await waiting;const bundle=path.join(output,'selected-research.zip');await download.saveAs(bundle);
@@ -93,6 +94,7 @@ export async function researchFlow({page,context,origin,library,id,record,output
   await page.locator('#bundleFile').setInputFiles(bundle);await page.locator('#restoreBundle').click();
   await page.waitForFunction(()=>document.querySelector('#recoveryStatus').textContent.includes('Library restored under your account'),{},{timeout:60000});
   const restored=await page.locator('#libraries').inputValue();
+  check(await page.locator('#citationSave').getAttribute('href')===null,'Library restore clears prior private prepared citation link');
   const projected=await (await context.request.get(origin+`/api/libraries/${restored}/records/${id}/research`)).json();
   check(restored!==library && projected.reviews.length===2 && projected.derivations[0].hash===derived.hash,'Actual browser selected transfer retains opposite reviews and derived provenance under new library');
   const relocated=await context.request.get(origin+`/api/libraries/${restored}/records/${id}/derived/${derived.derivation_id}/files`);

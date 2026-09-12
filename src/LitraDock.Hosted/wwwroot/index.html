@@ -145,7 +145,8 @@
           <button id="projectPrevious">Previous project records</button><button id="projectNext">Next project records</button><span id="projectCounts"></span><div id="projectRecords"></div>
           <label>Citation style <select id="citationStyle"><option value="apa">APA author-date</option><option value="ieee">IEEE numeric</option></select></label>
           <label><input type="checkbox" id="citationSelected">Selected scope records only</label>
-          <button id="citationPreview">Preview citations</button><button id="citationRis">Download RIS</button><button id="citationBib">Download BibTeX</button><button id="citationJson">Download CSL-JSON</button><button id="citationText">Download bibliography</button>
+          <button id="citationPreview">Preview citations</button><button id="citationRis">Prepare RIS</button><button id="citationBib">Prepare BibTeX</button><button id="citationJson">Prepare CSL-JSON</button><button id="citationText">Prepare bibliography</button>
+          <p id="citationReady" aria-live="polite"></p><a id="citationSave" hidden download>Save prepared citation file</a>
           <pre id="citationOutput"></pre>
           <button id="scopedBundle">Download current scope private bundle</button><label><input id="bundleSelected" type="checkbox">Selected records only</label>
           <p>Private scope bundles contain referenced originals, reading copies and review/citation history; omitted library records are excluded. Whole-library backup remains available above.</p>
