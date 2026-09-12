@@ -300,22 +300,60 @@ public sealed partial class PgStore
                 || current["actor"].ToString() != review["actor"].ToString()
             )
                 throw new IOException("Current review differs from its immutable event.");
-            var evidence = JsonNode.Parse(review["evidence"].ToString());
-            var hash = evidence?["hash"]?.ToString();
-            if (
-                !string.IsNullOrEmpty(hash)
-                && (
-                    evidence?["pageKind"]?.ToString() == "derived"
-                        ? !tables["ld_derivations"]
-                            .AsArray()
-                            .Any(x =>
-                                x["search_id"].ToString() == review["search_id"].ToString()
-                                && x["hash"].ToString() == hash
+            foreach (var retained in events)
+            {
+                var input = System.Text.Json.JsonSerializer.Deserialize<ReviewInput>(
+                    retained["data"].ToString()
+                );
+                var evidence = JsonNode.Parse(input.Evidence)?.AsObject() ?? new JsonObject();
+                var hash = evidence["hash"]?.ToString();
+                var pageKind = evidence["pageKind"]?.ToString();
+                if (
+                    evidence.Any(x =>
+                        x.Key
+                            is not (
+                                "hash"
+                                or "quote"
+                                or "section"
+                                or "page"
+                                or "pageKind"
+                                or "runId"
                             )
-                        : !Original(review["search_id"].ToString(), hash)
+                    )
+                    || (pageKind != null && pageKind is not ("source" or "derived" or "section"))
+                    || (
+                        evidence["page"] != null
+                        && (pageKind is not ("source" or "derived") || string.IsNullOrEmpty(hash))
+                    )
                 )
-            )
-                throw new IOException("Review evidence refers to an unrelated version.");
+                    throw new IOException("Retained review has an invalid evidence locator.");
+                if (
+                    !string.IsNullOrEmpty(hash)
+                    && (
+                        pageKind == "derived"
+                            ? !tables["ld_derivations"]
+                                .AsArray()
+                                .Any(x =>
+                                    x["search_id"].ToString() == review["search_id"].ToString()
+                                    && x["hash"].ToString() == hash
+                                )
+                            : !Original(review["search_id"].ToString(), hash)
+                    )
+                )
+                    throw new IOException("Review evidence refers to an unrelated version.");
+                if (
+                    evidence["runId"] is JsonNode run
+                    && !tables["ld_results"]
+                        .AsArray()
+                        .Any(x =>
+                            x["search_id"].ToString() == review["search_id"].ToString()
+                            && x["run_id"].ToString() == run.ToString()
+                        )
+                )
+                    throw new IOException(
+                        "Retained review search evidence does not contain this record."
+                    );
+            }
         }
         foreach (var citation in tables["ld_citations"].AsArray())
             if (

@@ -249,6 +249,40 @@ public static class ResearchChecks
             ) == 3,
             "Decision edits retain original and derived page attribution in immutable events"
         );
+        async Task<bool> Edit(string note)
+        {
+            try
+            {
+                await store.SaveReview(
+                    library,
+                    a,
+                    id,
+                    owner,
+                    new("included", "race", note, "Concurrent edit", "{}", 2)
+                );
+                return true;
+            }
+            catch (ArgumentException)
+            {
+                return false;
+            }
+        }
+        var edits = await Task.WhenAll(
+            Task.Run(() => Edit("First editor")),
+            Task.Run(() => Edit("Second editor"))
+        );
+        check(
+            edits.Count(x => x) == 1
+                && Convert.ToInt32(
+                    await Sql(
+                        "SELECT revision FROM ld_reviews WHERE library_id=@p0 AND project_id=@p1 AND search_id=@p2",
+                        library,
+                        a,
+                        id
+                    )
+                ) == 3,
+            "Two concurrent review editors commit exactly one next revision without lost history"
+        );
         var cancel = await store.QueueConversion(
             library,
             excluded,
@@ -403,6 +437,7 @@ public static class ResearchChecks
             output,
             check
         );
+        await ResearchManualChecks.Run(store, library, owner, id, scope, originals, output, check);
         var health = JsonSerializer.Serialize(await store.InspectHealth(imported, originals));
         check(
             health.Contains("valid"),
@@ -415,7 +450,13 @@ public static class ResearchChecks
                 {
                     records = 120,
                     projects = 2,
-                    conversions = 2,
+                    conversions = Convert.ToInt32(
+                        await Sql(
+                            "SELECT count(*) FROM ld_conversions WHERE library_id=@p0",
+                            library
+                        )
+                    ),
+                    libraryDiskBytes = originals.Measure(library),
                     generatedPdfBytes = derivedBytes.Length,
                     bundleBytes = new FileInfo(bundle).Length,
                     processPeak = Process.GetCurrentProcess().PeakWorkingSet64,

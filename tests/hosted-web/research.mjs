@@ -12,7 +12,7 @@ export async function researchFlow({page,context,origin,library,id,record,output
   }
   await page.locator('#snapshot').click();
   await page.locator('#records tr').first().waitFor();
-  await page.locator('#filter').fill(record.title);
+  await page.locator('#filter').fill(record.pmid);
   await page.locator('#refine').click();
   await page.waitForFunction(()=>document.querySelector('#counts').textContent.includes('Scope 1;'));
   await page.locator('#records button').first().click();
@@ -75,7 +75,7 @@ export async function researchFlow({page,context,origin,library,id,record,output
   await page.screenshot({path:path.join(output,'browser-research.png'),fullPage:true});
   await page.locator('#researchClose').click();
   await page.locator('#snapshot').click();
-  await page.locator('#filter').fill(record.title);
+  await page.locator('#filter').fill(record.pmid);
   await page.locator('#refine').click();
   await page.waitForFunction(()=>document.querySelector('#counts').textContent.includes('Scope 1;'));
   await page.locator('#citationPreview').click();

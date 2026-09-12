@@ -118,6 +118,18 @@ public static class ResearchBundleChecks
             var oldest = events.First(x => x["revision"].GetValue<int>() == 1);
             events.Remove(oldest);
         }
+        if (attack is "review-history-hash" or "review-history-run")
+        {
+            var history = tables["ld_review_events"]
+                .AsArray()
+                .First(x => x["revision"].GetValue<int>() == 1);
+            var data = JsonNode.Parse(history["data"].ToString());
+            data["Evidence"] =
+                attack == "review-history-hash"
+                    ? "{\"hash\":\"" + new string('0', 64) + "\",\"pageKind\":\"source\"}"
+                    : "{\"runId\":\"RUN-unrelated\"}";
+            history["data"] = data.ToJsonString();
+        }
         if (attack == "citation-id")
         {
             var citation = tables["ld_citations"][0];
@@ -162,6 +174,8 @@ public static class ResearchBundleChecks
                 "prepared-extra",
                 "review-event",
                 "review-gap",
+                "review-history-hash",
+                "review-history-run",
                 "citation-id",
             }
         )

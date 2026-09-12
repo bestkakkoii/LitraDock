@@ -55,6 +55,9 @@ public sealed partial class PgStore
         if (offset < 0 || offset > 10000)
             throw new ArgumentException("Invalid review offset.");
         await using var db = await Data.OpenConnectionAsync();
+        await using var snapshot = await db.BeginTransactionAsync(
+            System.Data.IsolationLevel.RepeatableRead
+        );
         if (
             await Scalar(
                 db,
@@ -248,6 +251,9 @@ public sealed partial class PgStore
             throw new ArgumentException("Invalid research history offset.");
         await Article(library, search);
         await using var db = await Data.OpenConnectionAsync();
+        await using var snapshot = await db.BeginTransactionAsync(
+            System.Data.IsolationLevel.RepeatableRead
+        );
         return new
         {
             counts = new
