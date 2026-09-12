@@ -260,6 +260,22 @@ try {
     await page.getByLabel('Saved batches',{exact:true}).selectOption(capturedBatchId);
     await until(async()=>await page.getByRole('button',{name:'Save XML',exact:true}).count()===2,'saved batch reopened after schedule');
   });
+  await check('library-selection-and-export-ownership',async()=>{
+    const boxes=page.locator('input[type="checkbox"][aria-label^="Select "]');await boxes.first().check();
+    await page.getByLabel('New library name',{exact:true}).fill('SYNTHETIC second isolated library');
+    await page.getByRole('button',{name:'Create',exact:true}).click();
+    const choose=page.getByLabel('Choose library',{exact:true});
+    await until(async()=>await choose.locator('option').count()===3,'second library not refreshed');
+    const other=(await choose.locator('option').evaluateAll(xs=>xs.map(x=>x.value))).find(x=>x&&x!==libraryId);
+    await choose.selectOption(other);assert.equal(await boxes.count(),0);assert(await page.getByRole('button',{name:'Create batch (0/10)',exact:true}).isDisabled());
+    const csrf=(await (await page.request.get(target+'/api/session')).json()).csrf;
+    const denied=await page.request.post(`${target}/api/libraries/${other}/exports`,{headers:{'X-CSRF':csrf,Origin:target},data:{format:'xlsx',batchID:capturedBatchId}});
+    assert.equal(denied.status(),409);assert(!denied.headers()['content-disposition']);
+    await choose.selectOption(libraryId);
+    await page.getByLabel('Saved searches',{exact:true}).selectOption(capturedRunId);
+    await page.getByLabel('Saved batches',{exact:true}).selectOption(capturedBatchId);
+    await until(async()=>await page.getByRole('button',{name:'Save XML',exact:true}).count()===2,'original library batch reopened');
+  });
   await check("logout-relogin-and-narrow-layout", async () => {
     const prior=[searchPosts,batchPosts];
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), "wide layout must not overflow");

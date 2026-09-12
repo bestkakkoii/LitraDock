@@ -700,6 +700,7 @@ function App() {
               <label>
                 Retrieved limit
                 <select
+                  aria-label="Retrieved limit"
                   value={limit}
                   onChange={(e) => setLimit(Number(e.target.value))}
                 >
