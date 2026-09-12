@@ -273,7 +273,8 @@ async function detail(id) {
     p.textContent = `${k}: ${v}`;
     $("article").append(p);
   }
-  for (const f of r.files) {
+  const rightsHeld = demoMode && (r.article.pmid === "33782057" || r.article.pmcid === "PMC8005924");
+  for (const f of rightsHeld ? [] : r.files) {
     const b = document.createElement("button");
     b.textContent = "Save original to this device (" + f.kind + ")";
     b.dataset.fileHash=f.hash;
@@ -302,7 +303,7 @@ async function detail(id) {
   if(!demoMode)$("article").append(manualButton);
   const researchButton=document.createElement("button");researchButton.textContent="Review, notes and reading copies";researchButton.onclick=safe(async()=>{$("detail").close();await openResearch(id);});if(!demoMode)$("article").append(researchButton);
   const rights=document.createElement("p");
-  rights.textContent=demoMode&&r.files.length ? "Rights: verified CC BY 4.0 original XML. Retain attribution and source license when sharing." : "Rights: review the original source license; availability alone does not establish permission.";
+  rights.textContent=rightsHeld ? "Rights clarification required: conflicting reuse statements. Automatic acquisition and original downloads are paused; metadata, source links and stored originals are preserved." : demoMode&&r.files.length ? "Rights: verified CC BY 4.0 original XML. Retain attribution and source license when sharing." : "Rights: review the original source license; availability alone does not establish permission.";
   $("article").append(rights);
   const technical=document.createElement("details"),summary=document.createElement("summary");
   summary.textContent="Original rights, file hashes and technical provenance";technical.append(summary);
@@ -644,7 +645,7 @@ try {
   if(service.demo) {
     demoMode=true;
     $("serviceInformation").textContent = `Invited demo operated by ${service.operatorName}. Help: ${service.contact}. Retention and cleanup: ${service.retention}. Access ends ${service.expiresAt}.`;
-    $("acquisitionMeaning").textContent += ` Demo: search up to ${service.searchLimit} results and queue up to ${service.batchLimit} records. Automatic acquisition currently supports only the reviewed PMC6836491 and PMC8005924 article XML; other results retain source links and an unavailable reason.`;
+    $("acquisitionMeaning").textContent += ` Demo: search up to ${service.searchLimit} results and queue up to ${service.batchLimit} records. Automatic acquisition currently supports only reviewed PMC6836491 article XML; PMC8005924 requires rights clarification; other results retain source links and an unavailable reason.`;
     $("limit").max=service.searchLimit;$("limit").value=Math.min(Number($("limit").value),service.searchLimit);
     $("bundleFile").closest("details").hidden=true;$("researchTools").hidden=true;
     $("sourceContinuation").textContent="Unavailable items retain public source links. Upload, conversion, projects, citations and private library transfer are outside this demo.";

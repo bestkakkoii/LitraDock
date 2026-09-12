@@ -104,7 +104,7 @@ public sealed class DemoSource(ILiteratureSource source, DemoPolicy policy) : IC
 {
     public static bool Reviewed(Article article) =>
         article.Pmid == "31719837" && article.Pmcid == "PMC6836491" && article.Doi == "10.1186/s13020-019-0270-9"
-        || article.Pmid == "33782057" && article.Pmcid == "PMC8005924" && article.Doi == "10.1136/bmj.n71";
+        ;
     public string Name => source.Name;
     public Task SearchAsync(SearchSnapshot snapshot, CancellationToken token) => SearchAsync(snapshot, token, null);
     public Task SearchAsync(SearchSnapshot snapshot, CancellationToken token, Action<SearchSnapshot> checkpoint)
@@ -117,6 +117,8 @@ public sealed class DemoSource(ILiteratureSource source, DemoPolicy policy) : IC
     public async Task<SourceResponse> FetchFullTextAsync(Article article, CancellationToken token, Action<string, string> progress)
     {
         policy.RequireActive();
+        if (article.Pmid == "33782057" || article.Pmcid == "PMC8005924")
+            throw new SourceException("unavailable", "Rights clarification required: this article has conflicting reuse statements; automatic acquisition and original downloads are paused. Metadata and source links remain available.");
         if (!Reviewed(article))
             throw new SourceException("unavailable", "This demo acquires only the reviewed PMC6836491 and PMC8005924 XML articles; this result remains searchable. Open its source links to review other permitted access options.");
         var response = source is IProgressSource reported ? await reported.FetchFullTextAsync(article, token, progress) : await source.FetchFullTextAsync(article, token);
