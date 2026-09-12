@@ -1,0 +1,7 @@
+{
+  "scope": "SYNTHETIC workbook fidelity cases only; not provider records",
+  "rows": [
+    {"article":{"SearchId":"000000000000000000000001","Title":"=HYPERLINK(\"https://untrusted.invalid\",\"SYNTHETIC\")","Authors":"王小明 · α · 😀 · é\nSecond line","Year":"002026","Pmid":"0012345678901234567890","Pmcid":"PMC000001","Doi":"10.0000/a?b#c%25","Journal":"SYNTHETIC ONLY"},"state":"acquired","reason":"SYNTHETIC stored bytes","rights_uri":"https://creativecommons.org/licenses/by/4.0/","original_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source_uri":"https://pmc.ncbi.nlm.nih.gov/api/oai/v1/mh/?verb=GetRecord&identifier=oai%3Apubmedcentral.nih.gov%3A000001","repository_stamp":"2026-01-02","format":"XML","version":"repository snapshot; publication version unspecified","bytes":123},
+    {"article":{"SearchId":"SID-SYNTHETIC-B","Title":"+SUM(1,1)","Authors":"-1+2","Year":"0000","Pmid":"00002","Pmcid":"PMC000002","Doi":"10.0000/../blocked"},"state":"unavailable","reason":"@SUM(1,1) — Unknown rights; open source links.\r\nLiteral _x0041_ stays literal.","rights_uri":"javascript:alert(1)","original_hash":"","source_uri":"https://user:secret@pmc.ncbi.nlm.nih.gov/private","repository_stamp":"","format":"XML","version":"publication version unspecified","bytes":0}
+  ]
+}

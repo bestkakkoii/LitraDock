@@ -2,7 +2,7 @@ name: Native candidate
 on:
   workflow_dispatch:
   push:
-    branches: [native-demo-003, native-demo-004]
+    branches: [native-demo-003, native-demo-004, native-demo-005]
 permissions:
   contents: read
 jobs:
@@ -45,9 +45,16 @@ jobs:
         env:
           LITRADOCK_NATIVE_TEST: 'yes'
           LITRADOCK_GO_CONFIG: ${{ runner.temp }}/native-test.json
+          NATIVE_WORKBOOK_TEST_OUTPUT: ${{ runner.temp }}/native-workbook
         run: |
           go test -count=1 -v ./...
           go vet ./...
+      - name: Independent workbook reader and mutation controls
+        run: |
+          python3 -m venv "$RUNNER_TEMP/workbook-reader"
+          "$RUNNER_TEMP/workbook-reader/bin/pip" install --require-hashes -r tests/native-browser/workbook-requirements.txt
+          "$RUNNER_TEMP/workbook-reader/bin/python" tests/native-browser/verify-workbook.py "$RUNNER_TEMP/native-workbook/synthetic.xlsx" --synthetic --negative-controls
+          echo "NATIVE_WORKBOOK_PYTHON=$RUNNER_TEMP/workbook-reader/bin/python" >> "$GITHUB_ENV"
       - name: Repeated compiler outputs
         run: |
           mkdir -p "$RUNNER_TEMP/native-build"

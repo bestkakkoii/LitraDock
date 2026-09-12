@@ -127,8 +127,21 @@ describe("same-origin API client", () => {
     );
     await api.run("library/unsafe", "run?unsafe", 0);
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain(
-      "/library%2Funsafe/runs/run%3Funsafe",
+      "/library%2Funsafe/runs/run%3Funsafe?offset=0&limit=100",
     );
+  });
+  it("preserves the fourth generation argument while sending an optional run page size", async () => {
+    setSession({ csrf: "x" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response('{"records":[],"run":{"state":"complete"},"total":0}', { status: 200 })));
+    await api.run("lib", "run", 25, sessionGeneration(), 5);
+    expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain("offset=25&limit=5");
+  });
+  it("sends XLSX export format for exactly the selected run or batch", async () => {
+    setSession({ csrf: "xlsx" });
+    vi.stubGlobal("fetch", vi.fn(async () => ({ status: 200, ok: true, blob: async () => new Blob(["synthetic xlsx"]) })));
+    await api.exportXlsx("lib", { runID: "run-1" }, sessionGeneration());
+    expect(JSON.parse((fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body)).toEqual({ runID: "run-1", format: "xlsx" });
+    expect(JSON.parse((fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body).batchID).toBeUndefined();
   });
   it("discards stale generation responses", async () => {
     setSession({ csrf: "a" });

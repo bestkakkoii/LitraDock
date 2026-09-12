@@ -193,9 +193,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ query, limit }),
     }),
-  run: (library: string, run: string, offset: number, g = generation) =>
+  run: (library: string, run: string, offset: number, g = generation, limit = 100) =>
     request<RunPage>(
-      `/api/libraries/${encodeURIComponent(library)}/runs/${encodeURIComponent(run)}?offset=${encodeURIComponent(offset)}`,
+      `/api/libraries/${encodeURIComponent(library)}/runs/${encodeURIComponent(run)}?offset=${encodeURIComponent(offset)}&limit=${encodeURIComponent(limit)}`,
       {},
       g,
     ),
@@ -233,6 +233,16 @@ export const api = {
     requestBlob(
       `/api/libraries/${encodeURIComponent(library)}/exports`,
       { method: "POST", body: JSON.stringify({ ...selection, format: "csv" }) },
+      g,
+    ),
+  exportXlsx: (
+    library: string,
+    selection: { runID?: string; batchID?: string },
+    g = generation,
+  ) =>
+    requestBlob(
+      `/api/libraries/${encodeURIComponent(library)}/exports`,
+      { method: "POST", body: JSON.stringify({ ...selection, format: "xlsx" }) },
       g,
     ),
   exportBundle: (library: string, batchID: string, g = generation) =>

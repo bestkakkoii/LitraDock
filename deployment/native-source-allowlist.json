@@ -8,6 +8,7 @@
     "README.md": "README.md",
     "deployment/native-source-allowlist.json": "deployment/native-source-allowlist.json",
     "docs/adr/0012-native-batch-and-grant-policy.md": "docs/adr/0012-native-batch-and-grant-policy.md",
+    "docs/adr/0013-native-xlsx-and-saved-selection.md": "docs/adr/0013-native-xlsx-and-saved-selection.md",
     "docs/native-api-002.md": "docs/native-api-002.md",
     "scripts/create-native-source.py": "scripts/create-native-source.py",
     "scripts/package-go-runtime.py": "scripts/package-go-runtime.py",
@@ -39,7 +40,10 @@
     "src/literature-server/testdata/metadata-golden.json": "src/literature-server/testdata/metadata-golden.json",
     "src/literature-server/testdata/rights-template-001.xml": "src/literature-server/testdata/rights-template-001.xml",
     "src/literature-server/testdata/synthetic-pubmed.xml": "src/literature-server/testdata/synthetic-pubmed.xml",
+    "src/literature-server/testdata/workbook-synthetic.json": "src/literature-server/testdata/workbook-synthetic.json",
     "src/literature-server/ui.go": "src/literature-server/ui.go",
+    "src/literature-server/workbook.go": "src/literature-server/workbook.go",
+    "src/literature-server/workbook_test.go": "src/literature-server/workbook_test.go",
     "src/literature-web/FRONTEND_NOTICES.md": "src/literature-web/FRONTEND_NOTICES.md",
     "src/literature-web/README.md": "src/literature-web/README.md",
     "src/literature-web/index.html": "src/literature-web/index.html",
@@ -50,12 +54,16 @@
     "src/literature-web/src/components/ArticleCard.tsx": "src/literature-web/src/components/ArticleCard.tsx",
     "src/literature-web/src/main.tsx": "src/literature-web/src/main.tsx",
     "src/literature-web/src/pagination.ts": "src/literature-web/src/pagination.ts",
+    "src/literature-web/src/selection.test.ts": "src/literature-web/src/selection.test.ts",
+    "src/literature-web/src/selection.ts": "src/literature-web/src/selection.ts",
     "src/literature-web/src/styles.css": "src/literature-web/src/styles.css",
     "src/literature-web/tsconfig.json": "src/literature-web/tsconfig.json",
     "src/literature-web/vite.config.ts": "src/literature-web/vite.config.ts",
     "tests/native-browser/README.md": "tests/native-browser/README.md",
     "tests/native-browser/browser-regression.mjs": "tests/native-browser/browser-regression.mjs",
     "tests/native-browser/package-lock.json": "tests/native-browser/package-lock.json",
-    "tests/native-browser/package.json": "tests/native-browser/package.json"
+    "tests/native-browser/package.json": "tests/native-browser/package.json",
+    "tests/native-browser/verify-workbook.py": "tests/native-browser/verify-workbook.py",
+    "tests/native-browser/workbook-requirements.txt": "tests/native-browser/workbook-requirements.txt"
   }
 }

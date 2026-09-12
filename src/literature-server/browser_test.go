@@ -105,6 +105,9 @@ func TestBrowserServer(t *testing.T) {
 	cfg.Operator, cfg.Contact, cfg.Retention = "SYNTHETIC isolated browser qualification", "No external contact", "Disposable test data only"
 	cfg.Expires = time.Now().Add(time.Hour)
 	cfg.BlockedPMCIDs = []string{"PMC990000003"}
+	for i := 1; i <= 12; i++ {
+		cfg.BlockedPMCIDs = append(cfg.BlockedPMCIDs, fmt.Sprintf("PMC990001%03d", i))
+	}
 	originals := []map[string]any{}
 	for _, id := range []string{"990000001", "990000002"} {
 		body := strings.ReplaceAll(strings.ReplaceAll(syntheticOAI(), "990000001", id), "10.0000/synthetic", "10.0000/synthetic"+id)
@@ -125,10 +128,22 @@ func TestBrowserServer(t *testing.T) {
 				body = "SYNTHETIC provider access denied"
 			} else {
 				body = `<eSearchResult><Count>25000</Count><IdList><Id>990000001</Id><Id>990000002</Id><Id>990000003</Id></IdList><QueryTranslation>SYNTHETIC transport only</QueryTranslation></eSearchResult>`
+				for _, total := range []string{"1000", "10000", "25001"} {
+					if r.URL.Query().Get("term") == "SYNTHETIC_PAGES_"+total {
+						body = `<eSearchResult><Count>` + total + `</Count><IdList>`
+						for i := 1; i <= 12; i++ {
+							body += fmt.Sprintf("<Id>990001%03d</Id>", i)
+						}
+						body += `</IdList><QueryTranslation>SYNTHETIC pagination only</QueryTranslation></eSearchResult>`
+					}
+				}
 			}
 		case r.URL.Host == "eutils.ncbi.nlm.nih.gov" && strings.HasSuffix(r.URL.Path, "/efetch.fcgi"):
 			body = `<PubmedArticleSet>`
-			for _, id := range []string{"990000001", "990000002", "990000003"} {
+			for _, id := range strings.Split(r.URL.Query().Get("id"), ",") {
+				if !regexp.MustCompile(`^99000[01][0-9]{3}$`).MatchString(id) {
+					return nil, fmt.Errorf("unexpected synthetic metadata ID")
+				}
 				body += fmt.Sprintf(`<PubmedArticle><MedlineCitation><PMID>%s</PMID><Article><Journal><Title>SYNTHETIC Journal</Title><JournalIssue><PubDate><Year>2026</Year></PubDate></JournalIssue></Journal><ArticleTitle>SYNTHETIC ONLY α 中文 %s</ArticleTitle><Abstract><AbstractText>Isolated transport, never a live result.</AbstractText></Abstract></Article></MedlineCitation><PubmedData><ArticleIdList><ArticleId IdType="doi">10.0000/synthetic%s</ArticleId><ArticleId IdType="pmc">PMC%s</ArticleId></ArticleIdList></PubmedData></PubmedArticle>`, id, id, id, id)
 			}
 			body += `</PubmedArticleSet>`

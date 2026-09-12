@@ -14,6 +14,7 @@ import {
 } from "./api";
 import { ArticleCard, SourceLinks } from "./components/ArticleCard";
 import { canAdvanceRecords } from "./pagination";
+import { searchId, selectedSearchIds, toggleArticle } from "./selection";
 import "./styles.css";
 
 function safeRightsLink(value: unknown): string | null {
@@ -45,10 +46,11 @@ function App() {
     [query, setQuery] = useState(""),
     [snapshot, setSnapshot] = useState(""),
     [limit, setLimit] = useState(10),
+    [pageSize, setPageSize] = useState(25),
     [run, setRun] = useState<Run | null>(null),
     [pageTotal, setPageTotal] = useState(0),
     [records, setRecords] = useState<Article[]>([]),
-    [selected, setSelected] = useState<Set<number>>(new Set()),
+    [selected, setSelected] = useState<Map<string, Article>>(new Map()),
     [history, setHistory] = useState<Run[]>([]),
     [historyTotal, setHistoryTotal] = useState(0),
     [historyOffset, setHistoryOffset] = useState(0),
@@ -107,7 +109,7 @@ function App() {
       setQuery("");
       setSnapshot("");
       setRecords([]);
-      setSelected(new Set());
+      setSelected(new Map());
       setHistory([]);
       setRun(null);
       setBatch(null);
@@ -226,7 +228,7 @@ function App() {
       setSnapshot("");
       setRecords([]);
       setHistory([]);
-      setSelected(new Set());
+      setSelected(new Map());
       setRun(null);
       setBatch(null);
       setSavedBatches([]); setBatchOffset(0); setBatchTotal(0);
@@ -257,13 +259,15 @@ function App() {
       return;
     }
     const g = ++runGeneration.current;
+    batchOperation.current += 1;
+    setBatchBusy(false); setBatch(null); setRun(null);
     const expectedSession = sessionGeneration();
     const searchLibrary = library;
     setBusy(true);
     setError("");
     setRecords([]);
     setPageTotal(0);
-    setSelected(new Set());
+    setSelected(new Map());
     setRecordOffset(0);
     setSnapshot(query);
     try {
@@ -277,12 +281,7 @@ function App() {
       for (let i = 0; i < 120; i++) {
         await new Promise((r) => setTimeout(r, 500));
         if (g !== runGeneration.current) return;
-        const page = await api.run(
-          searchLibrary,
-          queued.id,
-          0,
-          expectedSession,
-        );
+        const page = await api.run(searchLibrary, queued.id, 0, expectedSession, pageSize);
         if (
           g !== runGeneration.current ||
           expectedSession !== sessionGeneration()
@@ -315,15 +314,19 @@ function App() {
         setBusy(false);
     }
   };
-  const openSaved = async (id: string, offset = 0) => {
+  const openSaved = async (id: string, offset = 0, size = pageSize) => {
     if (!id || !library) return;
     const g = ++runGeneration.current;
+    if (id !== run?.run_id) {
+      setSelected(new Map()); setRecords([]); setRun(null); setBatch(null);
+      batchOperation.current += 1; setBatchBusy(false);
+    }
     const expectedSession = sessionGeneration();
     const savedLibrary = library;
     setBusy(true);
     setError("");
     try {
-      const page = await api.run(savedLibrary, id, offset, expectedSession);
+      const page = await api.run(savedLibrary, id, offset, expectedSession, size);
       if (
         g !== runGeneration.current ||
         expectedSession !== sessionGeneration() ||
@@ -335,7 +338,6 @@ function App() {
       setRecords(page.records);
       setPageTotal(page.total);
       setRecordOffset(offset);
-      setSelected(new Set());
       setMessage(
         `${stateLabel(page.run)} · showing ${page.total ? offset + 1 : 0}–${offset + page.records.length} of ${page.total}`,
       );
@@ -351,10 +353,7 @@ function App() {
   };
   const createBatch = async () => {
     if (!library || selected.size < 1 || selected.size > 10) return;
-    const ids = records
-      .filter((_, index) => selected.has(index))
-      .map((record) => String(record.SearchId ?? ""))
-      .filter(Boolean);
+    const ids = selectedSearchIds(selected);
     if (ids.length !== selected.size) {
       setError("Selected records do not contain stable search IDs.");
       return;
@@ -489,6 +488,23 @@ function App() {
         setBatchBusy(false);
     }
   };
+  const exportXlsx = async (selection: { runID?: string; batchID?: string }) => {
+    if (!library) return;
+    const expected = sessionGeneration(), expectedLibrary = library;
+    const operation = ++batchOperation.current;
+    setBatchBusy(true);
+    try {
+      const blob = await api.exportXlsx(expectedLibrary, selection, expected);
+      if (!isCurrentBatchOperation(operation, expectedLibrary, expected)) return;
+      const url = URL.createObjectURL(blob), anchor = document.createElement("a");
+      anchor.href = url; anchor.download = selection.batchID ? `batch-${selection.batchID}.xlsx` : "literature-export.xlsx";
+      anchor.click(); URL.revokeObjectURL(url);
+    } catch (x) {
+      if (isCurrentBatchOperation(operation, expectedLibrary, expected)) setError((x as Error).message);
+    } finally {
+      if (isCurrentBatchOperation(operation, expectedLibrary, expected)) setBatchBusy(false);
+    }
+  };
   if (!signedIn)
     return (
       <main className="shell">
@@ -563,7 +579,7 @@ function App() {
                 setRecords([]);
                 setRun(null);
                 setPageTotal(0);
-                setSelected(new Set());
+                setSelected(new Map());
                 setSnapshot("");
                 setBatch(null);
                 setSavedBatches([]); setBatchOffset(0); setBatchTotal(0);
@@ -667,6 +683,21 @@ function App() {
                   placeholder="Enter a PubMed query"
                 />
               <label>
+                Page size
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    const size = Number(e.target.value);
+                    setPageSize(size);
+                    if (run) void openSaved(run.run_id, 0, size);
+                  }}
+                  disabled={busy}
+                  aria-label="Page size"
+                >
+                  {[5, 25, 50, 100].map((n) => <option key={n}>{n}</option>)}
+                </select>
+              </label>
+              <label>
                 Retrieved limit
                 <select
                   value={limit}
@@ -713,12 +744,21 @@ function App() {
               Results <span className="count">{records.length}</span>
             </h2>
             <div className="result-actions">
+              <span aria-live="polite">{selected.size} selected across saved record pages (maximum 10)</span>
+              <button className="secondary" disabled={selected.size === 0} onClick={() => setSelected(new Map())}>Clear selection</button>
               <button
                 className="secondary"
                 disabled={!run || batchBusy}
                 onClick={() => run && exportCsv({ runID: run.run_id })}
               >
                 Export CSV
+              </button>
+              <button
+                className="secondary"
+                disabled={!run || batchBusy}
+                onClick={() => run && exportXlsx({ runID: run.run_id })}
+              >
+                Export XLSX
               </button>
               <button
                 className="secondary"
@@ -742,16 +782,13 @@ function App() {
           {records.length ? (
             records.map((a, i) => (
               <ArticleCard
-                key={`${String(a.Pmid)}-${i}`}
+                key={searchId(a) || `${String(a.Pmid)}-${i}`}
                 article={a}
-                selected={selected.has(i)}
-                onSelect={() =>
-                  setSelected((s) => {
-                    const n = new Set(s);
-                    n.has(i) ? n.delete(i) : n.add(i);
-                    return n;
-                  })
-                }
+                selected={selected.has(searchId(a))}
+                onSelect={() => {
+                  if (!selected.has(searchId(a)) && selected.size >= 10) setError("Selection limit reached. Clear or deselect a record before choosing another; maximum 10 per batch.");
+                  setSelected((s) => toggleArticle(s, a));
+                }}
               />
             ))
           ) : (
@@ -771,7 +808,7 @@ function App() {
                   className="secondary"
                   disabled={recordOffset === 0 || busy}
                   onClick={() =>
-                    openSaved(run.run_id, Math.max(0, recordOffset - 100))
+                    openSaved(run.run_id, Math.max(0, recordOffset - pageSize))
                   }
                 >
                   Previous records
@@ -835,6 +872,13 @@ function App() {
                   <button
                     className="secondary"
                     disabled={batchBusy}
+                    onClick={() => exportXlsx({ batchID: batch.batch.batch_id })}
+                  >
+                    Export batch XLSX
+                  </button>
+                  <button
+                    className="secondary"
+                    disabled={batchBusy}
                     onClick={exportBundle}
                   >
                     Download original bundle
@@ -890,7 +934,7 @@ function App() {
           <section className="capability">
             <strong>Batch, download and export</strong>
             <span>
-              Search retrieves up to100 results per run; batches select up to10 records. Only repository XML with a reviewed, consistent article grant is acquired; many full-text sources remain unavailable. Selected batches acquire permitted repository XML into your server library. Save XML downloads a file to this device; CSV and ZIP preserve metadata and unresolved source links. Publisher PDF access and account-based publisher login are not provided.
+              Search retrieves up to 100 results per run; batches select up to 10 records across saved record pages. Only repository XML with a reviewed, consistent article grant is acquired; many full-text sources remain unavailable. Selected batches acquire permitted repository XML into your server library. Save XML downloads a file to this device; XLSX provides text identifiers and clickable source links, while CSV and ZIP remain available. Exports retain unavailable-item reasons. Publisher PDF access and account-based publisher login are not provided.
             </span>
           </section>
         </section>

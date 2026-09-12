@@ -20,7 +20,7 @@ func csvSafe(s string) string {
 	}
 	return s
 }
-func (s *server) exportCSV(ctx context.Context, library, run, batch string) ([]byte, error) {
+func (s *server) exportRows(ctx context.Context, library, run, batch string) ([]map[string]any, error) {
 	if (run == "") == (batch == "") {
 		return nil, errors.New("choose exactly one run or batch")
 	}
@@ -52,6 +52,16 @@ func (s *server) exportCSV(ctx context.Context, library, run, batch string) ([]b
 	}
 	if count == 0 {
 		return nil, errors.New("no saved export records")
+	}
+	if len(rows) != count {
+		return nil, errors.New("Saved records changed during export; retry without a partial export.")
+	}
+	return rows, nil
+}
+func (s *server) exportCSV(ctx context.Context, library, run, batch string) ([]byte, error) {
+	rows, e := s.exportRows(ctx, library, run, batch)
+	if e != nil {
+		return nil, e
 	}
 	var b bytes.Buffer
 	w := csv.NewWriter(&b)
@@ -143,8 +153,19 @@ func (s *server) nativeRoutes(w http.ResponseWriter, r *http.Request, ctx contex
 			}
 			return true
 		}
+		if input.Format == "xlsx" {
+			b, e := s.exportXLSX(ctx, library, input.RunID, input.BatchID)
+			if e != nil {
+				reply(w, 409, map[string]string{"error": e.Error()})
+			} else {
+				w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+				w.Header().Set("Content-Disposition", "attachment; filename=\"litradock-records.xlsx\"")
+				_, _ = w.Write(b)
+			}
+			return true
+		}
 		if input.Format != "csv" {
-			reply(w, 400, map[string]string{"error": "Choose CSV metadata or ZIP for one saved batch."})
+			reply(w, 400, map[string]string{"error": "Choose CSV or XLSX metadata, or ZIP for one saved batch."})
 			return true
 		}
 		b, e := s.exportCSV(ctx, library, input.RunID, input.BatchID)

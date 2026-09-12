@@ -307,6 +307,14 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 5 && parts[3] == "runs" && r.Method == "GET" {
+		pageLimit := 100
+		if r.URL.Query().Has("limit") {
+			pageLimit, e = strconv.Atoi(r.URL.Query().Get("limit"))
+			if e != nil || pageLimit < 1 || pageLimit > 100 {
+				reply(w, 400, map[string]string{"error": "Saved-record page limit must be 1–100."})
+				return
+			}
+		}
 		runs, e := s.rows(ctx, "SELECT run_id,input,total,fetched,state,reason FROM ld_runs WHERE library_id=$1 AND run_id=$2", library, parts[4])
 		if e != nil {
 			reply(w, 503, nil)
@@ -321,7 +329,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			reply(w, 503, nil)
 			return
 		}
-		rows, e := s.rows(ctx, "SELECT r.metadata FROM ld_records r JOIN ld_results x USING(library_id,search_id) WHERE x.library_id=$1 AND x.run_id=$2 ORDER BY x.rank LIMIT 100 OFFSET $3", library, parts[4], offset)
+		rows, e := s.rows(ctx, "SELECT r.metadata FROM ld_records r JOIN ld_results x USING(library_id,search_id) WHERE x.library_id=$1 AND x.run_id=$2 ORDER BY x.rank LIMIT $4 OFFSET $3", library, parts[4], offset, pageLimit)
 		if e != nil {
 			reply(w, 503, nil)
 			return
@@ -335,7 +343,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			articles = append(articles, a)
 		}
-		reply(w, 200, map[string]any{"records": articles, "run": runs[0], "total": total, "offset": offset, "limit": 100})
+		reply(w, 200, map[string]any{"records": articles, "run": runs[0], "total": total, "offset": offset, "limit": pageLimit})
 		return
 	}
 	reply(w, 501, map[string]string{"error": "This isolated Go migration slice supports login, libraries and search only; acquisition, original download, exports and recovery remain on the current pilot."})

@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { unzipSync } from "fflate";
 
@@ -60,6 +63,30 @@ let libraryId = '', searchPosts = 0, batchPosts = 0;
 page.on('request', r => { if(r.method()==='POST' && r.url().endsWith('/search')) searchPosts++; if(r.method()==='POST' && r.url().endsWith('/batches')) batchPosts++; });
 const until = async (predicate, reason) => { const end=Date.now()+20000; while(Date.now()<end){if(await predicate())return;await new Promise(r=>setTimeout(r,150));}throw Error(reason); };
 let lastLoginCompleted = 0;
+const verifyXlsx = async (label, selection) => {
+  const detailResponse = await page.request.get(`${target}/api/libraries/${libraryId}/batches/${selection}`, { maxRedirects: 0 });
+  assert.equal(detailResponse.status(), 200);
+  const detail = await detailResponse.json();
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: label, exact: true }).click();
+  const file = await download;
+  assert(file.suggestedFilename().endsWith('.xlsx'));
+  const cells = {}, hyperlinks = {};
+  const columns = ['SearchId','Title','Authors','Year','Pmid','Pmcid','Doi','OriginalUri','PmcUri','DoiUri'];
+  const rowKeys = ['state','reason','rights_uri','original_hash','source_uri','repository_stamp','format','version','bytes'];
+  detail.items.forEach((item, i) => {
+    const values = [...columns.map(k => String(item.article[k] ?? '')), ...rowKeys.map(k => String(item[k] ?? '')), '', selection, String(item.article.DoiLinkState ?? '')];
+    values.forEach((v, column) => { const coordinate=String.fromCharCode(65+column)+(i+2);cells[coordinate]=v;
+      if ([7,8,9,12,14].includes(column) && v) { const u=new URL(v); if(u.protocol==='https:' && ['pubmed.ncbi.nlm.nih.gov','pmc.ncbi.nlm.nih.gov','doi.org','creativecommons.org'].includes(u.hostname) && !u.username && !u.password && !u.port && !u.hash) hyperlinks[coordinate]=v; }
+    });
+  });
+  const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'native-workbook-'));
+  try {
+    const expected=path.join(temporary,'expected.json');fs.writeFileSync(expected,JSON.stringify({rows:detail.items.length+1,cells,hyperlinks}));
+    const result=execFileSync(process.env.NATIVE_WORKBOOK_PYTHON || 'python3',[fileURLToPath(new URL('./verify-workbook.py',import.meta.url)),await file.path(),'--expected',expected],{encoding:'utf8'});
+    assert.equal(JSON.parse(result).rows,detail.items.length);
+  } finally { fs.rmSync(temporary,{recursive:true,force:true}); }
+};
 const login = async (credentials = account) => {
   // Production intentionally holds the single login gate for one second after completion.
   await new Promise(r => setTimeout(r, Math.max(0, 1100 - (Date.now() - lastLoginCompleted))));
@@ -170,6 +197,68 @@ try {
     assert.deepEqual([...observed].sort(), [...expectedOriginals.keys()].sort());
     assert(await page.getByText(/unavailable|blocked|denied/i).count() > 0, "held original reason must remain visible");
     assert(await page.getByText(/PDF.*not|publisher.*not|login.*not|not.*publisher/i).count() > 0, "unsupported publisher PDF/login disclaimer must be visible");
+  });
+  await check('xlsx-independent-reader-batch-bytes-and-provenance', async()=>{ await verifyXlsx('Export batch XLSX', capturedBatchId); });
+  await check('saved-record-pages-cap-and-large-synthetic-counts', async()=>{
+    await page.getByLabel('Retrieved limit',{exact:true}).selectOption('25');
+    for(const total of [1000,10000,25001]) {
+      await page.getByLabel('Query',{exact:true}).fill('SYNTHETIC_PAGES_'+total);
+      await page.getByRole('button',{name:'Search PubMed',exact:true}).click();
+      await until(async()=>(await page.locator('body').innerText()).includes(`retrieved 12 of ${total}`),'synthetic saved/provider count distinction');
+      assert.equal(await page.locator('input[type="checkbox"][aria-label^="Select "]').count(),12);
+    }
+    const largeRun = await page.getByLabel('Saved searches',{exact:true}).inputValue();
+    for(const limit of ['0','101','bad','']) assert.equal((await page.request.get(`${target}/api/libraries/${libraryId}/runs/${largeRun}?limit=${limit}`)).status(),400);
+    const pages=[];for(const offset of [0,5,10]) { const r=await page.request.get(`${target}/api/libraries/${libraryId}/runs/${largeRun}?limit=5&offset=${offset}`);assert.equal(r.status(),200);const d=await r.json();assert.equal(d.limit,5);assert.equal(d.total,12);assert.equal(d.run.total,25001);pages.push(...d.records.map(x=>x.SearchId)); }
+    assert.equal(new Set(pages).size,12);
+    await page.getByLabel('Page size',{exact:true}).selectOption('5');
+    const boxes=page.locator('input[type="checkbox"][aria-label^="Select "]');
+    await until(async()=>await boxes.count()===5,'page-size change must reload existing run');
+    for(const box of await boxes.all()) await box.check();
+    await page.getByRole('button',{name:'Next records',exact:true}).click();
+    await until(async()=>(await page.locator('body').innerText()).includes('showing 6–10'),'second saved page');
+    for(const box of await boxes.all()) await box.check();
+    await page.getByRole('button',{name:'Next records',exact:true}).click();
+    await until(async()=>await boxes.count()===2,'third saved page');
+    await boxes.first().click();
+    assert.equal(await boxes.first().isChecked(),false);
+    assert(await page.getByRole('button',{name:'Create batch (10/10)',exact:true}).isEnabled());
+    const csrf=(await (await page.request.get(target+'/api/session')).json()).csrf;
+    assert.equal((await page.request.post(`${target}/api/libraries/${libraryId}/batches`,{headers:{'X-CSRF':csrf,'Origin':target},data:{requestID:crypto.randomUUID(),searchIDs:pages.slice(0,11)}})).status(),409);
+    await page.getByRole('button',{name:'Previous records',exact:true}).click();
+    await until(async()=>(await page.locator('body').innerText()).includes('showing 6–10'),'previous advances by selected page size');
+    assert.equal(await page.locator('input[type="checkbox"][aria-label^="Select "]:checked').count(),5);
+    await page.getByRole('button',{name:'Clear selection',exact:true}).click();
+    assert(await page.getByRole('button',{name:'Create batch (0/10)',exact:true}).isDisabled());
+    await boxes.first().check();
+    await page.getByRole('button',{name:'Previous records',exact:true}).click();
+    await until(async()=>(await page.locator('body').innerText()).includes('showing 1–5'),'first saved page');
+    await boxes.first().check();
+    const selectedIds=[pages[5],pages[0]];
+    const post=page.waitForRequest(r=>r.method()==='POST'&&r.url().endsWith('/batches'));
+    await page.getByRole('button',{name:'Create batch (2/10)',exact:true}).click();
+    assert.deepEqual((await post).postDataJSON().searchIDs,selectedIds);
+    await until(async()=>(await page.locator('.batch-panel').innerText().catch(()=>'' )).includes('2 selected records'),'cross-page admitted batch');
+    const heldId=(await page.getByRole('heading',{name:/^Batch BAT-/}).innerText()).split(/\s+/).at(-1);
+    await until(async()=>(await page.locator('.batch-panel').innerText()).includes('clarification'),'cross-page held reasons');
+    await verifyXlsx('Export batch XLSX',heldId);
+    await page.getByLabel('Saved searches',{exact:true}).selectOption(capturedRunId);
+    await until(async()=>await boxes.count()===3,'original saved run reopen');
+    assert(await page.getByRole('button',{name:'Create batch (0/10)',exact:true}).isDisabled());
+  });
+  await check('delayed-xlsx-saved-run-switch-fence',async()=>{
+    let release; const gate=new Promise(r=>release=r);let captured;const ready=new Promise(r=>captured=r);let downloads=0;
+    const observe=()=>downloads++;page.on('download',observe);
+    const handler=async route=>{if(route.request().postDataJSON()?.format!=='xlsx')return route.continue();const response=await route.fetch();assert.equal(response.status(),200);captured();await gate;await route.fulfill({response});};
+    await page.route('**/exports',handler);
+    await page.getByRole('button',{name:'Export XLSX',exact:true}).click();await ready;
+    const options=await page.getByLabel('Saved searches',{exact:true}).locator('option').evaluateAll(xs=>xs.map(x=>x.value).filter(Boolean));
+    await page.getByLabel('Saved searches',{exact:true}).selectOption(options.find(x=>x!==capturedRunId));
+    release();await page.waitForTimeout(350);assert.equal(downloads,0,'late XLSX must not save after saved-run change');
+    await page.unroute('**/exports',handler);page.off('download',observe);
+    await page.getByLabel('Saved searches',{exact:true}).selectOption(capturedRunId);
+    await page.getByLabel('Saved batches',{exact:true}).selectOption(capturedBatchId);
+    await until(async()=>await page.getByRole('button',{name:'Save XML',exact:true}).count()===2,'saved batch reopened after schedule');
   });
   await check("logout-relogin-and-narrow-layout", async () => {
     const prior=[searchPosts,batchPosts];
