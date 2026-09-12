@@ -1,6 +1,6 @@
 # Private library transfer and service recovery
 
-This preview implements schema3 recovery. Consult the exact synthetic PostgreSQL/Chromium CI results for the source revision you use. These tests do not authorize a production cutover, prove institutional access, or establish clean installation and browser/OS support.
+This preview requires schema4 and extends schema3 recovery with research decisions and separately associated reading copies. Consult the exact synthetic PostgreSQL/Chromium CI results for the source revision you use. These tests do not authorize a production cutover, prove institutional access, or establish clean installation and browser/OS support.
 
 ## Ordinary library users
 
@@ -41,6 +41,8 @@ Failed backups/restores retain an incomplete destination, guard or transfer jour
 
 ## Migration and rollback
 
-Stop old service processes and preserve a consistent schema2 database/object pair before explicit `--migrate`. Schema1→2→3 is additive; old migration files and native SQLite baseline are retained. The actual CI drill compares populated schema1 rows through migration and restores a schema3 pair in another database/directory. It does not cover every historical schema2 dataset, interrupted storage device or production topology. Old applications must not write a schema3 database. Rollback means restore the earlier matching pair into a separate target, then verify it; there is no destructive down-migration or automatic conversion of newer writes.
+Stop old service processes and preserve a consistent pre-upgrade database/object pair before explicit `--migrate`. Schema1→2→3→4 is additive; old migration files and native SQLite baseline are retained. The actual CI drill compares populated schema1 rows through migration and restores the matching schema4 pair in another database/directory. It does not cover every historical schema2 dataset, interrupted storage device or production topology. Old applications must not write a schema4 database. Rollback means restore the earlier matching pair into a separate target, then verify it; there is no destructive down-migration or automatic conversion of newer writes.
 
 The manual CI workflow runs only disposable synthetic libraries, including process interruptions, negative bundles, tenant isolation and actual container pg_dump/pg_restore. The PostgreSQL engine, browser and relevant process RSS results are distinct evidence; fixture scale is not a production capacity claim. No paper downloads or cloud deployment occur in that workflow.
+
+Schema3 operator dump pairs require their matching old service for restore into an isolated target, followed by explicit schema4 migration and verification. This does not downgrade new schema4 writes. Product format1/schema3 library bundles have an explicit additive import path; see [research workflow](RESEARCH.md).

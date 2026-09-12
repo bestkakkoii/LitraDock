@@ -77,9 +77,9 @@ public static class ResearchBundleChecks
         if (attack.StartsWith("prepared"))
         {
             var hash = conversion["output_hash"].ToString();
-            tables["ld_derivations"].AsArray().Clear();
-            var files = tables["ld_files"].AsArray();
-            files.Remove(files.Single(x => x["hash"].ToString() == hash));
+            conversion = conversion.DeepClone();
+            conversion["conversion_id"] = conversion["conversion_id"] + "-prepared";
+            tables["ld_conversions"].AsArray().Add(conversion);
             conversion["state"] = "paused";
             conversion["output_hash"] = null;
             var details = JsonNode.Parse(conversion["details"].ToString());
@@ -89,8 +89,11 @@ public static class ResearchBundleChecks
                     "Executable-looking arbitrary content is not a reading PDF."
                 );
                 var badHash = Artifacts.Hash(bytes);
-                var file = manifest["Files"].AsArray().Single(x => x["Hash"].ToString() == hash);
-                zip.GetEntry(file["Path"].ToString()).Delete();
+                var file = manifest["Files"]
+                    .AsArray()
+                    .Single(x => x["Hash"].ToString() == hash)
+                    .DeepClone();
+                manifest["Files"].AsArray().Add(file);
                 file["Path"] = "objects/" + badHash + ".pdf";
                 file["Hash"] = badHash;
                 file["Bytes"] = bytes.Length;
@@ -169,8 +172,9 @@ public static class ResearchBundleChecks
             {
                 await store.ImportBundle(owner, path, files);
             }
-            catch
+            catch (Exception error)
             {
+                Console.WriteLine("EXPECTED_BUNDLE_REJECTION " + attack + ": " + error.Message);
                 rejected = true;
             }
             check(
@@ -181,7 +185,7 @@ public static class ResearchBundleChecks
         var valid = Rewrite(bundle, Path.Combine(output, "prepared-valid.zip"), "prepared-valid");
         var library = await store.ImportBundle(owner, valid, files);
         await using var query = new NpgsqlCommand(
-            "SELECT conversion_id,details FROM ld_conversions WHERE library_id=@l",
+            "SELECT conversion_id,details FROM ld_conversions WHERE library_id=@l AND state='paused'",
             db
         );
         query.Parameters.AddWithValue("l", library);

@@ -36,6 +36,62 @@ public static class RecoveryScaleChecks
         await store.Batch(library, scope, true, Naming.DefaultTemplate);
         for (int n = 0; n < 8; n++)
             await worker.ExecuteClaim(await store.ClaimNext(), CancellationToken.None);
+        var project = await store.CreateProject(library, "Screened synthetic collection");
+        var secondProject = await store.CreateProject(library, "Independent synthetic collection");
+        var reviewed = 0;
+        for (var offset = 0; offset < 120; offset += 50)
+        {
+            var page = JsonSerializer.SerializeToElement(await store.Page(library, scope, offset));
+            foreach (
+                var row in page.GetProperty("records")
+                    .EnumerateArray()
+                    .Take(Math.Min(50, 120 - offset))
+            )
+            {
+                var id = row.GetProperty("article").GetProperty("SearchId").GetString();
+                await store.SaveReview(
+                    library,
+                    project,
+                    id,
+                    owner,
+                    new(
+                        reviewed++ % 2 == 0 ? "included" : "excluded",
+                        "screened;中文",
+                        "Synthetic note preserves Unicode β",
+                        "Protocol evidence",
+                        "{}",
+                        0
+                    )
+                );
+            }
+        }
+        foreach (var row in records)
+            await store.SaveReview(
+                library,
+                secondProject,
+                row.GetProperty("article").GetProperty("SearchId").GetString(),
+                owner,
+                new("uncertain", "independent", "Separate project note", "Review required", "{}", 0)
+            );
+        var lastPage = JsonSerializer.SerializeToElement(
+            await store.Reviews(library, project, 100)
+        );
+        check(
+            lastPage.GetProperty("total").GetInt32() == 120
+                && lastPage.GetProperty("records").GetArrayLength() == 20,
+            "Actual project pagination over120 decisions in1000-record synthetic library"
+        );
+        var citations = await store.CitationExport(
+            library,
+            scope,
+            true,
+            "ieee",
+            CancellationToken.None
+        );
+        check(
+            citations["items"].AsArray().Count == 8,
+            "Scale citation processing honors eight selected records in1000-record library"
+        );
         var preparation = timer.ElapsedMilliseconds;
         timer.Restart();
         var archive = await store.ExportBundle(library, originals);
@@ -69,6 +125,9 @@ public static class RecoveryScaleChecks
                 new
                 {
                     records = 1000,
+                    projectDecisions = 128,
+                    citationEntries = 8,
+                    projects = 2,
                     generatedOriginals = 8,
                     bodyCharactersPerOriginal = 262144,
                     liveRequests = 0,

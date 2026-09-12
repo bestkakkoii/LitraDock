@@ -89,12 +89,14 @@ jobs:
           cp .litradock/postgres/result.json evidence/postgres-result.json
           cp .litradock/postgres/source-scale.json evidence/source-scale.json
       - name: Actual research decisions, conversions and selected relocation
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           python3 tests/recovery/measure.py evidence/research-resources.json -- dotnet run --project tests/LitraDock.HostedVerification -c Release --no-build -- --research .litradock/research 2>&1 | tee evidence/research.log
           cp .litradock/research/result.json evidence/research-result.json
           cp .litradock/research/research-scale.json evidence/
       - name: Actual unattended recovery and PostgreSQL object-pair restore drill
+        if: ${{ !cancelled() }}
         env:
           LITRADOCK_PG_CONTAINER: ${{ job.services.postgres.id }}
         run: |
@@ -107,6 +109,7 @@ jobs:
           cp .litradock/recovery/recovery-scale.json evidence/recovery-scale.json
           cp .litradock/recovery/recovery-library-scale.json evidence/recovery-library-scale.json
       - name: Actual Chromium hosted workflow with test-only sources
+        if: ${{ !cancelled() }}
         env:
           LITRADOCK_PG_TEST_CONNECTION: Host=127.0.0.1;Port=5432;Database=litradock_ci_browser;Username=fixture;Password=synthetic-ci-only-password;SSL Mode=Disable
         run: |
