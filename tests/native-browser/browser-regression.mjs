@@ -187,6 +187,10 @@ try {
   });
   assert.equal(runtimeErrors.length, 0, `browser runtime errors: ${runtimeErrors.join("; ")}`);
   console.log(JSON.stringify({ pass: true, checks, source_revision: input.source_revision, original_receipts: expectedOriginals.size, chromium:browser.version(), searchPosts,batchPosts,scope:'Synthetic transport; actual native handlers/PostgreSQL/browser' }));
+} catch (error) {
+  console.error(JSON.stringify({ scope: 'Synthetic test diagnostics only', checks, runtimeErrors,
+    url: page.url(), body: (await page.locator('body').innerText().catch(() => 'unavailable')).slice(0, 12000) }));
+  throw error;
 } finally {
   await context.close();
   await browser.close();
