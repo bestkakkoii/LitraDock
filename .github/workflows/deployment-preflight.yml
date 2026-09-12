@@ -65,7 +65,9 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -c 'CREATE DATABASE litradock_ci_qualification OWNER qualification'
           export LITRADOCK_POSTGRES="$QUALIFICATION_TEST_POSTGRES"
           export LITRADOCK_OBJECTS="$PWD/.litradock/qualification-objects"
-          dotnet .litradock/frozen-package/LitraDock.Hosted.dll --migrate --contentRoot "$PWD/.litradock/frozen-package" > evidence/migrate.txt
+          qualification_root="$PWD"
+          cd .litradock/frozen-package
+          dotnet LitraDock.Hosted.dll --migrate > "$qualification_root/evidence/migrate.txt"
       - name: Safe isolated archive, permission, redaction and actual PostgreSQL controls
         run: |
           set -euo pipefail
