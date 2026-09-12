@@ -10,6 +10,27 @@ public static class RecoveryProcessChecks
         await using var store = new PgStore(
             Environment.GetEnvironmentVariable("LITRADOCK_PG_TEST_CONNECTION")
         );
+        if (mode == "--recovery-admission-hold")
+        {
+            var wait = Stopwatch.StartNew();
+            while (true)
+            {
+                try
+                {
+                    await using var gate = await ResourceAdmission.Enter(store, heavy: true);
+                    await File.WriteAllTextAsync(
+                        Path.Combine(output, "held"),
+                        "Synthetic actual PostgreSQL admission held."
+                    );
+                    await Task.Delay(3500);
+                    return;
+                }
+                catch (ResourceBusyException) when (wait.Elapsed < TimeSpan.FromSeconds(10))
+                {
+                    await Task.Delay(50);
+                }
+            }
+        }
         if (mode == "--recovery-scheduler-child")
         {
             await store.AdvanceSchedule();

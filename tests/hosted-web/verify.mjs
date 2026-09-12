@@ -309,8 +309,19 @@ try {
   await bundle.saveAs(bundlePath);
   check((await fs.stat(bundlePath)).size>0,"Actual authorized browser downloads complete private library bundle");
   await page.locator("#bundleFile").setInputFiles(bundlePath);
+  const heldDirectory=path.join(output,"admission-holder");await fs.mkdir(heldDirectory,{recursive:true});
+  const admission=spawn("dotnet",[path.join(root,"build/LitraDock.HostedVerification/Release/net10.0/LitraDock.HostedVerification.dll"),"--recovery-admission-hold",heldDirectory],{cwd,env,windowsHide:true,stdio:"ignore"});
+  let held=false;
+  for(let n=0;n<200;n++){try{await fs.stat(path.join(heldDirectory,"held"));held=true;break;}catch{}if(admission.exitCode!==null)break;await new Promise(r=>setTimeout(r,50));}
+  check(held,"Separate process actually holds PostgreSQL heavy admission before restore");
+  const restoreResponses=[];
+  page.on("response",async response=>{if(response.url()===origin+"/api/restore"){const status=response.status();const body=await response.text();restoreResponses.push({status,body});await fs.writeFile(path.join(output,"restore-responses.json"),JSON.stringify(restoreResponses));}});
   await page.locator("#restoreBundle").click();
-  await page.waitForFunction(()=>document.getElementById("recoveryStatus").textContent.includes("Library restored under your account"),{},{timeout:60000});
+  await page.waitForFunction(()=>document.getElementById("recoveryStatus").textContent.includes("admission retry"));
+  check(true,"Browser truthfully shows bounded pre-handler admission wait without another click");
+  await page.waitForFunction(()=>{const text=document.getElementById("recoveryStatus").textContent;return text.includes("Library restored under your account")||text.includes("Restore response ");},{},{timeout:60000});
+  check((await page.locator("#recoveryStatus").textContent()).includes("Library restored under your account"),"Restore response confirms new library after bounded admission wait");
+  check(restoreResponses.some(x=>x.status===429) && restoreResponses.filter(x=>x.status===200).length===1,"Actual429 admission retry creates exactly one successful restore response");
   const restoredLibrary=await page.locator("#libraries").inputValue();
   check(restoredLibrary!==library,"Browser restore creates a distinct owned library without replacing source");
   const restoredRecords=await context.request.get(origin+"/api/libraries/"+restoredLibrary+"/records/"+id);
@@ -318,6 +329,7 @@ try {
   check(restoredDetails.article.searchId===id && restoredDetails.files.length>0,"Restored browser record preserves stable canonical identity and file relations");
   const restoredOriginal=await context.request.get(origin+"/api/libraries/"+restoredLibrary+"/records/"+id+"/files/"+restoredDetails.files[0].hash);
   check(restoredOriginal.ok() && (await restoredOriginal.body()).equals(Buffer.from(xml)),"Relocated original download uses restored library association");
+  await page.screenshot({path:path.join(output,"browser-recovery.png"),fullPage:true});
   await stop(server);server=launch();await ready();await page.reload();
   await page.locator("#libraries").selectOption(restoredLibrary);
   const afterRestart=await context.request.get(origin+"/api/libraries/"+restoredLibrary+"/records/"+id+"/files/"+restoredDetails.files[0].hash);

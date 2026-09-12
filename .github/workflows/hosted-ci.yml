@@ -80,7 +80,7 @@ jobs:
           npm --version >> evidence/browser-environment.txt
           retain_browser_evidence() {
             taskExitCode=$?
-            for artifact in .litradock/hosted-browser/browser-*.png .litradock/hosted-browser/failure.json; do
+            for artifact in .litradock/hosted-browser/browser-*.png .litradock/hosted-browser/failure.json .litradock/hosted-browser/restore-responses.json; do
               if [ -f "$artifact" ]; then cp "$artifact" evidence/; fi
             done
             if [ -f .litradock/hosted-browser/result.json ]; then cp .litradock/hosted-browser/result.json evidence/browser-result.json; fi

@@ -11,7 +11,12 @@ using Npgsql;
 
 var output = Path.GetFullPath(args.ElementAtOrDefault(1) ?? ".litradock/hosted-tests");
 Directory.CreateDirectory(output);
-if (args.FirstOrDefault() is "--recovery-scheduler-child" or "--recovery-import-child")
+if (
+    args.FirstOrDefault()
+    is "--recovery-scheduler-child"
+        or "--recovery-import-child"
+        or "--recovery-admission-hold"
+)
 {
     await RecoveryProcessChecks.Child(args[0], output);
     return;

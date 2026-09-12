@@ -484,12 +484,30 @@ $("bundle").onclick=safe(async()=>{
 $("restoreBundle").onclick=safe(async()=>{
   const file=$("bundleFile").files[0];
   if(!file || file.size>256*1024*1024) throw new Error("Choose a private bundle up to 256 MiB.");
-  $("recoveryStatus").textContent="Validating and restoring into a new library; existing libraries remain unchanged.";
-  const response=await fetch("/api/restore",{method:"POST",headers:{"Content-Type":"application/octet-stream","X-CSRF":csrf},body:file});
-  if(!response.ok) {$("recoveryStatus").textContent="Restore did not complete; existing libraries remain unchanged.";throw new Error(await response.text());}
-  const result=await response.json(); library=result.id; scope="";batch="";healthOffset=0;
-  $("records").replaceChildren();$("progress").replaceChildren();$("counts").textContent="Choose a restored scope.";$("status").textContent="Restored library; unfinished work is paused.";
-  await libraries();await catalog();$("recoveryStatus").textContent=result.message;
+  const initialCsrf=csrf, initialLibrary=library;
+  $("restoreBundle").disabled=true;
+  try {
+    let response;
+    for(let attempt=0;attempt<4;attempt++) {
+      if(csrf!==initialCsrf || library!==initialLibrary) throw new Error("Account or library changed; choose the restore context again.");
+      $("recoveryStatus").textContent="Validating and restoring into a new library; no completion is assumed.";
+      response=await fetch("/api/restore",{method:"POST",headers:{"Content-Type":"application/octet-stream","X-CSRF":initialCsrf},body:file});
+      if(response.status!==429 || attempt===3) break;
+      const seconds=Math.min(10,Math.max(1,Number(response.headers.get("Retry-After"))||2));
+      $("recoveryStatus").textContent=`Service capacity is in use; restore has not started. Waiting ${seconds} seconds before admission retry ${attempt+1} of 3.`;
+      await new Promise(resolve=>setTimeout(resolve,seconds*1000));
+    }
+    if(!response.ok) {
+      const problem=await response.json().catch(()=>({error:"Request rejected."}));
+      throw new Error(`Restore response ${response.status}: ${problem.error||"Request rejected."} Inspect transfer history before another upload.`);
+    }
+    const result=await response.json(); library=result.id; scope="";batch="";healthOffset=0;
+    $("records").replaceChildren();$("progress").replaceChildren();$("counts").textContent="Choose a restored scope.";$("status").textContent="Restored library; unfinished work is paused.";
+    await libraries();await catalog();$("recoveryStatus").textContent=result.message;
+  } catch(error) {
+    $("recoveryStatus").textContent=error.message+" No completion is assumed; inspect transfer history.";
+    throw error;
+  } finally {$("restoreBundle").disabled=false;}
 });
 
 $("transferHistory").onclick=safe(async()=>{$("recoveryStatus").textContent=JSON.stringify(await json("transfers"),null,2);});
