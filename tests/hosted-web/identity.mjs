@@ -2,9 +2,20 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
+import assert from 'node:assert/strict';
 
 export async function identityFlow({page,context,origin,library,id,record,output,check,otherLogin,login,password,account,dll,cwd,env}) {
   const logs=[];
+  async function admittedGet(client, route) {
+    for(let attempt=0;attempt<10;attempt++) {
+      const response=await client.get(origin+'/api/'+route);
+      if(response.status()===429 && response.headers()['x-operation-admission']==='not-started' && attempt<9) {
+        await new Promise(r=>setTimeout(r,100));continue;
+      }
+      assert.equal(response.status(),200,'Preservation read must be admitted: '+route+' '+await response.text());
+      return response;
+    }
+  }
   async function operator(action, allowBusy=false) {
     for(let attempt=0;attempt<10;attempt++) {
       try {
@@ -32,11 +43,11 @@ export async function identityFlow({page,context,origin,library,id,record,output
     const otherSigned=await other.request.post(origin+'/api/login',{headers:{Origin:origin},data:{login:otherLogin,password}});
     check(otherSigned.ok(),'IDA01 independent browser account signs in');
     const csrf=(await signed.json()).csrf;
-    const baseline=await (await context.request.get(origin+`/api/libraries/${library}/records/${id}/research`)).json();
-    const detail=await (await context.request.get(origin+`/api/libraries/${library}/records/${id}`)).json();
+    const baseline=await (await admittedGet(context.request,`libraries/${library}/records/${id}/research`)).json();
+    const detail=await (await admittedGet(context.request,`libraries/${library}/records/${id}`)).json();
     const originalRoute=`libraries/${library}/records/${id}/files/${detail.files[0].hash}`;
     const derivedRoute=`libraries/${library}/records/${id}/derived/${baseline.derivations[0].derivation_id}/files`;
-    const original=await (await context.request.get(origin+'/api/'+originalRoute)).body();
+    const original=await (await admittedGet(context.request,originalRoute)).body();
     await page.locator('#libraries').selectOption(library);
     await page.locator('#snapshot').click();await page.waitForFunction(()=>document.querySelector('#counts').textContent.includes('Scope 120;'));
     await page.locator('#filter').fill(record.pmid);await page.locator('#refine').click();await page.waitForFunction(()=>document.querySelector('#counts').textContent.includes('Scope 1;'));
@@ -75,8 +86,11 @@ export async function identityFlow({page,context,origin,library,id,record,output
     check((await context.request.get(origin+'/api/session')).status()===401 && (await second.request.get(origin+'/api/session')).status()===401,'IDA02 all pre-enable browser tokens remain denied');
     const fresh=await second.request.post(origin+'/api/login',{headers:{Origin:origin},data:{login,password}});
     check(fresh.ok(),'IDA02 new normal login succeeds after enable');
-    const after=await (await second.request.get(origin+`/api/libraries/${library}/records/${id}/research`)).json();
-    check(JSON.stringify(after)===JSON.stringify(baseline) && (await (await second.request.get(origin+'/api/'+originalRoute)).body()).equals(original),'IDA07 browser re-login preserves exact research graph and original bytes');
+    const after=await (await admittedGet(second.request,`libraries/${library}/records/${id}/research`)).json();
+    assert.deepEqual(after,baseline,'IDA07 research values and all lineage must remain equal');
+    check(true,'IDA07 browser re-login preserves complete research values and lineage');
+    const afterOriginal=await (await admittedGet(second.request,originalRoute)).body();
+    check(afterOriginal.equals(original),'IDA07 browser re-login preserves original bytes from successful admitted reads');
     check(!logs.join('\n').includes(password) && !logs.join('\n').includes(csrf),'IDA07 operator context logs exclude browser password and CSRF');
     await fs.writeFile(path.join(output,'identity-operator-results.json'),JSON.stringify(logs));
     await page.reload();await page.locator('#login').waitFor({state:'visible'});
