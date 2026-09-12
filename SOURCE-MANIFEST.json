@@ -6,7 +6,7 @@
     },
     ".github/workflows/native.yml": {
       "git_path": ".github/workflows/native.yml",
-      "sha256": "7e4112ab949ff7fb7e97e48aff3d8d497e79dd9c409aee26989b5963cf49958c"
+      "sha256": "7b74221bc09edfb6bde6517cf2a9a328f3b7426a6c6653ff4b90d81d9fac81c2"
     },
     ".gitignore": {
       "git_path": "deployment/native-public.gitignore",
@@ -18,15 +18,15 @@
     },
     "README.md": {
       "git_path": "src/literature-server/README.md",
-      "sha256": "c580913b56431b746b9c5e7b7b3d3316ca5f552fc3a1329b816c9c211874f39b"
+      "sha256": "643b084d8a7ae218aff1c9bd114bf6513352f621f9d525eb41ad69361f3d3e70"
     },
     "deployment/native-source-allowlist.json": {
       "git_path": "deployment/native-source-allowlist.json",
-      "sha256": "df238b2d5954423218acd0b55c2dda22f6e9ab14665161e455db9e229c552e66"
+      "sha256": "34034f9106b460ee0a70ce65b8461550f13cfae0150fd8d729ec1cb21341ef94"
     },
     "docs/adr/0012-native-batch-and-grant-policy.md": {
       "git_path": "docs/adr/0012-native-batch-and-grant-policy.md",
-      "sha256": "fd6faa6c3edd42c84849542827276a31f88ff8d4700b06c0c708aa16ff0aeec9"
+      "sha256": "126f061168838908399937a67522a119f2552f4a9f0a06a86e1944eef1fc76d5"
     },
     "docs/native-api-002.md": {
       "git_path": "docs/native-api-002.md",
@@ -40,9 +40,13 @@
       "git_path": "scripts/package-go-runtime.py",
       "sha256": "a383ecb2ff4c62c98b3f97813dac34224cd6c69abdfca23b7306625eb2f70539"
     },
+    "scripts/run-native-browser.py": {
+      "git_path": "scripts/run-native-browser.py",
+      "sha256": "94da5f44ff7ab3813a8e03243367a0e7568f8e174076773fb65dbea68f992e5e"
+    },
     "src/literature-server/README.md": {
       "git_path": "src/literature-server/README.md",
-      "sha256": "c580913b56431b746b9c5e7b7b3d3316ca5f552fc3a1329b816c9c211874f39b"
+      "sha256": "643b084d8a7ae218aff1c9bd114bf6513352f621f9d525eb41ad69361f3d3e70"
     },
     "src/literature-server/THIRD_PARTY_NOTICES.md": {
       "git_path": "src/literature-server/THIRD_PARTY_NOTICES.md",
@@ -55,6 +59,10 @@
     "src/literature-server/batch.go": {
       "git_path": "src/literature-server/batch.go",
       "sha256": "07c360a9050c8396352de42c5a7dd278d83b38d1e6059c550403558f857090ce"
+    },
+    "src/literature-server/browser_test.go": {
+      "git_path": "src/literature-server/browser_test.go",
+      "sha256": "dd9a86667e188142976c2a6104596ecc259da3e2dc0c23887d8ed6f7f0362af5"
     },
     "src/literature-server/config.example.json": {
       "git_path": "src/literature-server/config.example.json",
@@ -94,7 +102,7 @@
     },
     "src/literature-server/original.go": {
       "git_path": "src/literature-server/original.go",
-      "sha256": "05b6a437e89723578fd40c43512464020e807b6fc69eb9f2f978a005c6ac511b"
+      "sha256": "a962bfe7e1966e0e8c24ff5b9f225de9623f0ef3e69881a27fcac35c44f8c6ee"
     },
     "src/literature-server/pg_test.go": {
       "git_path": "src/literature-server/pg_test.go",
@@ -107,6 +115,10 @@
     "src/literature-server/review_regression_test.go": {
       "git_path": "src/literature-server/review_regression_test.go",
       "sha256": "962a3ec2b4d0eedfe0021ffeacccd4d983f3b67a7a02bc97e7d305b5763cb82c"
+    },
+    "src/literature-server/rights_v3_test.go": {
+      "git_path": "src/literature-server/rights_v3_test.go",
+      "sha256": "e32a085b50c3697beff0fc7ecf637015afb4ffe9c920488b828340b85b5dd376"
     },
     "src/literature-server/source.go": {
       "git_path": "src/literature-server/source.go",
@@ -195,11 +207,27 @@
     "src/literature-web/vite.config.ts": {
       "git_path": "src/literature-web/vite.config.ts",
       "sha256": "0ea84b4e2909b04e4c1cb1b92392a9f85bcb46605472763b15935d3498ba8ed3"
+    },
+    "tests/native-browser/README.md": {
+      "git_path": "tests/native-browser/README.md",
+      "sha256": "02b463a7fa6bf44e3bb3779fc99aed549ce3e25cdeaac99c28c100fb819406c3"
+    },
+    "tests/native-browser/browser-regression.mjs": {
+      "git_path": "tests/native-browser/browser-regression.mjs",
+      "sha256": "59d5234047ecae5ffbe5306416ec81d0f28de722b25ee989536be5030352d01a"
+    },
+    "tests/native-browser/package-lock.json": {
+      "git_path": "tests/native-browser/package-lock.json",
+      "sha256": "82d1c5a63245b8b4b9145100c83873834143b98a826413ba5ca6e0e720b73f6d"
+    },
+    "tests/native-browser/package.json": {
+      "git_path": "tests/native-browser/package.json",
+      "sha256": "e4325e5bd34e1a50fe175e8f126c48a27adefae80e43eb6f2018b1f9897adb02"
     }
   },
   "schema": 1,
   "scope": "Code-only native source; no runtime/private data or Git history",
-  "source_revision": "ad67b02920638d48d48d8c771ecc90598c1659fb",
+  "source_revision": "bd832a84097e453043323c826c98602aab040027",
   "transforms": {
     "deployment/native-source-allowlist.json": "Self-contained exported path mapping"
   }

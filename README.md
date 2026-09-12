@@ -21,7 +21,7 @@ npm test
 npm run build
 ```
 
-Deploy `server`, the compiled frontend `dist` contents, Go `THIRD_PARTY_NOTICES.md`, frontend `FRONTEND_NOTICES.md`, and an exact package manifest. Tests and testdata are source acceptance inputs, never runtime paper data. Go tests do not call providers; unavailable guarded PostgreSQL/captured replay inputs explicitly skip. The snapshot tool includes only its explicit tracked source allowlist. The runtime packer additionally verifies two equal binary builds, two equal static builds, source hashes, deterministic archive and missing/unexpected/modified-member rejection.
+Deploy `server`, the compiled frontend `dist` contents, project `LICENSE`, Go `THIRD_PARTY_NOTICES.md`, frontend `FRONTEND_NOTICES.md`, and an exact package manifest. Tests and testdata are source acceptance inputs, never runtime paper data. Go tests do not call providers; unavailable guarded PostgreSQL/captured replay inputs explicitly skip. The snapshot tool includes only its explicit tracked source allowlist. The runtime packer additionally verifies two equal binary builds, two equal static builds, source hashes, deterministic archive and missing/unexpected/modified-member rejection.
 
 ## Protected configuration and native schema
 

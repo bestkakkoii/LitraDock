@@ -2,7 +2,7 @@ name: Native candidate
 on:
   workflow_dispatch:
   push:
-    branches: [native-demo-003]
+    branches: [native-demo-003, native-demo-004]
 permissions:
   contents: read
 jobs:
@@ -65,6 +65,34 @@ jobs:
         run: |
           python3 scripts/create-native-source.py --revision "$GITHUB_SHA" --output "$RUNNER_TEMP/native-build/source.tar"
           python3 scripts/package-go-runtime.py --revision "$GITHUB_SHA" --build-directory "$RUNNER_TEMP/native-build" --frontend-directory "$RUNNER_TEMP/web-one" --frontend-repeat-directory "$RUNNER_TEMP/web-two"
+      - name: Pinned isolated browser dependencies
+        working-directory: tests/native-browser
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Fresh native PostgreSQL browser database
+        env:
+          PGPASSWORD: synthetic-ci-only
+        run: |
+          createdb -h 127.0.0.1 -U native_test litradock_native_test_browser_ci
+          python3 - <<'PY'
+          import json,os,pathlib
+          target=pathlib.Path(os.environ['RUNNER_TEMP'])/'native-browser-config.json'
+          target.write_text(json.dumps({'Database':'host=127.0.0.1 user=native_test password=synthetic-ci-only dbname=litradock_native_test_browser_ci sslmode=disable'}))
+          target.chmod(0o600)
+          PY
+      - name: Actual native PostgreSQL and compiled browser regression
+        run: |
+          python3 scripts/run-native-browser.py --revision "$GITHUB_SHA" --config "$RUNNER_TEMP/native-browser-config.json" --manifest "$RUNNER_TEMP/native-build/runtime-manifest.json" --frontend-directory "$RUNNER_TEMP/web-one" --output-directory "$RUNNER_TEMP/native-browser"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-browser-synthetic-evidence
+          path: |
+            ${{ runner.temp }}/native-browser/receipt.json
+            ${{ runner.temp }}/native-browser/compile.log
+            ${{ runner.temp }}/native-browser/server.log
+            ${{ runner.temp }}/native-browser/browser.log
       - uses: actions/upload-artifact@v4
         with:
           name: native-code-runtime

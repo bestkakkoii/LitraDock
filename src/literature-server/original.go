@@ -11,7 +11,7 @@ import (
 )
 
 const pmcEndpoint = "https://pmc.ncbi.nlm.nih.gov/api/oai/v1/mh/"
-const acquisitionPolicy = "native-pmc-oai-reviewed-grant-v2"
+const acquisitionPolicy = "native-pmc-oai-reviewed-grant-v3"
 const originalLimit = 8 * 1024 * 1024
 
 var pmcidPattern = regexp.MustCompile(`^PMC[1-9][0-9]*$`)
@@ -130,17 +130,61 @@ func validateOriginal(b []byte, expected map[string]any) (originalInfo, error) {
 	reviewedStructure = func(n *node) bool {
 		attrs := map[string]string{}
 		namespace := "https://jats.nlm.nih.gov/ns/archiving/1.4/"
+		childrenAre := func(names ...string) bool {
+			if len(n.Children) != len(names) {
+				return false
+			}
+			for i, name := range names {
+				if n.Children[i].Name != name {
+					return false
+				}
+			}
+			return true
+		}
 		switch n.Name {
-		case "permissions", "copyright-statement", "license-p", "bold":
+		case "permissions":
+			if !childrenAre("copyright-statement", "license") {
+				return false
+			}
+		case "copyright-statement":
+			if !childrenAre() {
+				return false
+			}
+		case "license-p":
+			if !childrenAre("bold", "ext-link") && !childrenAre("bold", "ext-link", "ext-link") {
+				return false
+			}
+			if n.Children[1].Attrs["href"] != "http://creativecommons.org/licenses/by/4.0/" {
+				return false
+			}
+			if len(n.Children) == 3 && n.Children[2].Attrs["href"] != "http://creativecommons.org/publicdomain/zero/1.0/" {
+				return false
+			}
+		case "bold":
+			if !childrenAre() || n.Text != "Open Access" {
+				return false
+			}
 		case "license":
+			if !childrenAre("license_ref", "license-p") {
+				return false
+			}
 			attrs["license-type"] = "OpenAccess"
 		case "license_ref":
+			if !childrenAre() || n.Text != "https://creativecommons.org/licenses/by/4.0/" {
+				return false
+			}
 			namespace = "http://www.niso.org/schemas/ali/1.0/"
 			attrs["specific-use"] = "textmining"
 			attrs["content-type"] = "ccbylicense"
 		case "ext-link":
 			attrs["ext-link-type"] = "uri"
 			attrs["href"] = "http://creativecommons.org/licenses/by/4.0/"
+			if n.Attrs["href"] == "http://creativecommons.org/publicdomain/zero/1.0/" {
+				attrs["href"] = n.Attrs["href"]
+			}
+			if len(n.Children) != 0 || n.Text != attrs["href"] {
+				return false
+			}
 		default:
 			return false
 		}
@@ -151,7 +195,7 @@ func validateOriginal(b []byte, expected map[string]any) (originalInfo, error) {
 			if n.AttrNS[k] == "xmlns" || k == "xmlns" && n.AttrNS[k] == "" {
 				continue
 			}
-			if attrs[k] != v {
+			if expected, known := attrs[k]; !known || expected != v {
 				return false
 			}
 			wantNS := ""
@@ -159,6 +203,11 @@ func validateOriginal(b []byte, expected map[string]any) (originalInfo, error) {
 				wantNS = "http://www.w3.org/1999/xlink"
 			}
 			if n.AttrNS[k] != wantNS {
+				return false
+			}
+		}
+		for k, expected := range attrs {
+			if n.Attrs[k] != expected {
 				return false
 			}
 		}
@@ -175,7 +224,7 @@ func validateOriginal(b []byte, expected map[string]any) (originalInfo, error) {
 	// Rights prose is not natural-language permission inference. Only a reviewed
 	// complete grant template is admitted; changed wording needs explicit review.
 	statement := one(permissions, "copyright-statement")
-	if statement == nil || len(statement.Children) != 0 || !regexp.MustCompile(`^© The Author\(s\) [0-9]{4}$`).MatchString(statement.Text) || len(permissions.Children) != 2 || len(permissions.direct("license")) != 1 {
+	if statement == nil || len(statement.Children) != 0 || !regexp.MustCompile(`^© The Author\(s\)\.? [0-9]{4}$`).MatchString(statement.Text) || len(permissions.Children) != 2 || len(permissions.direct("license")) != 1 {
 		return fail("Article rights wording is unreviewed or ambiguous.")
 	}
 	canonical := strings.Replace(permissions.Text, statement.Text, "COPYRIGHT-YEAR", 1)
@@ -184,10 +233,32 @@ func validateOriginal(b []byte, expected map[string]any) (originalInfo, error) {
 	if hex.EncodeToString(grantDigest[:]) != "5e7f2fde4289fe38b132577a63be1238ec050d4e7220eeb6475d65e7421e016e" {
 		return fail("Article rights wording is unreviewed; clarification required.")
 	}
+	// The same complete reviewed prose may mark its data-only CC0 URL as a
+	// direct link. It is not an article grant: require that exact leaf/location
+	// and exclude only that node from the article-license collection below.
+	var dataLink *node
+	license := permissions.child("license")
+	paragraph := one(license, "license-p")
+	for _, n := range license.all("ext-link") {
+		if n.Attrs["href"] != "http://creativecommons.org/publicdomain/zero/1.0/" {
+			continue
+		}
+		direct := false
+		for _, child := range paragraph.direct("ext-link") {
+			direct = direct || child == n
+		}
+		if dataLink != nil || !direct || len(n.Children) != 0 || n.Text != n.Attrs["href"] {
+			return fail("Data-only rights link is ambiguous or outside reviewed scope.")
+		}
+		dataLink = n
+	}
 	grants := map[string]bool{}
 	for _, license := range permissions.direct("license") {
 		nodes := append([]*node{license}, license.all("ext-link")...)
 		for _, n := range nodes {
+			if n == dataLink {
+				continue
+			}
 			raw := n.Attrs["href"]
 			if raw == "" {
 				continue
