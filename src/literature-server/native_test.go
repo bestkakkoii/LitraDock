@@ -151,7 +151,9 @@ func TestNativeActualPostgres(t *testing.T) {
 	cfg.AcquisitionEnabled = true
 	calls := 0
 	status := 200
-	body := syntheticOAI()
+	// Exercise the newly admitted linked-data rendering through actual storage,
+	// reuse, Save, ZIP and operator-policy downgrade; pure v2 cases remain above.
+	body := syntheticLinkedDataGrant()
 	s := &server{native: true, db: db, cfg: cfg, slots: make(chan struct{}, 2), loginGate: make(chan struct{}, 1), provider: &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }, Transport: nativeTransport(func(r *http.Request) (*http.Response, error) {
 		calls++
 		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/xml"}, "Retry-After": {"60"}}, Body: io.NopCloser(strings.NewReader(body))}, nil

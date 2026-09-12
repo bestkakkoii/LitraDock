@@ -33,7 +33,7 @@ function stateLabel(run: Run | null) {
     return `Complete · retrieved ${run.fetched} of ${run.total}`;
   if (run.state === "error")
     return `Search error${run.reason ? ` · ${run.reason}` : ""}`;
-  return `${run.state} · retrieved ${run.fetched} of ${run.total}`;
+  return `${run.state} · retrieved ${run.fetched} of ${run.total}${run.reason ? ` · ${run.reason}` : ""}`;
 }
 function App() {
   const [signedIn, setSignedIn] = useState(false),
@@ -262,6 +262,7 @@ function App() {
     setBusy(true);
     setError("");
     setRecords([]);
+    setPageTotal(0);
     setSelected(new Set());
     setRecordOffset(0);
     setSnapshot(query);
@@ -290,8 +291,11 @@ function App() {
         setRun(page.run);
         if (page.run.state === "queued" || page.run.state === "running")
           continue;
-        if (page.run.state === "error") {
-          setError(page.run.reason || "Search failed.");
+        if (page.run.state !== "complete" && page.run.state !== "partial") {
+          setError(page.run.reason || "Search unavailable; no completion assumed.");
+          setMessage(stateLabel(page.run));
+          setPageTotal(0);
+          await refreshHistory();
           return;
         }
         setRecords(page.records);
