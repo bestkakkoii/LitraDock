@@ -174,7 +174,7 @@ func (s *server) batchDetail(ctx context.Context, library, batch string) (any, e
 		item["state"] = state
 		counts[state]++
 	}
-	return map[string]any{"requestedFormat": batches[0]["requested_format"], "batch": batches[0], "items": items, "total": len(items), "counts": counts, "policy": acquisitionPolicy}, nil
+	return map[string]any{"requestedFormat": batches[0]["requested_format"], "batch": batches[0], "items": items, "total": len(items), "counts": counts, "policy": formatPolicy(batches[0]["requested_format"].(string))}, nil
 }
 func (s *server) batchOne(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, 90*time.Second)

@@ -68,6 +68,7 @@
     "src/literature-web/src/api.ts": "src/literature-web/src/api.ts",
     "src/literature-web/src/components/ArticleCard.tsx": "src/literature-web/src/components/ArticleCard.tsx",
     "src/literature-web/src/components/HistoryAndDownloads.test.tsx": "src/literature-web/src/components/HistoryAndDownloads.test.tsx",
+    "src/literature-web/src/components/PdfAvailability.test.tsx": "src/literature-web/src/components/PdfAvailability.test.tsx",
     "src/literature-web/src/components/PdfAvailability.tsx": "src/literature-web/src/components/PdfAvailability.tsx",
     "src/literature-web/src/components/SearchHistory.tsx": "src/literature-web/src/components/SearchHistory.tsx",
     "src/literature-web/src/main.tsx": "src/literature-web/src/main.tsx",

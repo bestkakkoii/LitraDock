@@ -80,6 +80,7 @@ function App() {
     return batchScope.current.signal;
   };
   const planScope = useRef(new AbortController());
+  const [confirmedPdfPlan, setConfirmedPdfPlan] = useState<string>();
   const [pdfPlan, setPdfPlan] = useState<{ id: string; sequence: number }>();
   const retirePlanScope = () => {
     beginBatchRequest();
@@ -776,7 +777,7 @@ function App() {
           <PdfAvailability selectedCount={selected.size} ids={selectedSearchIds(selected)} ready={selection.ready && !busy}
             enabled={serviceInfo?.pdfEnabled === true} plansEnabled={serviceInfo?.planEnabled === true}
             library={library} runID={run?.run_id} generation={sessionGeneration()} scopeSignal={planScope.current.signal}
-            policy={serviceInfo?.pdfPolicySummary} onStart={retireChildView}
+            confirmedPlanID={confirmedPdfPlan} policy={serviceInfo?.pdfPolicySummary} onStart={retireChildView}
             onBatch={id => openBatch(id, true)} onPlan={id => setPdfPlan(value => ({ id, sequence: (value?.sequence ?? 0) + 1 }))} />
           <div className="result-head">
             <h2>
@@ -869,7 +870,7 @@ function App() {
             library={library} runID={run?.run_id ?? ""} generation={sessionGeneration()}
             selectedIDs={selectedSearchIds(selected)} enabled={serviceInfo?.planEnabled === true}
             scopeSignal={planScope.current.signal} onPlanChange={retireChildView}
-            admissionReady={selection.ready} openRequest={pdfPlan}
+            admissionReady={selection.ready} openRequest={pdfPlan} onOpened={setConfirmedPdfPlan}
             onChild={id => { retireChildView(); void openBatch(id); }}
           />}
           {batch && (

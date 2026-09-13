@@ -12,6 +12,7 @@ export class PdfRequest {
     if (this.kind === "plan" && !plansEnabled) throw new Error("Processing plans are disabled. Select up to 10 records for a PDF batch.");
     this.body = { requestID: crypto.randomUUID(), searchIDs: [...ids], format: "pdf", ...(this.kind === "plan" ? { runID } : {}) };
   }
+  get confirmedID() { return this.receipt; }
   async send(signal: AbortSignal) {
     const current = () => {
       if (signal.aborted || this.generation !== sessionGeneration()) throw new Error("PDF request scope changed.");

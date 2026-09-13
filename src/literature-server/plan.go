@@ -381,7 +381,7 @@ func (s *server) planDetail(ctx context.Context, library, id string, offset, lim
 			}
 		}
 	}
-	return map[string]any{"plan": p, "items": page, "total": len(items), "offset": offset, "limit": limit, "nextPollAfterMs": 2000, "policy": acquisitionPolicy}, tx.Commit(ctx)
+	return map[string]any{"plan": p, "items": page, "total": len(items), "offset": offset, "limit": limit, "nextPollAfterMs": 2000, "policy": formatPolicy(p.RequestedFormat)}, tx.Commit(ctx)
 }
 func (s *server) listPlans(ctx context.Context, library string, offset, limit int) (any, error) {
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})

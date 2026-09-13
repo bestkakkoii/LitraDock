@@ -235,7 +235,7 @@ func (s *server) exportBundle(ctx context.Context, library, batch string) ([]byt
 		}
 		manifest = append(manifest, entry)
 	}
-	m, _ := json.MarshalIndent(map[string]any{"batchId": batch, "generatedAt": time.Now().UTC(), "policy": acquisitionPolicy, "items": manifest, "scope": "Exact permitted repository originals in their stated format; unresolved items retain source links. Archival snapshots may not reflect current NLM data."}, "", "  ")
+	m, _ := json.MarshalIndent(map[string]any{"batchId": batch, "generatedAt": time.Now().UTC(), "policy": detail["policy"], "items": manifest, "scope": "Exact permitted repository originals in their stated format; unresolved items retain source links. Archival snapshots may not reflect current NLM data."}, "", "  ")
 	for name, b := range map[string][]byte{"manifest.json": m} {
 		w, e := z.Create(name)
 		if e != nil {

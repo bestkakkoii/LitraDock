@@ -12,7 +12,7 @@ type Props = {
   library: string; runID: string; generation: number; selectedIDs: string[];
   enabled: boolean; scopeSignal: AbortSignal;
   onPlanChange: () => void; onChild: (id: string) => void;
-  admissionReady?: boolean; openRequest?: { id: string; sequence: number };
+  admissionReady?: boolean; onOpened?: (id: string) => void; openRequest?: { id: string; sequence: number };
 };
 
 export function PlanWorkspace(props: Props) {
@@ -30,7 +30,10 @@ export function PlanWorkspace(props: Props) {
     return () => { props.scopeSignal.removeEventListener("abort", stop); model.dispose(); controller.current = null; };
   }, [props.library, props.runID, props.generation, props.scopeSignal]);
   useLayoutEffect(() => {
-    if (props.openRequest && !props.scopeSignal.aborted) void controller.current?.read(props.openRequest.id);
+    const id = props.openRequest?.id;
+    if (id && !props.scopeSignal.aborted) void controller.current?.read(id).then(confirmed => {
+      if (confirmed && !props.scopeSignal.aborted && props.generation === sessionGeneration()) props.onOpened?.(id);
+    });
   }, [props.openRequest]);
   useLayoutEffect(() => { if (confirmCancel) cancelButton.current?.focus(); }, [confirmCancel]);
   const current = () => props.generation === sessionGeneration() && !props.scopeSignal.aborted;

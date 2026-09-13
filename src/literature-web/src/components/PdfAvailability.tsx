@@ -4,7 +4,7 @@ import { definitiveAdmissionError, PdfRequest } from "../pdfRequest";
 
 type Props = {
   selectedCount: number; ids?: string[]; ready?: boolean; enabled?: boolean; plansEnabled?: boolean;
-  library?: string; runID?: string; generation?: number; scopeSignal?: AbortSignal; policy?: string;
+  library?: string; runID?: string; generation?: number; scopeSignal?: AbortSignal; policy?: string; confirmedPlanID?: string;
   onBatch?: (id: string) => Promise<void>; onPlan?: (id: string) => void; onStart?: () => void;
 };
 export function PdfAvailability(props: Props) {
@@ -19,28 +19,34 @@ export function PdfAvailability(props: Props) {
     if (props.scopeSignal?.aborted) stop();
     return () => { controller.abort(); props.scopeSignal?.removeEventListener("abort", stop); };
   }, [props.library, props.runID, props.generation, props.scopeSignal]);
+  useLayoutEffect(() => {
+    if (pending?.kind === "plan" && pending.confirmedID === props.confirmedPlanID) setPending(null);
+  }, [pending, props.confirmedPlanID]);
   const submit = async () => {
     if (busy || !props.enabled || !props.ready || !props.library || !props.runID) return;
     const signal = abort.current.signal, generation = props.generation;
     const current = () => !signal.aborted && generation === sessionGeneration();
     if (!current()) return;
     setBusy(true); setMessage("");
+    let admitted = false;
     try {
       const request = pending ?? new PdfRequest(props.library, props.runID, props.ids ?? [], generation!, props.plansEnabled === true);
       setPending(request);
       props.onStart?.();
       const id = await request.send(signal);
+      admitted = true;
       if (!current()) return;
       if (request.kind === "batch") await props.onBatch?.(id);
       else props.onPlan?.(id);
       if (!current()) return;
-      setPending(null);
+      if (request.kind === "batch") setPending(null);
       setMessage(`PDF ${request.kind} saved for ${request.body.searchIDs.length} records. Follow its status below; acquisition on the server is not a device download.`);
     } catch (error) {
       if (!current()) return;
-      if (definitiveAdmissionError(error)) {
+      // A confirmed POST survives every subsequent detail error; reopening stays GET-only.
+      if (!admitted && definitiveAdmissionError(error)) {
         setPending(null); setMessage(`${(error as Error).message} Reopen saved work to check its current status before another action.`);
-      } else setMessage("The response or detail was not confirmed. Retry the same PDF request; its saved identifiers and format will not change.");
+      } else setMessage(admitted ? "The PDF request is saved, but its details could not be opened. Retry opening the saved work; no new acquisition will be submitted." : "The response or detail was not confirmed. Retry the same PDF request; its saved identifiers and format will not change.");
     } finally { if (current()) setBusy(false); }
   };
   const disabled = busy || !props.enabled || !props.ready || (!pending &&
@@ -53,7 +59,7 @@ export function PdfAvailability(props: Props) {
       {props.policy && <p className="muted small">{props.policy}</p>}
       <p className="muted small">Some records may be held with source links and reasons. No publisher account login is provided. XML and ZIP are not PDFs; a PDF ZIP contains available PDFs and a manifest of all outcomes.</p>
     </div>
-    <button disabled={disabled} onClick={() => void submit()}>{busy ? "Submitting PDF request…" : pending ? `Retry same PDF request (${pending.body.searchIDs.length})` : `Download PDFs (${props.selectedCount} selected)`}</button>
+    <button disabled={disabled} onClick={() => void submit()}>{busy ? "Submitting PDF request…" : pending ? `${pending.confirmedID ? "Reopen saved PDF request" : "Retry same PDF request"} (${pending.body.searchIDs.length})` : `Download PDFs (${props.selectedCount} selected)`}</button>
     {!props.plansEnabled && props.selectedCount > 10 && <p>Plans are disabled. Select up to 10 saved records for a PDF batch.</p>}
     {message && <p role="status">{message}</p>}
   </section>;

@@ -213,6 +213,15 @@ func TestPDFActualPostgres(t *testing.T) {
 		}
 		distinct := map[string]bool{}
 		for _, f := range z.File {
+			if f.Name == "manifest.json" {
+				r, _ := f.Open()
+				b, _ := io.ReadAll(r)
+				r.Close()
+				var manifest map[string]any
+				if json.Unmarshal(b, &manifest) != nil || manifest["policy"] != pdfPolicy {
+					t.Fatal("incorrect PDF source policy envelope")
+				}
+			}
 			if strings.HasSuffix(f.Name, ".pdf") {
 				r, _ := f.Open()
 				b, e := io.ReadAll(r)
@@ -318,4 +327,35 @@ func TestPDFActualPostgres(t *testing.T) {
 			t.Fatal("disabled PDF admission")
 		}
 	})
+	t.Run("proof-inclusive-near-capacity-no-partial-save", func(t *testing.T) {
+		s.cfg.PDFEnabled = true
+		var retained int64
+		if e := db.QueryRow(ctx, "SELECT COALESCE(sum(octet_length(content)+octet_length(proof)),0) FROM native_originals").Scan(&retained); e != nil {
+			t.Fatal(e)
+		}
+		// Labeled synthetic compressed filler only in the disposable database. PDF bytes fit,
+		// but their retained rights proof does not; ignoring proof would wrongly admit them.
+		missing := int64(256*1024*1024-1024) - retained
+		if missing <= 0 {
+			t.Fatal("unexpected test storage")
+		}
+		must(`INSERT INTO native_originals(library_id,search_id,hash,content,source_uri,rights_uri,repository_stamp,policy,proof)
+   SELECT $1,$2,'SYNTHETIC-FILLER-'||n,''::bytea,'','','','synthetic capacity only',convert_to(repeat('x',LEAST(1048576,$3::bigint-(n-1)*1048576)::int),'UTF8') FROM generate_series(1,($3::bigint+1048575)/1048576) n`, library, ids[0], missing)
+		defer must("DELETE FROM native_originals WHERE library_id=$1 AND hash LIKE 'SYNTHETIC-FILLER-%'", library)
+		batch, e := s.queueBatch(ctx, library, newUUID(), ids[:1], "pdf")
+		if e != nil {
+			t.Fatal(e)
+		}
+		s.batchOne(ctx)
+		var state, reason string
+		var originals int
+		if e = db.QueryRow(ctx, "SELECT state,reason FROM native_items WHERE library_id=$1 AND batch_id=$2", library, batch).Scan(&state, &reason); e != nil {
+			t.Fatal(e)
+		}
+		db.QueryRow(ctx, "SELECT count(*) FROM native_originals WHERE library_id=$1 AND format='pdf'", library).Scan(&originals)
+		if state != "failed" || !strings.Contains(reason, "storage capacity") || originals != 0 {
+			t.Fatal("proof storage gate failed", state, reason, originals)
+		}
+	})
+
 }

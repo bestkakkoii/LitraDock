@@ -90,7 +90,7 @@ export class PlanController {
     const task = this.begin();
     try {
       const page = await this.api.detail(id, offset, task.signal);
-      if (task.current()) this.acceptPage(page);
+      if (task.current()) { this.acceptPage(page); return true; }
     } catch (error) {
       if (task.current()) this.set({ error: `Status unavailable; last confirmed counts are retained. ${(error as Error).message}` });
     } finally {
