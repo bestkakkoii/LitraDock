@@ -24,6 +24,21 @@ function model() {
 }
 beforeEach(() => setSession({ csrf: "SYNTHETIC" }));
 afterEach(() => { models.splice(0).forEach(c => c.dispose()); clearSession(); vi.unstubAllGlobals(); });
+it.each(["prepare", "detail", "catalog", "current401"])("bounds oversized %s bodies without publishing a document", async mode => {
+  let produced = 0, cancelled = false;
+  const response = new Response(new ReadableStream({ pull(controller) {
+    if (produced >= 10 * 1024 * 1024) { controller.close(); return; }
+    produced += 32768; controller.enqueue(new Uint8Array(32768).fill(120));
+  }, cancel() { cancelled = true; } }), { status: mode === "catalog" ? 200 : mode === "current401" ? 401 : 503 });
+  vi.stubGlobal("fetch", vi.fn(async () => response));
+  const { c, save } = model(), generation = sessionGeneration();
+  if (mode === "prepare") { c.state.enabled = true; await c.prepare(); expect(c.state.pending).toBe(true); }
+  else if (mode === "catalog") await c.refresh();
+  else await c.open(doc().snapshotID);
+  expect(cancelled).toBe(true); expect(produced).toBeLessThanOrEqual(131072);
+  expect(c.state.document).toBeNull(); expect(save).not.toHaveBeenCalled();
+  expect(sessionGeneration()).toBe(generation + (mode === "current401" ? 1 : 0));
+});
 it("validates complete ordered membership, exact dedup aliases, and useful unavailable-only snapshots", () => {
   expect(validateDocument(doc(), fixturePlan).parts).toHaveLength(1);
   expect(validateDocument(fixtureDocument(), fixturePlan).manifest.counts.unresolvedRecords).toBe(3);

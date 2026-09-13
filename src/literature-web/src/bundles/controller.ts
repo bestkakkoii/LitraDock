@@ -37,10 +37,10 @@ export class BundleController {
   async initialize() {
     const { signal, current } = this.begin("Loading saved snapshots…");
     try {
-      const capability = await request<{ bundleDeliveryEnabled?: boolean }>("/service-info", { signal }, this.generation);
+      const capability = await request<{ bundleDeliveryEnabled?: boolean }>("/service-info", { signal }, this.generation, 64 * 1024);
       if (!current()) return;
       this.emit({ enabled: capability.bundleDeliveryEnabled === true });
-      const list = validateList(await request<unknown>(this.base, { signal }, this.generation), this.plan.planID);
+      const list = validateList(await request<unknown>(this.base, { signal }, this.generation, 64 * 1024), this.plan.planID);
       if (current()) this.emit({ list });
     } catch (error) { if (current()) this.emit({ error: bundleFailure(error) }); }
     finally { if (current()) this.emit({ busy: "" }); }
@@ -49,7 +49,7 @@ export class BundleController {
     if (!this.live() || this.state.busy) return;
     const { signal, current } = this.begin("Refreshing saved snapshots…");
     try {
-      const list = validateList(await request<unknown>(this.base, { signal }, this.generation), this.plan.planID);
+      const list = validateList(await request<unknown>(this.base, { signal }, this.generation, 64 * 1024), this.plan.planID);
       if (current()) this.emit({ list });
     } catch (error) { if (current()) this.emit({ error: bundleFailure(error) }); }
     finally { if (current()) this.emit({ busy: "" }); }
@@ -59,7 +59,7 @@ export class BundleController {
     this.emit({ document, selected: document.parts.map(p => p.number), progress: {}, handed: [], activePart: null });
   }
   private async readDocument(id: string, signal: AbortSignal, current: () => boolean) {
-    const blob = await requestBlob(`${this.base}/${id}`, { signal }, this.generation, { maxBytes: 8 * MiB });
+    const blob = await requestBlob(`${this.base}/${id}`, { signal }, this.generation, { maxBytes: 8 * MiB, maxErrorBytes: 64 * 1024 });
     if (!current()) return;
     if (blob.type.split(";")[0].trim().toLowerCase() !== "application/json") throw new Error("The saved manifest was not JSON. No file was saved.");
     const bytes = await blob.arrayBuffer();
@@ -86,7 +86,7 @@ export class BundleController {
     this.emit({ pending: true });
     let confirmed = false;
     try {
-      const receipt = await requestBlob(this.base, { method: "POST", body, signal }, this.generation, { maxBytes: 8 * MiB });
+      const receipt = await requestBlob(this.base, { method: "POST", body, signal }, this.generation, { maxBytes: 8 * MiB, maxErrorBytes: 64 * 1024 });
       if (!current()) return;
       if (receipt.type.split(";")[0].trim().toLowerCase() !== "application/json") throw new Error("Preparation did not return a JSON snapshot.");
       const bytes = await receipt.arrayBuffer();

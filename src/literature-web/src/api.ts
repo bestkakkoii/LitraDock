@@ -123,6 +123,22 @@ function assertRequestCurrent(expected: number, signal?: AbortSignal | null) {
   if (expected !== generation || signal?.aborted)
     throw new Error("Session changed; the previous request was discarded.");
 }
+async function discardBoundedError(response: Response, expected: number, signal: AbortSignal | null | undefined, limit: number) {
+  const reader = response.body?.getReader();
+  if (!reader) { assertRequestCurrent(expected, signal); return; }
+  let received = 0;
+  try {
+    for (;;) {
+      const part = await reader.read(); assertRequestCurrent(expected, signal);
+      if (part.done) break;
+      received += part.value.byteLength;
+      if (received >= limit) break;
+    }
+  } finally {
+    await reader.cancel().catch(() => {}); reader.releaseLock();
+    assertRequestCurrent(expected, signal);
+  }
+}
 // Match the small server admission envelope. Reading the body owns the slot;
 // queued requests revalidate their captured scope before any network effect.
 let activeRequests = 0;
@@ -140,6 +156,7 @@ export async function request<T>(
   path: string,
   init: RequestInit = {},
   expectedGeneration = generation,
+  maxBodyBytes?: number,
 ): Promise<T> {
   const slot = requestSlot();
   const release = typeof slot === "function" ? slot : await slot;
@@ -154,7 +171,17 @@ export async function request<T>(
     headers,
   });
   assertRequestCurrent(expectedGeneration, init.signal);
-  const text = await response.text();
+  let text: string;
+  if (maxBodyBytes !== undefined && !response.ok) {
+    await discardBoundedError(response, expectedGeneration, init.signal, Math.min(maxBodyBytes, 64 * 1024));
+    if (response.status === 401) { clearSession(); throw new ApiError(401, "Your session has expired. Please sign in again."); }
+    throw new ApiError(response.status, `Request unavailable (HTTP ${response.status}).`);
+  }
+  if (maxBodyBytes === undefined) text = await response.text();
+  else {
+    const body = await readTransfer(response, init.signal, () => assertRequestCurrent(expectedGeneration, init.signal), { maxBytes: maxBodyBytes });
+    text = await body.text();
+  }
   assertRequestCurrent(expectedGeneration, init.signal);
   if (response.status === 401) {
     clearSession();
@@ -180,7 +207,7 @@ export async function requestBlob(
   path: string,
   init: RequestInit = {},
   expectedGeneration = generation,
-  transfer: TransferOptions = {},
+  transfer: TransferOptions & { maxErrorBytes?: number } = {},
 ): Promise<Blob> {
   const slot = requestSlot();
   const release = typeof slot === "function" ? slot : await slot;
@@ -196,7 +223,8 @@ export async function requestBlob(
   });
   assertRequestCurrent(expectedGeneration, init.signal);
   if (!response.ok) {
-    await response.text();
+    if (transfer.maxErrorBytes === undefined) await response.text();
+    else await discardBoundedError(response, expectedGeneration, init.signal, transfer.maxErrorBytes);
     assertRequestCurrent(expectedGeneration, init.signal);
     if (response.status === 401) {
       clearSession();
