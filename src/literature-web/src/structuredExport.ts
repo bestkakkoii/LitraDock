@@ -1,4 +1,5 @@
 import { requestBlob, sessionGeneration } from "./api";
+import { TransferOptions } from "./transfer";
 
 export type StructuredFormat = "json" | "jsonl";
 export type ExportScope = { runID: string; batchID?: never } | { batchID: string; runID?: never };
@@ -16,6 +17,7 @@ export async function structuredExport(
   format: StructuredFormat,
   generation: number,
   signal: AbortSignal,
+  transfer: TransferOptions = {},
 ): Promise<{ blob: Blob; filename: string }> {
   const current = () => {
     if (signal.aborted || generation !== sessionGeneration())
@@ -33,6 +35,7 @@ export async function structuredExport(
     `/api/libraries/${encodeURIComponent(library)}/exports`,
     { method: "POST", body: JSON.stringify({ ...scope, format }), signal },
     generation,
+    { ...transfer, maxBytes: 8 * 1024 * 1024 },
   );
   current();
   const [mime, ...parameters] = blob.type.toLowerCase().split(";").map(value => value.trim());

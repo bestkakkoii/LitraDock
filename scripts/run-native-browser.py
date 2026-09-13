@@ -15,6 +15,7 @@ import time
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--plans', action='store_true', help='Run the focused processing-plan browser workload')
+parser.add_argument('--multirun', action='store_true', help='Run the focused multi-run saved-set browser workload')
 parser.add_argument('--revision', required=True)
 parser.add_argument('--config', type=Path, required=True)
 parser.add_argument('--manifest', type=Path, required=True)
@@ -43,6 +44,8 @@ config_file.chmod(0o600)
 env = dict(os.environ, LITRADOCK_BROWSER_TEST='yes', LITRADOCK_GO_CONFIG=str(config_file), NATIVE_BROWSER_INPUT=str(input_file), NATIVE_BROWSER_REVISION=args.revision, NATIVE_BROWSER_MANIFEST=str(args.manifest.resolve()))
 if args.plans:
     env['LITRADOCK_PLAN_BROWSER_TEST'] = 'yes'
+if args.multirun:
+    env['LITRADOCK_MULTIRUN_BROWSER_TEST'] = 'yes'
 binary = out/('browser-server.exe' if os.name == 'nt' else 'browser-server')
 flags = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
 with (out/'compile.log').open('wb') as log:
@@ -61,11 +64,13 @@ try:
         env['NATIVE_BROWSER_URL'] = data['origin']
         with (out/'browser.log').open('wb') as log:
             npm = 'npm.cmd' if os.name == 'nt' else 'npm'
-            subprocess.run([npm, 'run', 'test:plans'] if args.plans else [npm, 'test'], cwd=repo/'tests/native-browser', env=env, stdout=log, stderr=subprocess.STDOUT, timeout=480, check=True, **flags)
+            command = [npm, 'run', 'test:multirun'] if args.multirun else ([npm, 'run', 'test:plans'] if args.plans else [npm, 'test'])
+            subprocess.run(command, cwd=repo/'tests/native-browser', env=env, stdout=log, stderr=subprocess.STDOUT, timeout=480, check=True, **flags)
         Path(str(input_file)+'.stop').touch()
         if process.wait(timeout=20) != 0:
             raise RuntimeError('Test server exit failed')
         receipt = {'revision': args.revision, 'scope': 'Actual native PostgreSQL/compiled handlers/static frontend; exclusively synthetic source transport, no live coverage', 'test_binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'manifest_sha256': hashlib.sha256(args.manifest.read_bytes()).hexdigest(), 'browser_exit': 0, 'server_exit': 0, 'plans': args.plans}
+        receipt['multirun'] = args.multirun
         (out/'receipt.json').write_text(json.dumps(receipt, indent=2)+'\n', encoding='utf-8')
         print(json.dumps(receipt))
 finally:

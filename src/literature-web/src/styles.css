@@ -363,6 +363,12 @@ input, select, textarea { min-width: 0; max-width: 100%; }
 .pager { flex-wrap: wrap; }
 
 .plan-workspace { margin-top: 1.5rem; }
+.saved-basket { padding: 1rem; border: 1px solid #bdcad8; border-radius: 10px; background: #f7f9fc; margin-bottom: 1rem; }
+.saved-basket .plan-actions { align-items: end; }
+.saved-basket label { flex: 0 1 180px; }
+.plan-workspace details { margin: .75rem 0; }
+.plan-workspace summary { cursor: pointer; color: #1864ab; font-weight: 600; }
+.plan-workspace h4, .saved-basket p { white-space: pre-wrap; }
 .plan-catalog { display: block; margin-top: 1rem; }
 .plan-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: .75rem; }
 .plan-counts > div { background: #edf2f7; border-radius: 6px; padding: .75rem; }

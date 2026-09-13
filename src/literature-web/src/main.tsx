@@ -19,6 +19,7 @@ import { useSavedSelection } from "./savedSelection";
 import { originalKind } from "./originalKind";
 import { structuredExport, type ExportScope, type StructuredFormat } from "./structuredExport";
 import { PlanWorkspace } from "./plans/PlanWorkspace";
+import { TransferOptions, transferLabel } from "./transfer";
 import { SearchHistory } from "./components/SearchHistory";
 import { PdfAvailability } from "./components/PdfAvailability";
 import "./styles.css";
@@ -82,6 +83,11 @@ function App() {
     return batchScope.current.signal;
   };
   const planScope = useRef(new AbortController());
+  const libraryPlanScope = useRef(new AbortController());
+  const retireLibraryPlans = () => {
+    libraryPlanScope.current.abort();
+    libraryPlanScope.current = new AbortController();
+  };
   const [confirmedPdfPlan, setConfirmedPdfPlan] = useState<string>();
   const [pdfPlan, setPdfPlan] = useState<{ id: string; sequence: number }>();
   const retirePlanScope = () => {
@@ -107,6 +113,12 @@ function App() {
     operation === batchOperation.current &&
     expectedLibrary === library &&
     expectedSession === sessionGeneration();
+  const transferFor = (operation: number, expectedLibrary: string, expectedSession: number, signal: AbortSignal): TransferOptions => ({
+    onProgress: value => {
+      if (!signal.aborted && isCurrentBatchOperation(operation, expectedLibrary, expectedSession))
+        setExportProgress({ operation, label: `${transferLabel(value)} · Not yet saved` });
+    },
+  });
   const refresh = async () => {
     const expected = sessionGeneration();
     const data = await api.libraries();
@@ -132,6 +144,7 @@ function App() {
   };
   useEffect(() => {
     return onSessionInvalidated(() => {
+      retireLibraryPlans();
       retirePlanScope();
       runGeneration.current += 1;
       batchOperation.current += 1;
@@ -253,6 +266,7 @@ function App() {
     }
   };
   const signOut = async () => {
+    libraryPlanScope.current.abort();
     planScope.current.abort();
     retireChildView();
     const operation = ++runGeneration.current;
@@ -475,6 +489,7 @@ function App() {
         item.original_hash,
         expected,
         signal,
+        transferFor(operation, expectedLibrary, expected, signal),
       );
       if (!isCurrentBatchOperation(operation, expectedLibrary, expected))
         return;
@@ -501,7 +516,7 @@ function App() {
     const signal = beginBatchRequest();
     setBatchBusy(true);
     try {
-      const blob = await api.exportCsv(expectedLibrary, selection, expected, signal);
+      const blob = await api.exportCsv(expectedLibrary, selection, expected, signal, transferFor(operation, expectedLibrary, expected, signal));
       if (!isCurrentBatchOperation(operation, expectedLibrary, expected))
         return;
       const url = URL.createObjectURL(blob);
@@ -527,7 +542,7 @@ function App() {
     const batchId = batch.batch.batch_id;
     setBatchBusy(true);
     try {
-      const blob = await api.exportBundle(expectedLibrary, batchId, expected, signal);
+      const blob = await api.exportBundle(expectedLibrary, batchId, expected, signal, transferFor(operation, expectedLibrary, expected, signal));
       if (!isCurrentBatchOperation(operation, expectedLibrary, expected))
         return;
       if (blob.type !== "application/zip") throw new Error("The server did not return a ZIP bundle. No file was saved; try individual Save actions.");
@@ -552,7 +567,7 @@ function App() {
     const signal = beginBatchRequest();
     setBatchBusy(true);
     try {
-      const blob = await api.exportXlsx(expectedLibrary, selection, expected, signal);
+      const blob = await api.exportXlsx(expectedLibrary, selection, expected, signal, transferFor(operation, expectedLibrary, expected, signal));
       if (!isCurrentBatchOperation(operation, expectedLibrary, expected)) return;
       const url = URL.createObjectURL(blob), anchor = document.createElement("a");
       anchor.href = url; anchor.download = selection.batchID ? `batch-${selection.batchID}.xlsx` : "literature-export.xlsx";
@@ -573,7 +588,7 @@ function App() {
     setExportProgress({ operation, label: `Preparing ${scope.runID ? "saved run" : "batch"} ${format.toUpperCase()} export…` });
     setError("");
     try {
-      const { blob, filename } = await structuredExport(expectedLibrary, scope, format, expected, signal);
+      const { blob, filename } = await structuredExport(expectedLibrary, scope, format, expected, signal, transferFor(operation, expectedLibrary, expected, signal));
       if (!current()) return;
       const url = URL.createObjectURL(blob);
       try {
@@ -654,6 +669,7 @@ function App() {
               value={library}
               onChange={(e) => {
                 if (e.target.value === library) return;
+                retireLibraryPlans();
                 retirePlanScope();
                 runGeneration.current += 1;
                 historyRequest.current += 1;
@@ -853,7 +869,10 @@ function App() {
               </button>
             </div>
           </div>
-          {batchBusy && exportProgress?.operation === batchOperation.current && <p role="status">{exportProgress.label}</p>}
+          {batchBusy && exportProgress?.operation === batchOperation.current && <div>
+            <p role="status">{exportProgress.label}</p>
+            <button className="secondary" onClick={() => { beginBatchRequest(); batchOperation.current++; setBatchBusy(false); setExportProgress(null); setMessage("Transfer cancelled. No file was saved."); }}>Cancel download</button>
+          </div>}
           <p id="run-structured-scope" className="muted small">JSON / JSONL exports include all saved records in the run, not just selected checkboxes or the current page. Provider matches that were not retrieved are not included. These are metadata files, not full-text downloads.</p>
           {records.length ? (
             records.map((a, i) => (
@@ -902,10 +921,12 @@ function App() {
               </div>
             )}
           {library && <PlanWorkspace
-            key={`${sessionGeneration()}:${library}:${run?.run_id ?? ""}`}
+            key={`${sessionGeneration()}:${library}`}
             library={library} runID={run?.run_id ?? ""} generation={sessionGeneration()}
             selectedIDs={selectedSearchIds(selected)} enabled={serviceInfo?.planEnabled === true}
-            scopeSignal={planScope.current.signal} onPlanChange={retireChildView}
+            selectedArticles={[...selected.values()]} savedSetEnabled={serviceInfo?.savedSetEnabled === true}
+            pdfEnabled={serviceInfo?.pdfEnabled === true}
+            scopeSignal={libraryPlanScope.current.signal} onPlanChange={retireChildView}
             admissionReady={selection.ready} openRequest={pdfPlan} onOpened={setConfirmedPdfPlan}
             onChild={id => { retireChildView(); void openBatch(id); }}
           />}

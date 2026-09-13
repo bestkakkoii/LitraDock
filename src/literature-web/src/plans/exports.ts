@@ -1,8 +1,9 @@
 import { ApiError, requestBlob, sessionGeneration } from "../api";
 import { phases, PlanSummary, validateSummary } from "./api";
+import { TransferOptions } from "../transfer";
 
 export type PlanExportFormat = "json" | "zip";
-export type ExportIdentity = Pick<PlanSummary, "planID" | "runID" | "selectedCount">;
+export type ExportIdentity = Pick<PlanSummary, "planID" | "runID" | "selectedCount" | "scopeKind" | "sourceRunIDs">;
 const object = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const invalid = () => new Error("The server returned an invalid plan export. No file was saved.");
@@ -14,6 +15,8 @@ export function validatePlanMetadata(value: unknown, expected: ExportIdentity) {
       !object(value.plan) || !object(value.research) || !object(value.counts) || !Array.isArray(value.items)) throw invalid();
   const plan = value.plan as PlanSummary, research = value.research, items = value.items, counts = value.counts;
   validateSummary(plan);
+  if (plan.scopeKind !== expected.scopeKind || (expected.scopeKind === "saved_set" &&
+    JSON.stringify(plan.sourceRunIDs) !== JSON.stringify(expected.sourceRunIDs))) throw invalid();
   if (plan.planID !== expected.planID || plan.runID !== expected.runID || plan.selectedCount !== expected.selectedCount ||
       value.counts.members !== plan.selectedCount || items.length !== plan.selectedCount ||
       ["includedRecords", "unresolvedRecords", "uniqueOriginals", "originalBytes"].some(key => counts[key] !== null) ||
@@ -24,6 +27,7 @@ export function validatePlanMetadata(value: unknown, expected: ExportIdentity) {
       research.counts.providerMatches !== null || research.counts.retrievedRecords !== null ||
       !Array.isArray(research.queryContexts) || !Array.isArray(research.records) || research.records.length !== items.length) throw invalid();
   const ids = new Set<string>();
+  const sourceRuns = new Set<string>();
   const actual = Object.fromEntries(phases.map(phase => [phase, 0]));
   items.forEach((item, index) => {
     const record: unknown = (research.records as unknown[])[index];
@@ -38,22 +42,29 @@ export function validatePlanMetadata(value: unknown, expected: ExportIdentity) {
         !object(record) || record.searchId !== item.searchId || !Array.isArray(record.originals) ||
         record.originals.some(original => !object(original) || original.availability !== "not_revalidated")) throw invalid();
     ids.add(item.searchId);
+    if (expected.scopeKind === "saved_set") {
+      if (!Array.isArray(record.runIds) || !record.runIds.length || new Set(record.runIds).size !== record.runIds.length ||
+          record.runIds.some(id => typeof id !== "string" || !expected.sourceRunIDs?.includes(id))) throw invalid();
+      record.runIds.forEach(id => sourceRuns.add(id as string));
+    }
     actual[String(item.phase)]++;
   });
   if (phases.some(phase => actual[phase] !== plan.counts[phase])) throw invalid();
+  if (expected.scopeKind === "saved_set" && sourceRuns.size !== expected.sourceRunIDs?.length) throw invalid();
 }
 
 export async function exportPlan(library: string, identity: ExportIdentity, format: PlanExportFormat,
-  generation: number, signal: AbortSignal) {
+  generation: number, signal: AbortSignal, transfer: TransferOptions = {}) {
   const current = () => {
     if (signal.aborted || generation !== sessionGeneration()) throw new Error("Plan export context changed. No file was saved.");
   };
   current();
-  const expected = { ...identity };
-  if (!library || !expected.planID || !expected.runID || !Number.isInteger(expected.selectedCount) ||
+  const expected = { ...identity, sourceRunIDs: identity.sourceRunIDs && [...identity.sourceRunIDs] };
+  if (!library || !expected.planID || (expected.scopeKind === "saved_set" ? expected.runID !== "" || !expected.sourceRunIDs?.length : !expected.runID) || !Number.isInteger(expected.selectedCount) ||
       expected.selectedCount < 1 || expected.selectedCount > 100 || !["json", "zip"].includes(format)) throw invalid();
   const blob = await requestBlob(`/api/libraries/${encodeURIComponent(library)}/plans/${encodeURIComponent(expected.planID)}/exports`,
-    { method: "POST", body: JSON.stringify({ format }), signal }, generation);
+    { method: "POST", body: JSON.stringify({ format }), signal }, generation,
+    { ...transfer, maxBytes: (format === "json" ? 8 : 37) * 1024 * 1024 });
   current();
   const mime = blob.type.split(";")[0].trim().toLowerCase();
   if (mime !== (format === "json" ? "application/json" : "application/zip") ||

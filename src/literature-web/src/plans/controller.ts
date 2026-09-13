@@ -1,5 +1,6 @@
 import { ApiError, sessionGeneration } from "../api";
 import { ControlPlan, CreatePlan, PlanAction, PlanCatalog, PlanPage, planApi } from "./api";
+import { SavedMember, savedMembers } from "./basket";
 
 type Pending = { kind: "create"; body: CreatePlan } | { kind: "control"; planID: string; body: ControlPlan };
 export type PlanState = {
@@ -20,9 +21,11 @@ export class PlanController {
   private disposed = false;
   private abort: AbortController | null = null;
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private openedID = "";
+  private mutationSavedSet = false;
   constructor(
     readonly library: string,
-    readonly runID: string,
+    public runID: string,
     readonly generation: number,
     private readonly publish: (state: PlanState) => void,
   ) { this.api = planApi(library, generation); }
@@ -34,6 +37,7 @@ export class PlanController {
     }
   }
   private begin() {
+    this.mutationSavedSet = false;
     clearTimeout(this.timer);
     this.abort?.abort();
     const controller = new AbortController();
@@ -70,6 +74,21 @@ export class PlanController {
     this.abort?.abort();
     clearTimeout(this.timer);
   }
+  changeRun(runID: string): boolean {
+    if (runID === this.runID) return false;
+    this.runID = runID;
+    if (this.mutationSavedSet) return false;
+    const pending = this.state.pending;
+    if (!pending && !this.openedID && !this.state.page) return false; // Initial catalog is library-scoped.
+    const savedSet = pending?.kind === "create" ? "scopeKind" in pending.body
+      : (this.state.page?.plan ?? this.state.catalog.plans.find(plan => plan.planID === this.openedID))?.scopeKind === "saved_set";
+    if (savedSet) return false;
+    // Library catalog remains visible; only obsolete single-run operations retire.
+    this.operation++; this.abort?.abort(); clearTimeout(this.timer);
+    this.openedID = "";
+    this.set({ page: null, pending: null, busy: false, error: "", notice: "", automaticReads: 0, pollingStopped: false });
+    return true;
+  }
   async catalog(offset = 0) {
     if (this.disposed) return;
     const task = this.begin();
@@ -84,6 +103,7 @@ export class PlanController {
   }
   async read(id: string, offset = 0, automatic = false) {
     if (!id || this.disposed) return;
+    this.openedID = id;
     const changed = id !== this.state.page?.plan.planID;
     if (changed) this.set({ page: null, pending: null, notice: "" });
     this.set(automatic ? { automaticReads: this.state.automaticReads + 1 } : { automaticReads: 0, pollingStopped: false });
@@ -115,6 +135,14 @@ export class PlanController {
     this.set({ pending });
     await this.mutate(pending);
   }
+  async createSavedSet(members: SavedMember[], format: "pdf" | "xml") {
+    if (this.disposed || this.state.busy || this.state.pending) return;
+    let frozen: SavedMember[];
+    try { frozen = savedMembers(members); }
+    catch (error) { this.set({ error: (error as Error).message }); return; }
+    const pending: Pending = { kind: "create", body: { requestID: crypto.randomUUID(), scopeKind: "saved_set", members: frozen, format } };
+    this.set({ pending }); await this.mutate(pending);
+  }
   async control(value: PlanAction) {
     const plan = this.state.page?.plan;
     if (!plan || this.disposed || this.state.busy || this.state.pending || !plan.allowedActions.includes(value)) return;
@@ -128,6 +156,7 @@ export class PlanController {
   }
   private async mutate(pending: Pending) {
     const task = this.begin();
+    this.mutationSavedSet = pending.kind === "create" ? "scopeKind" in pending.body : this.state.page?.plan.scopeKind === "saved_set";
     let committed = false;
     try {
       const receipt = pending.kind === "create"
@@ -166,7 +195,7 @@ export class PlanController {
           : "The response was not confirmed. Retry the same submission to check its outcome, or reopen saved plans." });
       }
     } finally {
-      if (task.current()) { this.set({ busy: false }); this.schedule(); }
+      if (task.current()) { this.mutationSavedSet = false; this.set({ busy: false }); this.schedule(); }
     }
   }
 }

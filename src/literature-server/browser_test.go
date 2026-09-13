@@ -82,6 +82,20 @@ func TestBrowserServer(t *testing.T) {
 	if _, err = db.Exec(ctx, nativeSchema); err != nil {
 		t.Fatal(err)
 	}
+	multirun := os.Getenv("LITRADOCK_MULTIRUN_BROWSER_TEST") == "yes"
+	if multirun {
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = migrateMultirun(ctx, tx, false); err != nil {
+			tx.Rollback(ctx)
+			t.Fatal(err)
+		}
+		if err = tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
 	accounts := []map[string]string{}
 	for _, label := range []string{"a", "b"} {
 		password := "SYNTHETIC-" + newUUID()
@@ -103,7 +117,8 @@ func TestBrowserServer(t *testing.T) {
 	cfg.Listen = listener.Addr().String()
 	cfg.Origin = "http://" + cfg.Listen
 	cfg.LocalTest, cfg.SearchEnabled, cfg.AcquisitionEnabled = true, true, true
-	cfg.PlanEnabled = os.Getenv("LITRADOCK_PLAN_BROWSER_TEST") == "yes"
+	cfg.PlanEnabled = os.Getenv("LITRADOCK_PLAN_BROWSER_TEST") == "yes" || multirun
+	cfg.SavedSetEnabled = multirun
 	if cfg.PlanEnabled {
 		for i := 3; i <= 100; i++ {
 			cfg.BlockedPMCIDs = append(cfg.BlockedPMCIDs, fmt.Sprintf("PMC990002%03d", i))
@@ -167,6 +182,9 @@ func TestBrowserServer(t *testing.T) {
 				}
 				body += `</IdList><QueryTranslation>SYNTHETIC plan transport only</QueryTranslation></eSearchResult>`
 			}
+			if multirun && r.URL.Query().Get("term") == "SYNTHETIC_SECOND_RUN" {
+				body = `<eSearchResult><Count>10001</Count><IdList><Id>990000002</Id><Id>990000003</Id></IdList><QueryTranslation>SYNTHETIC second query</QueryTranslation></eSearchResult>`
+			}
 		case r.URL.Host == "eutils.ncbi.nlm.nih.gov" && strings.HasSuffix(r.URL.Path, "/efetch.fcgi"):
 			body = `<PubmedArticleSet>`
 			for _, id := range strings.Split(r.URL.Query().Get("id"), ",") {
@@ -182,7 +200,7 @@ func TestBrowserServer(t *testing.T) {
 				return nil, fmt.Errorf("unexpected synthetic original target")
 			}
 			body = strings.ReplaceAll(strings.ReplaceAll(syntheticOAI(), "990000001", id), "10.0000/synthetic", "10.0000/synthetic"+id)
-			if cfg.PlanEnabled && id == "990000002" && !planRateLimited {
+			if cfg.PlanEnabled && !multirun && id == "990000002" && !planRateLimited {
 				planRateLimited = true
 				return &http.Response{StatusCode: 429, Header: http.Header{"Content-Type": {"application/xml"}, "Retry-After": {"2"}}, Body: io.NopCloser(strings.NewReader("SYNTHETIC cooldown"))}, nil
 			}

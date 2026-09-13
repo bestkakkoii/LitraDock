@@ -1,9 +1,12 @@
 import { Article, request } from "../api";
+import { SavedMember } from "./basket";
 
 export const phases = ["waiting", "queued", "running", "completed", "held", "retry", "paused", "cancelled"] as const;
 export type Phase = typeof phases[number];
 export type PlanAction = "pause" | "resume" | "cancel" | "retry";
 export type PlanSummary = {
+  scopeKind?: "saved_set";
+  sourceRunIDs?: string[];
   requestedFormat?: "xml" | "pdf";
   planID: string; runID: string; state: string; selectedCount: number;
   createdAt: string; updatedAt: string; revision: number; allowedActions: string[];
@@ -12,6 +15,7 @@ export type PlanSummary = {
   retryEligibleCount: number;
 };
 export type PlanItem = {
+  runIDs?: string[];
   mediaType?: string; depositVersion?: string; depositType?: string;
   searchID: string; rank: number; childBatchID: string | null; phase: Phase;
   acquisitionState: string | null; reason: string; attempts: number;
@@ -21,7 +25,8 @@ export type PlanItem = {
 };
 export type PlanPage = { plan: PlanSummary; items: PlanItem[]; total: number; offset: number; limit: number; nextPollAfterMs: number; policy: string };
 export type PlanCatalog = { plans: PlanSummary[]; total: number; offset: number; limit: number };
-export type CreatePlan = { requestID: string; runID: string; searchIDs: string[]; format?: "xml" | "pdf" };
+export type CreatePlan = { requestID: string; runID: string; searchIDs: string[]; format?: "xml" | "pdf" } |
+  { requestID: string; scopeKind: "saved_set"; members: SavedMember[]; format: "xml" | "pdf" };
 export type ControlPlan = { requestID: string; expectedRevision: number; value: PlanAction };
 export type Receipt = { planID: string; revision: number; state: string; selectedCount?: number; affectedCount?: number };
 
@@ -32,6 +37,9 @@ export function validateSummary(plan: PlanSummary) {
     phases.some(phase => !Number.isInteger(plan.counts[phase]) || plan.counts[phase] < 0) ||
     phases.reduce((total, phase) => total + plan.counts[phase], 0) !== plan.selectedCount)
     throw new Error("Plan status is unavailable: invalid server counts. Refresh to check again.");
+  if (plan.scopeKind === "saved_set" && (plan.runID !== "" || !Array.isArray(plan.sourceRunIDs) || !plan.sourceRunIDs.length ||
+    plan.sourceRunIDs.some(id => typeof id !== "string" || !id) || new Set(plan.sourceRunIDs).size !== plan.sourceRunIDs.length))
+    throw new Error("Saved-set provenance is unavailable. Refresh to check again.");
 }
 export function validatePage(page: PlanPage): PlanPage {
   validateSummary(page.plan);

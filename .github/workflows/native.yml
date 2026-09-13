@@ -97,6 +97,9 @@ jobs:
       - name: Compiled whole-plan export transport controls
         working-directory: src/literature-web
         run: node scripts/plan-export-browser-check.mjs
+      - name: Compiled multi-run basket and paced transfer controls
+        working-directory: src/literature-web
+        run: node scripts/multirun-browser-check.mjs
       - name: Fresh native PostgreSQL browser database
         env:
           PGPASSWORD: synthetic-ci-only
@@ -123,12 +126,25 @@ jobs:
           target.chmod(0o600)
           PY
           python3 scripts/run-native-browser.py --plans --revision "$GITHUB_SHA" --config "$RUNNER_TEMP/native-plan-browser-config.json" --manifest "$RUNNER_TEMP/native-build/runtime-manifest.json" --frontend-directory "$RUNNER_TEMP/web-one" --output-directory "$RUNNER_TEMP/native-plan-browser"
+      - name: Fresh multi-run PostgreSQL and compiled browser
+        env:
+          PGPASSWORD: synthetic-ci-only
+        run: |
+          createdb -h 127.0.0.1 -U native_test litradock_native_test_browser_multirun
+          python3 - <<'PY'
+          import json,os,pathlib
+          target=pathlib.Path(os.environ['RUNNER_TEMP'])/'native-multirun-browser-config.json'
+          target.write_text(json.dumps({'Database':'host=127.0.0.1 user=native_test password=synthetic-ci-only dbname=litradock_native_test_browser_multirun sslmode=disable'}))
+          target.chmod(0o600)
+          PY
+          python3 scripts/run-native-browser.py --multirun --revision "$GITHUB_SHA" --config "$RUNNER_TEMP/native-multirun-browser-config.json" --manifest "$RUNNER_TEMP/native-build/runtime-manifest.json" --frontend-directory "$RUNNER_TEMP/web-one" --output-directory "$RUNNER_TEMP/native-multirun-browser"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: native-browser-synthetic-evidence
           path: |
             src/literature-web/.litradock/runtime/frontend012/**/result.json
+            src/literature-web/.litradock/runtime/frontend015/**/result.json
             ${{ runner.temp }}/native-browser/receipt.json
             ${{ runner.temp }}/native-browser/compile.log
             ${{ runner.temp }}/native-browser/server.log
@@ -138,6 +154,11 @@ jobs:
             ${{ runner.temp }}/native-plan-browser/browser.log
             ${{ runner.temp }}/native-multirun/*.json
             ${{ runner.temp }}/native-multirun/*.zip
+            ${{ runner.temp }}/native-multirun-browser/receipt.json
+            ${{ runner.temp }}/native-multirun-browser/browser.log
+            ${{ runner.temp }}/native-multirun-browser/server.log
+            ${{ runner.temp }}/native-multirun-browser/*.download.*
+            ${{ runner.temp }}/native-multirun-browser/*.intent.json
       - uses: actions/upload-artifact@v4
         with:
           name: native-code-runtime

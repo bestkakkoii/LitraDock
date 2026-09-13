@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "test": "node browser-regression.mjs",
-    "test:plans": "node plan-browser-regression.mjs"
+    "test:plans": "node plan-browser-regression.mjs",
+    "test:multirun": "node multirun-browser-regression.mjs"
   },
   "dependencies": {
     "fflate": "0.8.3",

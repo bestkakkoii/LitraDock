@@ -45,7 +45,7 @@ it("renders scoped counts, held safe links and child navigation; cancel needs ex
   expect(button("Create processing plan (37/100)").disabled).toBe(false);
   await openPlan();
   expect(change).toHaveBeenCalledOnce();
-  expect(host.textContent).toContain("37 selected saved records");
+  expect(host.textContent).toContain("37 saved records");
   expect(host.textContent).toContain("10 admitted to child batches · 27 awaiting admission");
   expect(host.textContent).toContain("0 of 1 items on this page currently available to save");
   expect(host.querySelectorAll(".plan-counts > div")).toHaveLength(8);

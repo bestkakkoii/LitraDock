@@ -1,3 +1,4 @@
+import { readTransfer, TransferOptions } from "./transfer";
 export type Session = { csrf: string };
 export type Library = { library_id: string; name: string };
 export type Run = {
@@ -38,6 +39,7 @@ export type LibraryPage = {
   limit: number;
 };
 export type ServiceInfo = {
+  savedSetEnabled?: boolean;
   pdfEnabled?: boolean;
   pdfPolicySummary?: string;
   planEnabled?: boolean;
@@ -174,6 +176,7 @@ export async function requestBlob(
   path: string,
   init: RequestInit = {},
   expectedGeneration = generation,
+  transfer: TransferOptions = {},
 ): Promise<Blob> {
   const slot = requestSlot();
   const release = typeof slot === "function" ? slot : await slot;
@@ -198,7 +201,8 @@ export async function requestBlob(
     throw new ApiError(response.status, `Download unavailable (HTTP ${response.status}).`,
       response.status === 429 ? retryAfterSeconds(response.headers?.get("Retry-After") ?? null) : undefined);
   }
-  const blob = await response.blob();
+  const blob = await readTransfer(response, init.signal,
+    () => assertRequestCurrent(expectedGeneration, init.signal), transfer);
   assertRequestCurrent(expectedGeneration, init.signal);
   return blob;
   } finally { release(); }
@@ -275,38 +279,44 @@ export const api = {
       { method: "POST", body: JSON.stringify({ value }), signal },
       g,
     ),
-  original: (library: string, searchID: string, hash: string, g = generation, signal?: AbortSignal) =>
+  original: (library: string, searchID: string, hash: string, g = generation, signal?: AbortSignal, transfer: TransferOptions = {}) =>
     requestBlob(
       `/api/libraries/${encodeURIComponent(library)}/originals/${encodeURIComponent(searchID)}/${encodeURIComponent(hash)}`,
       { signal },
       g,
+      { ...transfer, maxBytes: 32 * 1024 * 1024 },
     ),
   exportCsv: (
     library: string,
     selection: { runID?: string; batchID?: string },
     g = generation,
     signal?: AbortSignal,
+    transfer: TransferOptions = {},
   ) =>
     requestBlob(
       `/api/libraries/${encodeURIComponent(library)}/exports`,
       { method: "POST", body: JSON.stringify({ ...selection, format: "csv" }), signal },
       g,
+      transfer,
     ),
   exportXlsx: (
     library: string,
     selection: { runID?: string; batchID?: string },
     g = generation,
     signal?: AbortSignal,
+    transfer: TransferOptions = {},
   ) =>
     requestBlob(
       `/api/libraries/${encodeURIComponent(library)}/exports`,
       { method: "POST", body: JSON.stringify({ ...selection, format: "xlsx" }), signal },
       g,
+      transfer,
     ),
-  exportBundle: (library: string, batchID: string, g = generation, signal?: AbortSignal) =>
+  exportBundle: (library: string, batchID: string, g = generation, signal?: AbortSignal, transfer: TransferOptions = {}) =>
     requestBlob(
       `/api/libraries/${encodeURIComponent(library)}/exports`,
       { method: "POST", body: JSON.stringify({ batchID, format: "zip" }), signal },
       g,
+      transfer,
     ),
 };
