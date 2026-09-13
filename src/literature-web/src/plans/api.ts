@@ -5,7 +5,7 @@ export const phases = ["waiting", "queued", "running", "completed", "held", "ret
 export type Phase = typeof phases[number];
 export type PlanAction = "pause" | "resume" | "cancel" | "retry";
 export type PlanSummary = {
-  scopeKind?: "saved_set";
+  scopeKind?: "saved_set" | "saved_snapshot";
   sourceRunIDs?: string[];
   requestedFormat?: "xml" | "pdf";
   planID: string; runID: string; state: string; selectedCount: number;
@@ -26,7 +26,8 @@ export type PlanItem = {
 export type PlanPage = { plan: PlanSummary; items: PlanItem[]; total: number; offset: number; limit: number; nextPollAfterMs: number; policy: string };
 export type PlanCatalog = { plans: PlanSummary[]; total: number; offset: number; limit: number };
 export type CreatePlan = { requestID: string; runID: string; searchIDs: string[]; format?: "xml" | "pdf" } |
-  { requestID: string; scopeKind: "saved_set"; members: SavedMember[]; format: "xml" | "pdf" };
+  { requestID: string; scopeKind: "saved_set"; members: SavedMember[]; format: "xml" | "pdf" } |
+  { requestID: string; scopeKind: "saved_snapshot"; members: SavedMember[]; format: "pdf" };
 export type ControlPlan = { requestID: string; expectedRevision: number; value: PlanAction };
 export type Receipt = { planID: string; revision: number; state: string; selectedCount?: number; affectedCount?: number };
 const receiptError = () => new Error("The server receipt was not confirmed. Retry only the same submission to check its outcome.");
@@ -37,7 +38,8 @@ function receiptObject(value: unknown): asserts value is Receipt {
 export function validateCreateReceipt(value: unknown, body: CreatePlan): Receipt {
   receiptObject(value);
   const count = "members" in body ? body.members.length : body.searchIDs.length;
-  if (value.revision !== 1 || value.state !== "active" || value.selectedCount !== count ||
+  const snapshot = "scopeKind" in body && body.scopeKind === "saved_snapshot";
+  if (value.revision !== 1 || value.state !== (snapshot ? "saved_snapshot" : "active") || value.selectedCount !== count ||
     value.affectedCount !== 0) throw receiptError();
   return value;
 }
@@ -57,9 +59,14 @@ export function validateSummary(plan: PlanSummary) {
     phases.some(phase => !Number.isInteger(plan.counts[phase]) || plan.counts[phase] < 0) ||
     phases.reduce((total, phase) => total + plan.counts[phase], 0) !== plan.selectedCount)
     throw new Error("Plan status is unavailable: invalid server counts. Refresh to check again.");
-  if (plan.scopeKind === "saved_set" && (plan.runID !== "" || !Array.isArray(plan.sourceRunIDs) || !plan.sourceRunIDs.length ||
+  if (plan.scopeKind && (plan.runID !== "" || !Array.isArray(plan.sourceRunIDs) || !plan.sourceRunIDs.length ||
     plan.sourceRunIDs.some(id => typeof id !== "string" || !id) || new Set(plan.sourceRunIDs).size !== plan.sourceRunIDs.length))
     throw new Error("Saved-set provenance is unavailable. Refresh to check again.");
+  if ((plan.scopeKind === "saved_snapshot" || plan.state === "saved_snapshot") &&
+    (plan.scopeKind !== "saved_snapshot" || plan.state !== "saved_snapshot" || plan.allowedActions.length ||
+      plan.admission.admittedCount !== 0 || plan.admission.waitingCount !== 0 || plan.retryEligibleCount !== 0 ||
+      ["waiting", "queued", "running", "paused", "cancelled"].some(phase => plan.counts[phase as Phase] !== 0)))
+    throw new Error("Snapshot status is inconsistent. No acquisition action is available.");
 }
 export function validatePage(page: PlanPage): PlanPage {
   validateSummary(page.plan);
@@ -70,6 +77,8 @@ export function validatePage(page: PlanPage): PlanPage {
     page.items.some(item => !item.searchID || !phases.includes(item.phase) || typeof item.downloadAvailable !== "boolean") ||
     !Number.isFinite(page.nextPollAfterMs) || page.nextPollAfterMs < 0)
     throw new Error("Plan status is unavailable: invalid server response.");
+  if (page.plan.scopeKind === "saved_snapshot" && page.items.some(item => item.childBatchID !== null || item.retryEligible))
+    throw new Error("Snapshot status contains unexpected processing actions.");
   return page;
 }
 export function planApi(library: string, generation: number) {

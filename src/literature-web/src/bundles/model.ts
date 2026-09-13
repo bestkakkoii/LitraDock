@@ -40,11 +40,11 @@ export function validateDocument(value: unknown, expected: ExportIdentity, snaps
   const m = value.manifest, c = m.counts, r = m.research;
   if (m.schema !== "litradock.plan-export" || m.schemaVersion !== 1 || m.type !== "document" || m.originalsRevalidated !== true ||
       !object(m.plan) || m.plan.planID !== expected.planID || m.plan.runID !== expected.runID || m.plan.selectedCount !== expected.selectedCount ||
-      m.plan.scopeKind !== expected.scopeKind || (expected.scopeKind === "saved_set" && JSON.stringify(m.plan.sourceRunIDs) !== JSON.stringify(expected.sourceRunIDs)) ||
+      m.plan.scopeKind !== expected.scopeKind || (expected.scopeKind && JSON.stringify(m.plan.sourceRunIDs) !== JSON.stringify(expected.sourceRunIDs)) ||
       !object(c) || c.members !== expected.selectedCount || !integer(c.members, 1, 100) || !integer(c.includedRecords, 0, c.members) ||
       c.unresolvedRecords !== c.members - c.includedRecords || !integer(c.uniqueOriginals, 0, c.includedRecords) || !integer(c.originalBytes, 0, 128 * MiB) ||
       !Array.isArray(m.items) || m.items.length !== c.members || !object(r) || r.schema !== "litradock.research-export" || r.schemaVersion !== 1 || r.type !== "document" ||
-      !object(r.scope) || r.scope.kind !== "plan" || r.scope.planId !== expected.planID || r.scope.selection !== "all_saved_scope" || r.scope.runId !== null || r.scope.batchId !== null ||
+      !object(r.scope) || r.scope.kind !== (expected.scopeKind === "saved_snapshot" ? "saved_snapshot" : "plan") || r.scope.planId !== expected.planID || r.scope.selection !== "all_saved_scope" || r.scope.runId !== null || r.scope.batchId !== null ||
       !object(r.counts) || r.counts.exportedRecords !== c.members || r.counts.scopeRecords !== c.members || r.counts.providerMatches !== null || r.counts.retrievedRecords !== null ||
       !Array.isArray(r.queryContexts) || !Array.isArray(r.records) || r.records.length !== c.members) throw invalid();
   const members = new Map<string, Record<string, any>>();

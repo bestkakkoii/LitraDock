@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { Article, sessionGeneration } from "../api";
+import { Article, request, sessionGeneration } from "../api";
 import { addToBasket, associationCount, BasketMember } from "./basket";
 import { SourceLinks } from "../components/ArticleCard";
 import { Phase, PlanAction, phases } from "./api";
@@ -23,12 +23,22 @@ export function PlanWorkspace(props: Props) {
   const [state, setState] = useState(emptyPlanState);
   const [basket, setBasket] = useState<BasketMember[]>([]);
   const [basketError, setBasketError] = useState("");
+  const [snapshotEnabled, setSnapshotEnabled] = useState(false);
   const [format, setFormat] = useState<"pdf" | "xml">("pdf");
   const controller = useRef<PlanController | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const cancelButton = useRef<HTMLButtonElement>(null);
   const exportScope = useRef(new AbortController());
   const retireExports = () => { exportScope.current.abort(); exportScope.current = new AbortController(); };
+  useLayoutEffect(() => {
+    const abort = new AbortController();
+    const signal = AbortSignal.any([abort.signal, props.scopeSignal]);
+    setSnapshotEnabled(false);
+    void request<{ savedSnapshotEnabled?: boolean }>("/service-info", { signal }, props.generation, 65536)
+      .then(info => { if (!signal.aborted && props.generation === sessionGeneration()) setSnapshotEnabled(info.savedSnapshotEnabled === true); })
+      .catch(() => { /* Remain unavailable when capability cannot be confirmed. */ });
+    return () => abort.abort();
+  }, [props.library, props.generation, props.scopeSignal]);
   useLayoutEffect(() => {
     retireExports();
     setBasket([]); setBasketError("");
@@ -54,6 +64,7 @@ export function PlanWorkspace(props: Props) {
   const current = () => props.generation === sessionGeneration() && !props.scopeSignal.aborted;
   const page = state.page;
   const plan = page?.plan;
+  const snapshot = plan?.scopeKind === "saved_snapshot";
   const act = (action: PlanAction) => {
     if (!current()) return;
     if (action === "cancel") { setConfirmCancel(true); return; }
@@ -67,11 +78,17 @@ export function PlanWorkspace(props: Props) {
     void controller.current?.read(id);
   };
   return <section className="panel plan-workspace" aria-label="Processing plans">
-    <h2>Processing plans</h2>
+    <h2>Research snapshots and processing plans</h2>
     <section className="saved-basket" aria-label="Saved-record basket">
       <h3>Combine saved searches</h3>
       <p>{basket.length} records in basket · {new Set(basket.flatMap(item => item.runIDs)).size} saved searches</p>
       <div className="plan-actions">
+        <button disabled={!snapshotEnabled || !basket.length || state.busy || !!state.pending || !!state.confirmed}
+          onClick={() => {
+            if (!current()) return;
+            props.onPlanChange(); retireExports(); setConfirmCancel(false);
+            void controller.current?.createSnapshot(basket);
+          }}>Save research snapshot ({basket.length})</button>
         <button className="secondary" disabled={!props.runID || props.admissionReady === false || !props.selectedIDs.length}
           onClick={() => {
             if (!current()) return;
@@ -79,7 +96,7 @@ export function PlanWorkspace(props: Props) {
             catch (error) { setBasketError((error as Error).message); }
           }}>Add checked records to basket ({props.selectedIDs.length})</button>
         <button className="secondary" disabled={!basket.length} onClick={() => { setBasket([]); setBasketError(""); }}>Clear basket</button>
-        <label>Requested originals <select aria-label="Basket original format" value={format} onChange={event => setFormat(event.target.value as "pdf" | "xml")}>
+        <label>Download format <select aria-label="Basket original format" value={format} onChange={event => setFormat(event.target.value as "pdf" | "xml")}>
           <option value="pdf">PDF</option><option value="xml">XML</option>
         </select></label>
         <button disabled={!props.savedSetEnabled || (format === "pdf" && !props.pdfEnabled) || !basket.length || state.busy || !!state.pending || !!state.confirmed}
@@ -89,11 +106,13 @@ export function PlanWorkspace(props: Props) {
             void controller.current?.createSavedSet(basket, format);
           }}>Download basket {format.toUpperCase()}s ({basket.length})</button>
       </div>
+      <p>Save the basket’s ordered records and search provenance without acquiring any files. Download basket remains a separate acquisition action.</p>
+      {!snapshotEnabled && <p className="muted">Saving new research snapshots is unavailable under current server policy. Existing snapshots remain readable.</p>}
       {!props.savedSetEnabled && <p className="muted">New multi-search plans are unavailable. Existing saved plans remain accessible.</p>}
       {format === "pdf" && !props.pdfEnabled && <p className="muted">PDF acquisition is unavailable under the current source policy.</p>}
       {basketError && <p role="alert" className="error">{basketError}</p>}
       <details><summary>Basket records, search provenance and limits</summary>
-        <p>Independent of checked records in the current search. Up to 100 unique saved records and 1,000 record/search associations; currently {associationCount(basket)} associations. Adding records does not acquire anything. Processing uses existing bounded groups and source budgets.</p>
+        <p>Independent of checked records in the current search. Up to 100 unique saved records and 1,000 record/search associations; currently {associationCount(basket)} associations. Adding records does not acquire anything. Research snapshots use PDF as their original preference without requesting files; the download format selector applies only to the separate Download basket action. Processing uses existing bounded groups and source budgets.</p>
         {basket.map((item, index) => <BasketRow key={item.searchID} member={item} position={index + 1}
           onRemove={searchID => setBasket(previous => previous.filter(member => member.searchID !== searchID))} />)}
       </details>
@@ -111,7 +130,7 @@ export function PlanWorkspace(props: Props) {
     <label className="plan-catalog">Saved plans
       <select value={plan?.planID ?? ""} onChange={event => open(event.target.value)} aria-label="Saved plans">
         <option value="">Choose a saved plan</option>
-        {state.catalog.plans.map(item => <option key={item.planID} value={item.planID}>{item.planID} · {item.state} · {item.selectedCount} selected</option>)}
+        {state.catalog.plans.map(item => <option key={item.planID} value={item.planID}>{item.scopeKind === "saved_snapshot" ? "Research snapshot" : "Processing plan"} · {item.planID} · {item.scopeKind === "saved_snapshot" ? "Saved" : item.state} · {item.selectedCount} selected</option>)}
       </select>
     </label>
     <div className="pager">
@@ -132,25 +151,26 @@ export function PlanWorkspace(props: Props) {
       <button onClick={() => { if (current()) void controller.current?.retrySubmission(); }}>Retry same submission</button>
     </div>}
     {page && plan && <>
-      <h3>Plan {plan.planID}</h3>
-      <p>{plan.state} · {plan.selectedCount} saved records · Requested {(plan.requestedFormat ?? "xml").toUpperCase()}</p>
+      <h3>{snapshot ? "Research snapshot" : "Plan"} {plan.planID}</h3>
+      <p>{snapshot ? "Saved snapshot" : plan.state} · {plan.selectedCount} saved records · Requested {(plan.requestedFormat ?? "xml").toUpperCase()}</p>
       <details><summary>Saved search scope and processing details</summary>
-      <p>{plan.scopeKind === "saved_set" ? `Saved searches: ${plan.sourceRunIDs?.join(", ")}` : `Run ${plan.runID}`}</p>
+      <p>{plan.scopeKind ? `Saved searches: ${plan.sourceRunIDs?.join(", ")}` : `Run ${plan.runID}`}</p>
       <p className="muted">Last confirmed server update: {plan.updatedAt}</p>
-      <p>Processing uses groups of at most 10. Closing or reopening this plan does not admit or retry work.</p>
+      <p>{snapshot ? "This snapshot freezes saved membership and observations. It has no acquisition children or automatic retries." : "Processing uses groups of at most 10. Closing or reopening this plan does not admit or retry work."}</p>
       </details>
-      <p>{plan.admission.admittedCount} admitted to child batches · {plan.admission.waitingCount} awaiting admission (including paused records)</p>
+      {snapshot ? <p>No acquisition requested. All exports cover the whole saved snapshot, independent of the current run, page or checked records.</p> : <p>{plan.admission.admittedCount} admitted to child batches · {plan.admission.waitingCount} awaiting admission (including paused records)</p>}
       {plan.admission.reason && <p>{plan.admission.reason}{plan.admission.retryAfter ? ` · Check after ${plan.admission.retryAfter}` : ""}</p>}
       <dl className="plan-counts" aria-label="Plan progress counts">
-        {phases.map(phase => <div key={phase}><dt>{labels[phase]}</dt><dd>{plan.counts[phase]}</dd></div>)}
+        {(snapshot ? ["completed", "held", "retry"] as const : phases).map(phase => <div key={phase}><dt>{snapshot && phase === "retry" ? "Prior unsuccessful attempt" : labels[phase]}</dt><dd>{plan.counts[phase]}</dd></div>)}
       </dl>
-      <p>{plan.retryEligibleCount} eligible for explicit retry. Each retry action processes only the next eligible child group, up to 10 items. {page.items.filter(item => item.downloadAvailable).length} of {page.items.length} items on this page currently available to save.</p>
+      {!snapshot && <p>{plan.retryEligibleCount} eligible for explicit retry. Each retry action processes only the next eligible child group, up to 10 items. {page.items.filter(item => item.downloadAvailable).length} of {page.items.length} items on this page currently available to save.</p>}
+      {snapshot && <p>{page.items.filter(item => item.downloadAvailable).length} of {page.items.length} records on this page currently have an available original. Historical observations do not grant permission to download.</p>}
       <p className="muted">Acquired means stored on the server. Current rights or integrity checks may prevent saving a previously acquired original.</p>
-      <PlanExports key={`${props.generation}:${props.library}:${plan.scopeKind === "saved_set" ? "saved_set" : props.runID}:${plan.planID}`}
-        library={props.library} runID={plan.scopeKind === "saved_set" ? "" : props.runID} generation={props.generation} plan={plan}
+      <PlanExports key={`${props.generation}:${props.library}:${plan.scopeKind || props.runID}:${plan.planID}`}
+        library={props.library} runID={plan.scopeKind ? "" : props.runID} generation={props.generation} plan={plan}
         scopeSignal={props.scopeSignal} planSignal={exportScope.current.signal} />
       <div className="plan-actions">
-        {(["pause", "resume", "retry", "cancel"] as const).map(action => <button key={action} className="secondary"
+        {!snapshot && (["pause", "resume", "retry", "cancel"] as const).map(action => <button key={action} className="secondary"
           disabled={state.busy || !!state.pending || !!state.confirmed || !plan.allowedActions.includes(action) || (!props.enabled && (action === "resume" || action === "retry"))}
           onClick={() => act(action)}>{({pause: "Pause plan", resume: "Resume plan", retry: "Retry next eligible group", cancel: "Cancel plan"})[action]}</button>)}
         <button className="secondary" disabled={state.busy} onClick={() => { if (current()) void controller.current?.read(plan.planID, page.offset); }}>Refresh plan</button>
@@ -167,7 +187,7 @@ export function PlanWorkspace(props: Props) {
       {state.pollingStopped && <p role="status">Automatic refresh stopped after 120 reads. Server work can continue; use Refresh plan to check again.</p>}
       {page.items.map(item => <article key={item.searchID} className="plan-item">
         <h4>{String(item.article.Title ?? item.searchID)}</h4>
-        <p>{labels[item.phase]} · {item.searchID} · Attempts {item.attempts}{item.retryEligible ? " · Eligible for retry" : ""}</p>
+        <p>{snapshot && item.phase === "retry" ? "Prior unsuccessful attempt" : labels[item.phase]} · {item.searchID}{!snapshot && ` · Attempts ${item.attempts}${item.retryEligible ? " · Eligible for retry" : ""}`}</p>
         <p>{item.reason}</p>
         {item.runIDs && <details><summary>Record search provenance</summary><p>{item.runIDs.join(", ")}</p></details>}
         <p className="muted">PMID {String(item.article.Pmid ?? "—")} · PMCID {String(item.article.Pmcid ?? "—")} · DOI {String(item.article.Doi ?? "—")}</p>

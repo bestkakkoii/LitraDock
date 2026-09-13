@@ -176,7 +176,7 @@ func (s *server) structuredResearch(ctx context.Context, library, run, batch str
 }
 
 // The caller owns one consistent snapshot, including any plan state and original bytes.
-func (s *server) structuredResearchSnapshot(ctx context.Context, tx pgx.Tx, library, run, batch, plan string, frozenPlan ...bool) (structuredDocument, error) {
+func (s *server) liveStructuredResearchSnapshot(ctx context.Context, tx pgx.Tx, library, run, batch, plan string, frozenPlan ...bool) (structuredDocument, error) {
 	d := structuredDocument{Schema: structuredSchema, Version: 1, Type: "document", GeneratedAt: time.Now().UTC(), Queries: []structuredQuery{}, Records: []structuredRecord{}, Scope: structuredScope{Selection: "all_saved_scope", RunID: optionalText(run), BatchID: optionalText(batch), PlanID: optionalText(plan)}}
 	var err error
 	format := ""

@@ -83,7 +83,7 @@ export class PlanController {
     if (this.state.confirmed?.savedSet) return false;
     if (!pending && !this.openedID && !this.state.page && !this.state.confirmed) return false; // Initial catalog is library-scoped.
     const savedSet = pending?.kind === "create" ? "scopeKind" in pending.body
-      : pending?.kind === "control" ? pending.savedSet : (this.state.page?.plan ?? this.state.catalog.plans.find(plan => plan.planID === this.openedID))?.scopeKind === "saved_set";
+      : pending?.kind === "control" ? pending.savedSet : !!(this.state.page?.plan ?? this.state.catalog.plans.find(plan => plan.planID === this.openedID))?.scopeKind;
     if (savedSet) return false;
     // Library catalog remains visible; only obsolete single-run operations retire.
     this.operation++; this.abort?.abort(); clearTimeout(this.timer);
@@ -147,7 +147,7 @@ export class PlanController {
   }
   async control(value: PlanAction) {
     const plan = this.state.page?.plan;
-    if (!plan || this.disposed || this.state.busy || this.state.pending || this.state.confirmed || !plan.allowedActions.includes(value)) return;
+    if (!plan || plan.scopeKind === "saved_snapshot" || this.disposed || this.state.busy || this.state.pending || this.state.confirmed || !plan.allowedActions.includes(value)) return;
     const pending: Pending = { kind: "control", planID: plan.planID,
       body: { requestID: crypto.randomUUID(), expectedRevision: plan.revision, value }, selectedCount: plan.selectedCount, savedSet: plan.scopeKind === "saved_set" };
     this.set({ pending });
@@ -155,6 +155,14 @@ export class PlanController {
   }
   async retrySubmission() {
     if (this.state.pending && !this.state.busy && !this.disposed) await this.mutate(this.state.pending);
+  }
+  async createSnapshot(members: SavedMember[]) {
+    if (this.disposed || this.state.busy || this.state.pending || this.state.confirmed) return;
+    let frozen: SavedMember[];
+    try { frozen = savedMembers(members); }
+    catch (error) { this.set({ error: (error as Error).message }); return; }
+    const pending: Pending = { kind: "create", body: { requestID: crypto.randomUUID(), scopeKind: "saved_snapshot", format: "pdf", members: frozen } };
+    this.set({ pending }); await this.mutate(pending);
   }
   private async mutate(pending: Pending) {
     const task = this.begin();
@@ -175,6 +183,7 @@ export class PlanController {
       this.acceptPage(page);
       this.set({ notice: pending.kind === "control"
         ? `Request confirmed for ${receipt.affectedCount ?? 0} items. Current plan status: ${page.plan.state}.`
+        : page.plan.scopeKind === "saved_snapshot" ? "Research snapshot saved. No acquisition was requested."
         : "Plan saved. Server processing can continue after you close this page." });
       const catalog = await this.api.catalog(this.state.catalog.offset, task.signal);
       if (task.current()) this.set({ catalog });

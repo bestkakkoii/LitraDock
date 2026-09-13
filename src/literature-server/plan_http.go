@@ -37,6 +37,10 @@ func (s *server) planRoutes(w http.ResponseWriter, r *http.Request, ctx context.
 		s.bundleRoutes(w, r, ctx, library, parts[4], parts)
 		return true
 	}
+	if len(parts) == 6 && parts[5] == "metadata" && r.Method == "POST" {
+		s.snapshotMetadataHTTP(w, r, ctx, library, parts[4])
+		return true
+	}
 	if len(parts) == 6 && parts[5] == "exports" && r.Method == "POST" {
 		s.planExportHTTP(w, r, ctx, library, parts[4])
 		return true
@@ -50,7 +54,10 @@ func (s *server) planRoutes(w http.ResponseWriter, r *http.Request, ctx context.
 		}
 		// Up to 1000 explicit UUID-sized associations; other routes retain 16 KiB.
 		if decodeBounded(w, r, &input, 128*1024) {
-			if input.ScopeKind != nil && *input.ScopeKind == "saved_set" && input.Members != nil && input.RunID == nil && input.SearchIDs == nil {
+			if input.ScopeKind != nil && *input.ScopeKind == "saved_snapshot" && input.Members != nil && input.RunID == nil && input.SearchIDs == nil {
+				v, e := s.saveResearchSnapshot(ctx, library, input.RequestID, input.Format, *input.Members)
+				planReply(w, v, e)
+			} else if input.ScopeKind != nil && *input.ScopeKind == "saved_set" && input.Members != nil && input.RunID == nil && input.SearchIDs == nil {
 				v, e := s.queueSavedSet(ctx, library, input.RequestID, input.Format, *input.Members)
 				planReply(w, v, e)
 			} else if input.ScopeKind == nil && input.Members == nil && input.RunID != nil && input.SearchIDs != nil {

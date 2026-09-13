@@ -94,6 +94,11 @@ func (s *server) planExportHTTP(w http.ResponseWriter, r *http.Request, ctx cont
 	if input.Format == "zip" {
 		media, name = "application/zip", "litradock-plan-originals.zip"
 	}
+	release, ok := s.snapshotResponseAdmission(w, r, ctx, library)
+	if !ok {
+		return
+	}
+	defer release()
 	w.Header().Set("Content-Type", media)
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
 	_, _ = w.Write(data)

@@ -87,7 +87,7 @@ func capacityLock(ctx context.Context, tx pgx.Tx) error {
 }
 func acquisitionCapacity(ctx context.Context, tx pgx.Tx, extra int) error {
 	var count, total int64
-	err := tx.QueryRow(ctx, `SELECT (SELECT count(*) FROM native_items)+(SELECT count(*) FROM native_plan_items WHERE child_batch_id IS NULL),
+	err := tx.QueryRow(ctx, `SELECT (SELECT count(*) FROM native_items)+(SELECT count(*) FROM native_plan_items m JOIN native_plans p USING(library_id,plan_id) WHERE m.child_batch_id IS NULL AND p.state<>'saved_snapshot'),
  (SELECT COALESCE(sum(octet_length(content)+octet_length(proof)),0) FROM native_originals)`).Scan(&count, &total)
 	if err != nil {
 		return err
@@ -201,6 +201,28 @@ func (s *server) loadPlan(ctx context.Context, tx pgx.Tx, library, id string) (p
 	err := tx.QueryRow(ctx, "SELECT plan_id,COALESCE(run_id,''),state,revision,created_at,updated_at,requested_format FROM native_plans WHERE library_id=$1 AND plan_id=$2", library, id).Scan(&p.PlanID, &p.RunID, &p.State, &p.Revision, &p.CreatedAt, &p.UpdatedAt, &p.RequestedFormat)
 	if err != nil {
 		return p, nil, err
+	}
+	if p.State == "saved_snapshot" {
+		if !s.savedSnapshots {
+			return p, nil, exportInvalid("Saved snapshot schema unsupported")
+		}
+		d, e := loadResearchSnapshot(ctx, tx, library, id)
+		if e != nil {
+			return p, nil, e
+		}
+		items := []planItem{}
+		for _, o := range d.Observations {
+			i := o.Item
+			i.raw = o.Metadata
+			items = append(items, i)
+			p.Counts[i.Phase]++
+		}
+		if e = loadSavedSetSources(ctx, tx, library, &p, items); e != nil {
+			return p, nil, e
+		}
+		p.ScopeKind = "saved_snapshot"
+		p.SelectedCount = len(items)
+		return p, items, nil
 	}
 	rows, err := tx.Query(ctx, `SELECT m.search_id,m.rank,m.child_batch_id,m.cancelled,i.state,COALESCE(i.reason,''),COALESCE(i.attempts,0),COALESCE(i.original_hash,''),r.metadata
  FROM native_plan_items m JOIN ld_records r USING(library_id,search_id)
@@ -356,6 +378,9 @@ func (s *server) planDetail(ctx context.Context, library, id string, offset, lim
 	p.Admission.BlockedReasonCode = block.BlockedReasonCode
 	p.Admission.Reason = block.Reason
 	p.Admission.RetryAfter = block.RetryAfter
+	if p.State == "saved_snapshot" {
+		p.Admission = planAdmission{Reason: "Saved research only; no acquisition scheduled."}
+	}
 	if offset > len(items) {
 		offset = len(items)
 	}

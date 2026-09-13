@@ -15,13 +15,13 @@ export function validatePlanMetadata(value: unknown, expected: ExportIdentity) {
       !object(value.plan) || !object(value.research) || !object(value.counts) || !Array.isArray(value.items)) throw invalid();
   const plan = value.plan as PlanSummary, research = value.research, items = value.items, counts = value.counts;
   validateSummary(plan);
-  if (plan.scopeKind !== expected.scopeKind || (expected.scopeKind === "saved_set" &&
+  if (plan.scopeKind !== expected.scopeKind || (expected.scopeKind &&
     JSON.stringify(plan.sourceRunIDs) !== JSON.stringify(expected.sourceRunIDs))) throw invalid();
   if (plan.planID !== expected.planID || plan.runID !== expected.runID || plan.selectedCount !== expected.selectedCount ||
       value.counts.members !== plan.selectedCount || items.length !== plan.selectedCount ||
       ["includedRecords", "unresolvedRecords", "uniqueOriginals", "originalBytes"].some(key => counts[key] !== null) ||
       research.schema !== "litradock.research-export" || research.schemaVersion !== 1 || research.type !== "document" ||
-      !object(research.scope) || research.scope.kind !== "plan" || research.scope.planId !== expected.planID ||
+      !object(research.scope) || research.scope.kind !== (expected.scopeKind === "saved_snapshot" ? "saved_snapshot" : "plan") || research.scope.planId !== expected.planID ||
       research.scope.runId !== null || research.scope.batchId !== null || research.scope.selection !== "all_saved_scope" ||
       !object(research.counts) || research.counts.exportedRecords !== items.length || research.counts.scopeRecords !== items.length ||
       research.counts.providerMatches !== null || research.counts.retrievedRecords !== null ||
@@ -42,7 +42,7 @@ export function validatePlanMetadata(value: unknown, expected: ExportIdentity) {
         !object(record) || record.searchId !== item.searchId || !Array.isArray(record.originals) ||
         record.originals.some(original => !object(original) || original.availability !== "not_revalidated")) throw invalid();
     ids.add(item.searchId);
-    if (expected.scopeKind === "saved_set") {
+    if (expected.scopeKind) {
       if (!Array.isArray(record.runIds) || !record.runIds.length || new Set(record.runIds).size !== record.runIds.length ||
           record.runIds.some(id => typeof id !== "string" || !expected.sourceRunIDs?.includes(id))) throw invalid();
       record.runIds.forEach(id => sourceRuns.add(id as string));
@@ -50,7 +50,7 @@ export function validatePlanMetadata(value: unknown, expected: ExportIdentity) {
     actual[String(item.phase)]++;
   });
   if (phases.some(phase => actual[phase] !== plan.counts[phase])) throw invalid();
-  if (expected.scopeKind === "saved_set" && sourceRuns.size !== expected.sourceRunIDs?.length) throw invalid();
+  if (expected.scopeKind && sourceRuns.size !== expected.sourceRunIDs?.length) throw invalid();
 }
 
 export async function exportPlan(library: string, identity: ExportIdentity, format: PlanExportFormat,
@@ -60,7 +60,7 @@ export async function exportPlan(library: string, identity: ExportIdentity, form
   };
   current();
   const expected = { ...identity, sourceRunIDs: identity.sourceRunIDs && [...identity.sourceRunIDs] };
-  if (!library || !expected.planID || (expected.scopeKind === "saved_set" ? expected.runID !== "" || !expected.sourceRunIDs?.length : !expected.runID) || !Number.isInteger(expected.selectedCount) ||
+  if (!library || !expected.planID || (expected.scopeKind ? expected.runID !== "" || !expected.sourceRunIDs?.length : !expected.runID) || !Number.isInteger(expected.selectedCount) ||
       expected.selectedCount < 1 || expected.selectedCount > 100 || !["json", "zip"].includes(format)) throw invalid();
   const blob = await requestBlob(`/api/libraries/${encodeURIComponent(library)}/plans/${encodeURIComponent(expected.planID)}/exports`,
     { method: "POST", body: JSON.stringify({ format }), signal }, generation,

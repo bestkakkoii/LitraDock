@@ -101,7 +101,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return 10
 			}
 			return 0
-		}(), "searchContinuationEnabled": s.continuation && s.cfg.SearchContinuationEnabled && s.cfg.SearchEnabled, "searchWindowLimit": searchWindowLimit, "bundleDeliveryEnabled": s.bundles && s.cfg.BundleDeliveryEnabled, "bundleOriginalLimitBytes": bundleOriginalLimit, "bundlePartOriginalLimitBytes": bundlePartOriginalLimit, "pdfEnabled": s.native && s.cfg.PDFEnabled && s.cfg.AcquisitionEnabled, "pdfPolicySummary": pdfPolicySummary, "planEnabled": s.native && s.cfg.PlanEnabled, "savedSetEnabled": s.native && s.cfg.PlanEnabled && s.cfg.SavedSetEnabled, "planSelectionLimit": 100, "planGroupLimit": 10, "acquisitionEnabled": s.cfg.AcquisitionEnabled, "source": s.cfg.Revision})
+		}(), "searchContinuationEnabled": s.continuation && s.cfg.SearchContinuationEnabled && s.cfg.SearchEnabled, "searchWindowLimit": searchWindowLimit, "bundleDeliveryEnabled": s.bundles && s.cfg.BundleDeliveryEnabled, "bundleOriginalLimitBytes": bundleOriginalLimit, "bundlePartOriginalLimitBytes": bundlePartOriginalLimit, "pdfEnabled": s.native && s.cfg.PDFEnabled && s.cfg.AcquisitionEnabled, "pdfPolicySummary": pdfPolicySummary, "planEnabled": s.native && s.cfg.PlanEnabled, "savedSnapshotEnabled": s.native && s.savedSnapshots && s.cfg.SavedSetEnabled, "savedSetEnabled": s.native && s.cfg.PlanEnabled && s.cfg.SavedSetEnabled, "planSelectionLimit": 100, "planGroupLimit": 10, "acquisitionEnabled": s.cfg.AcquisitionEnabled, "source": s.cfg.Revision})
 		return
 	}
 	if !strings.HasPrefix(r.URL.Path, "/api/") {
@@ -210,6 +210,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, 403, nil)
 		return
 	}
+	ctx = context.WithValue(ctx, snapshotSessionKey{}, sess)
 	if r.URL.Path == "/api/session" && r.Method == "GET" {
 		reply(w, 200, map[string]string{"csrf": sess.CSRF})
 		return

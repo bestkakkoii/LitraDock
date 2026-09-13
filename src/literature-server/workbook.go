@@ -54,10 +54,11 @@ func (s *server) exportXLSX(ctx context.Context, library, run, batch string) ([]
 	return encodeWorkbook(ctx, rows, run, batch)
 }
 
-func encodeWorkbook(ctx context.Context, rows []map[string]any, run, batch string) ([]byte, error) {
+func encodeWorkbook(ctx context.Context, rows []map[string]any, run, batch string, extraColumns ...string) ([]byte, error) {
 	if len(rows) == 0 || len(rows) > 1000 {
 		return nil, errors.New("XLSX supports 1–1000 saved records; nothing truncated")
 	}
+	columns := append(append([]string{}, workbookColumns...), extraColumns...)
 	values := make([][]string, 0, len(rows))
 	totalBytes := 0
 	for _, row := range rows {
@@ -84,7 +85,18 @@ func encodeWorkbook(ctx context.Context, rows []map[string]any, run, batch strin
 			}
 			v = append(v, value)
 		}
-		v = append(v, run, batch, articleString(a, "DoiLinkState"))
+		rowRun := run
+		if x, ok := row["run_ids"].(string); ok {
+			rowRun = x
+		}
+		v = append(v, rowRun, batch, articleString(a, "DoiLinkState"))
+		if len(extraColumns) > 0 {
+			extra, ok := row["snapshot_extra"].([]string)
+			if !ok || len(extra) != len(extraColumns) {
+				return nil, errors.New("Incomplete snapshot workbook metadata")
+			}
+			v = append(v, extra...)
+		}
 		for _, x := range v {
 			if !workbookText(x) {
 				return nil, errors.New("XLSX cell contains unsupported or excessive text; use source records, no truncated workbook returned")
@@ -110,7 +122,7 @@ func encodeWorkbook(ctx context.Context, rows []map[string]any, run, batch strin
 	if e != nil {
 		return nil, e
 	}
-	for rowIndex, v := range append([][]string{workbookColumns}, values...) {
+	for rowIndex, v := range append([][]string{columns}, values...) {
 		if e = ctx.Err(); e != nil {
 			return nil, e
 		}
@@ -146,7 +158,7 @@ func encodeWorkbook(ctx context.Context, rows []map[string]any, run, batch strin
 	if e = f.SetPanes(sheet, &excelize.Panes{Freeze: true, YSplit: 1, TopLeftCell: "A2", ActivePane: "bottomLeft"}); e != nil {
 		return nil, e
 	}
-	end, _ := excelize.CoordinatesToCellName(len(workbookColumns), len(rows)+1)
+	end, _ := excelize.CoordinatesToCellName(len(columns), len(rows)+1)
 	if e = f.AutoFilter(sheet, "A1:"+end, nil); e != nil {
 		return nil, e
 	}
