@@ -66,6 +66,7 @@
     "src/literature-server/rights_v3_test.go": "src/literature-server/rights_v3_test.go",
     "src/literature-server/saved_snapshot.go": "src/literature-server/saved_snapshot.go",
     "src/literature-server/saved_snapshot_export.go": "src/literature-server/saved_snapshot_export.go",
+    "src/literature-server/saved_snapshot_release_test.go": "src/literature-server/saved_snapshot_release_test.go",
     "src/literature-server/saved_snapshot_test.go": "src/literature-server/saved_snapshot_test.go",
     "src/literature-server/search_continuation.go": "src/literature-server/search_continuation.go",
     "src/literature-server/search_continuation_test.go": "src/literature-server/search_continuation_test.go",

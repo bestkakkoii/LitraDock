@@ -434,5 +434,9 @@ func TestSavedSnapshotActualPostgres(t *testing.T) {
 	if countWork() != before || calls.Load() != 0 {
 		t.Fatal("export/reopen changed source work")
 	}
+	testSnapshotReleaseGates(t, ctx, s, library, account, members, saved)
+	if countWork() != before || calls.Load() != 0 {
+		t.Fatal("release gates changed source work")
+	}
 	t.Log("SYNTHETIC actual PostgreSQL: 12 records, 2 runs, 3 original associations, 2 unique files, 9 held; concurrent replay, conflicts, frozen metadata, source-zero, foreign/CSRF/revocation, occupied rollback denied")
 }

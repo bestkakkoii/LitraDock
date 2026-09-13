@@ -315,7 +315,18 @@ try {
     const other=(await choose.locator('option').evaluateAll(xs=>xs.map(x=>x.value))).find(x=>x&&x!==libraryId);
     await choose.selectOption(other);assert.equal(await boxes.count(),0);assert(await page.getByRole('button',{name:'Create batch (0/10)',exact:true}).isDisabled());
     const denied=await page.evaluate(async ({other,batch,owned})=>{
-      const session=await fetch('/api/session');if(session.status!==200)throw Error('session precondition');const {csrf}=await session.json();if(typeof csrf!=='string'||!csrf)throw Error('CSRF precondition');
+      // Catalog reads can briefly fill the two-request admission budget after a
+      // library switch. Retry only the explicit not-admitted GET response; an
+      // authentication failure or unknown throttle is still a failed precondition.
+      let session;
+      for(let attempt=0;attempt<3;attempt++){
+        session=await fetch('/api/session');if(session.status===200)break;
+        const status=session.status,retry=session.headers.get('Retry-After'),body=await session.text();
+        if(status!==429||retry!=='2'||JSON.parse(body)?.code!=='admission_not_started'||attempt===2)
+          throw Error(`session precondition: status=${status} retry=${retry} body=${body}`);
+        await new Promise(resolve=>setTimeout(resolve,2000));
+      }
+      const {csrf}=await session.json();if(typeof csrf!=='string'||!csrf)throw Error('CSRF precondition');
       const init={method:'POST',headers:{'X-CSRF':csrf,'Content-Type':'application/json'},body:JSON.stringify({format:'xlsx',batchID:batch})};
       const positive=await fetch(`/api/libraries/${owned}/exports`,init);if(positive.status!==200||positive.headers.get('Content-Type')!=='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')throw Error('same-session owned workbook precondition');await positive.arrayBuffer();
       const response=await fetch(`/api/libraries/${other}/exports`,init);
