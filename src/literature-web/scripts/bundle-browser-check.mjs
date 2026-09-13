@@ -198,7 +198,7 @@ try {
   await expect(button("Download selected parts")).toHaveCount(0);
   await checkDownload(await getDownload(() => button("Save bundle manifest").click()), "json"); result.cases.push("library retirement blocks late part; new account usable; manifest-only snapshot remains downloadable");
   enabled = false; await page.reload(); await expect(page.getByLabel("Choose library", { exact: true })).toBeVisible();
-  await page.locator(".history-entry").first().click(); await page.getByLabel("Saved plans", { exact: true }).selectOption(plan.planID);
+  await page.locator(".history-entry").first().click(); await expect(button("Select all")).toBeEnabled(); await page.getByLabel("Saved plans", { exact: true }).selectOption(plan.planID);
   await expect(button("Prepare download parts")).toBeDisabled(); await openSnapshot(d.snapshotID);
   mode = "401"; await button("Save part 1").click(); await expect(button("Sign in")).toBeEnabled(); await expect(area).toHaveCount(0);
   mode = "valid"; await login("A"); result.cases.push("policy-disabled new preparation retains saved reads; current401 clears private UI and login remains usable");
