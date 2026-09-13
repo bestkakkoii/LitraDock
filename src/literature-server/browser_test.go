@@ -34,6 +34,8 @@ func TestBrowserServer(t *testing.T) {
 	if err != nil || !strings.HasPrefix(pc.ConnConfig.Database, "litradock_native_test_browser_") {
 		t.Fatal("dedicated browser test database required")
 	}
+	// Match production pool capacity: two HTTP admission connections plus worker and transaction connections.
+	pc.MaxConns = 8
 	revision := os.Getenv("NATIVE_BROWSER_REVISION")
 	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(revision) {
 		t.Fatal("exact source revision required")
