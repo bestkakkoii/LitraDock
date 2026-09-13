@@ -11,3 +11,6 @@ The scope remains one owned library,1–100 unique records and at most1000 selec
 The frontend basket is intentionally library/session-scoped across run navigation. It remains separate from ordinary run-scoped checkboxes. Explicit admission creates one durable request; reopening reads only. Downloads report actual received bytes with honest unknown-length handling and retain session/body/scope fences. Byte arrival is distinct from validation and device Save.
 
 Broader result paging, archive partitioning, offline portability and genuinely large source workloads require separate qualification. This decision does not expand source permission or establish complete release support.
+# Request transport
+
+Plan admission alone accepts up to 128 KiB of JSON, covering the maximum explicit membership without increasing other request limits. Semantic record and association limits are checked separately; over-limit requests produce no partial plan.

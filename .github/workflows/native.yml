@@ -59,7 +59,7 @@ jobs:
       - name: Independent whole-plan ZIP and typed metadata controls
         run: python3 tests/native-browser/verify-plan-export.py "$RUNNER_TEMP/native-plan-export/plan-synthetic.json" "$RUNNER_TEMP/native-plan-export/plan-synthetic.zip" --synthetic --negative-controls
       - name: Independent frozen multi-run saved-set reader
-        run: python3 tests/native-browser/verify-plan-export.py "$RUNNER_TEMP/native-multirun/saved-set.json" "$RUNNER_TEMP/native-multirun/saved-set.zip"
+        run: python3 tests/native-browser/verify-plan-export.py "$RUNNER_TEMP/native-multirun/saved-set.json" "$RUNNER_TEMP/native-multirun/saved-set.zip" --expected-saved-set "$RUNNER_TEMP/native-multirun/intent.json" --negative-controls
       - name: Independent workbook reader and mutation controls
         run: |
           python3 -m venv "$RUNNER_TEMP/workbook-reader"
@@ -136,6 +136,8 @@ jobs:
             ${{ runner.temp }}/native-plan-browser/receipt.json
             ${{ runner.temp }}/native-plan-browser/server.log
             ${{ runner.temp }}/native-plan-browser/browser.log
+            ${{ runner.temp }}/native-multirun/*.json
+            ${{ runner.temp }}/native-multirun/*.zip
       - uses: actions/upload-artifact@v4
         with:
           name: native-code-runtime

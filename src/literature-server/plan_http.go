@@ -44,7 +44,8 @@ func (s *server) planRoutes(w http.ResponseWriter, r *http.Request, ctx context.
 			SearchIDs         *[]string
 			Members           *[]savedSetMember
 		}
-		if decode(w, r, &input) {
+		// Up to 1000 explicit UUID-sized associations; other routes retain 16 KiB.
+		if decodeBounded(w, r, &input, 128*1024) {
 			if input.ScopeKind != nil && *input.ScopeKind == "saved_set" && input.Members != nil && input.RunID == nil && input.SearchIDs == nil {
 				v, e := s.queueSavedSet(ctx, library, input.RequestID, input.Format, *input.Members)
 				planReply(w, v, e)

@@ -48,6 +48,22 @@ func TestSavedSetCanonicalIntent(t *testing.T) {
 	if _, _, e = canonicalSavedSet(many); e != nil {
 		t.Fatal("bounded100/1000", e)
 	}
+	wire, _ := json.Marshal(map[string]any{"requestID": newUUID(), "scopeKind": "saved_set", "members": many, "format": "pdf"})
+	if len(wire) <= 16384 {
+		t.Fatal("maximum body must expose previous 16KiB rejection")
+	}
+	var decoded struct {
+		RequestID, ScopeKind, Format string
+		Members                      []savedSetMember
+	}
+	if !decodeBounded(httptest.NewRecorder(), httptest.NewRequest("POST", "/", bytes.NewReader(wire)), &decoded, 128*1024) || len(decoded.Members) != 100 {
+		t.Fatal("maximum canonical wire body rejected")
+	}
+	for _, body := range [][]byte{append(bytes.Repeat([]byte(" "), 128*1024), wire...), append(slices.Clone(wire), []byte("{}")...)} {
+		if decodeBounded(httptest.NewRecorder(), httptest.NewRequest("POST", "/", bytes.NewReader(body)), &decoded, 128*1024) {
+			t.Fatal("oversize or concatenated body accepted")
+		}
+	}
 	many[0].RunIDs = append(many[0].RunIDs, newID("RUN-"))
 	if _, _, e = canonicalSavedSet(many); e == nil {
 		t.Fatal("1001 associations accepted")
@@ -320,7 +336,11 @@ func TestSavedSetActualPostgres(t *testing.T) {
 			if e = os.MkdirAll(dir, 0700); e != nil {
 				t.Fatal(e)
 			}
-			for name, b := range map[string][]byte{"saved-set.json": jsonBytes, "saved-set.zip": archive} {
+			intent, err := json.Marshal(selected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, b := range map[string][]byte{"saved-set.json": jsonBytes, "saved-set.zip": archive, "intent.json": intent} {
 				if e = os.WriteFile(filepath.Join(dir, name), b, 0600); e != nil {
 					t.Fatal(e)
 				}
@@ -369,6 +389,55 @@ func TestSavedSetActualPostgres(t *testing.T) {
 				t.Fatal("wire validation", w.Code)
 			}
 		}
+		t.Run("maximum-through-authenticated-http", func(t *testing.T) {
+			// Isolated workload: 100 saved records in ten actual synthetic run rows.
+			ids, sourceRuns := []string{}, []string{}
+			for n := 0; n < 100; n++ {
+				ids = append(ids, newID("LD-"))
+			}
+			for n := 0; n < 10; n++ {
+				sourceRuns = append(sourceRuns, newID("RUN-"))
+			}
+			must("INSERT INTO ld_runs(library_id,run_id,input,total,fetched,requested_limit,state) SELECT $1,id,'SYNTHETIC upper-bound workload',25001,100,100,'partial' FROM unnest($2::text[]) id", lib, sourceRuns)
+			must("INSERT INTO ld_records SELECT $1,id,json_build_object('SearchId',id,'Title','SYNTHETIC upper-bound workload')::text,'SYNTHETIC' FROM unnest($2::text[]) id", lib, ids)
+			must("INSERT INTO ld_results SELECT $1,r.run,id.search_id,id.rank FROM unnest($2::text[]) WITH ORDINALITY id(search_id,rank) CROSS JOIN unnest($3::text[]) r(run)", lib, ids, sourceRuns)
+			members := []savedSetMember{}
+			for _, id := range ids {
+				members = append(members, savedSetMember{id, sourceRuns})
+			}
+			wire, _ := json.Marshal(map[string]any{"requestID": newUUID(), "scopeKind": "saved_set", "members": members, "format": "pdf"})
+			invokeAdmission := func(body []byte) *httptest.ResponseRecorder {
+				r := httptest.NewRequest("POST", "/api/libraries/"+lib+"/plans", bytes.NewReader(body))
+				r.Host = "127.0.0.1:18089"
+				r.Header.Set("Origin", s.cfg.Origin)
+				r.Header.Set("Content-Type", "application/json")
+				r.Header.Set("X-CSRF", csrf)
+				r.AddCookie(&http.Cookie{Name: "LitraDockTest", Value: token})
+				w := httptest.NewRecorder()
+				s.ServeHTTP(w, r)
+				return w
+			}
+			w := invokeAdmission(wire)
+			var bound planReceipt
+			if len(wire) <= 16384 || w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &bound) != nil || bound.SelectedCount != 100 {
+				t.Fatal("maximum HTTP admission", len(wire), w.Code, w.Body.String())
+			}
+			var pairs int
+			if err := db.QueryRow(ctx, "SELECT count(*) FROM native_plan_sources WHERE library_id=$1 AND plan_id=$2", lib, bound.PlanID).Scan(&pairs); err != nil || pairs != 1000 {
+				t.Fatal("maximum durable membership", pairs, err)
+			}
+			if invokeAdmission(append(bytes.Repeat([]byte(" "), 128*1024), wire...)).Code != 400 {
+				t.Fatal("oversize authenticated admission")
+			}
+			members[0].RunIDs = append(slices.Clone(sourceRuns), newID("RUN-"))
+			tooMany, _ := json.Marshal(map[string]any{"requestID": newUUID(), "scopeKind": "saved_set", "members": members, "format": "pdf"})
+			if invokeAdmission(tooMany).Code != 400 {
+				t.Fatal("1001 associations admitted")
+			}
+			if _, err := s.controlPlan(ctx, lib, bound.PlanID, newUUID(), "cancel", 1); err != nil {
+				t.Fatal(err)
+			}
+		})
 		must("DELETE FROM ld_sessions WHERE token_hash=$1", digest(token))
 		if invoke(token, csrf) != 401 {
 			t.Fatal("revoked session")

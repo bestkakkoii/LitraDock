@@ -96,6 +96,46 @@ def load(path):
     return d, members, files
 
 
+def saved_set(d, expected):
+    """Compare against the separately captured admission intent, not export-derived IDs."""
+    plan, research = d["plan"], d["research"]
+    assert plan["scopeKind"] == "saved_set" and plan["runID"] == ""
+    assert 1 <= len(expected) <= 100
+    assert len({m["searchID"] for m in expected}) == len(expected)
+    assert [r["searchId"] for r in research["records"]] == [m["searchID"] for m in expected]
+    sources = set()
+    pairs = 0
+    for record, member in zip(research["records"], expected):
+        runs = member["runIDs"]
+        assert runs and len(runs) == len(set(runs))
+        assert record["runIds"] == sorted(runs)
+        sources.update(runs)
+        pairs += len(runs)
+    assert pairs <= 1000
+    assert plan["sourceRunIDs"] == sorted(sources)
+    assert {q["runId"] for q in research["queryContexts"]} == sources
+    assert research["counts"]["providerMatches"] is None
+    assert research["counts"]["retrievedRecords"] is None
+
+
+def saved_set_negatives(d, expected):
+    mutations = []
+    x = copy.deepcopy(d); x["plan"]["runID"] = "invented-combined-run"; mutations.append(x)
+    x = copy.deepcopy(d); x["plan"]["sourceRunIDs"] = []; mutations.append(x)
+    x = copy.deepcopy(d); x["research"]["records"][0]["runIds"].append("later-unselected-run"); mutations.append(x)
+    x = copy.deepcopy(d); x["research"]["records"][0]["runIds"] = []; mutations.append(x)
+    x = copy.deepcopy(d); x["research"]["counts"]["providerMatches"] = 99999; mutations.append(x)
+    if len(expected) > 1:
+        x = copy.deepcopy(d); x["research"]["records"].reverse(); mutations.append(x)
+    for x in mutations:
+        try:
+            saved_set(x, expected)
+        except AssertionError:
+            continue
+        raise AssertionError("Changed saved-set provenance accepted")
+    return len(mutations)
+
+
 def negatives(d, members):
     mutations = []
     x = copy.deepcopy(d); x["items"].pop(); mutations.append((x, members))
@@ -125,10 +165,16 @@ if __name__ == "__main__":
     parser.add_argument("--negative-controls", action="store_true")
     parser.add_argument("--pdf", action="store_true")
     parser.add_argument("--synthetic", action="store_true")
+    parser.add_argument("--expected-saved-set", type=pathlib.Path)
     args = parser.parse_args()
     result = []
     for path in args.files:
         d, members, originals = load(path)
+        saved_controls = 0
+        if args.expected_saved_set:
+            expected = decode(args.expected_saved_set.read_bytes())
+            saved_set(d, expected)
+            saved_controls = saved_set_negatives(d, expected)
         pages = []
         if args.pdf:
             from pypdf import PdfReader
@@ -146,5 +192,5 @@ if __name__ == "__main__":
                 assert d["counts"]["includedRecords"] == 3 and d["counts"]["uniqueOriginals"] == 2
                 assert d["items"][0]["file"] == d["items"][1]["file"] != d["items"][2]["file"]
                 assert d["items"][2]["original"]["depositVersion"] == "2"
-        result.append({"file": pathlib.Path(path).name, "members": len(d["items"]), "counts": d["counts"], "pdfs": pages, "negativeControls": negatives(d, members) if args.negative_controls else 0})
+        result.append({"file": pathlib.Path(path).name, "members": len(d["items"]), "counts": d["counts"], "pdfs": pages, "savedSetNegativeControls": saved_controls, "negativeControls": negatives(d, members) if args.negative_controls else 0})
     print(json.dumps({"pass": True, "synthetic": args.synthetic, "files": result}))

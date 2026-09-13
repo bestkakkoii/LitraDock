@@ -23,7 +23,10 @@ func reply(w http.ResponseWriter, status int, v any) {
 	}
 }
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, 16384)
+	return decodeBounded(w, r, v, 16384)
+}
+func decodeBounded(w http.ResponseWriter, r *http.Request, v any, limit int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if d.Decode(v) != nil {
