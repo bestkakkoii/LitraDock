@@ -129,9 +129,8 @@ try {
     await page.getByLabel("Query", { exact: true }).fill('"synthetic α" AND PMID:123');
     await page.getByRole("button", { name: "Search PubMed", exact: true }).click();
     await until(async()=>(await page.locator('body').innerText()).includes('retrieved 3 of 25000'),'truthful partial totals absent');
-    await page.getByLabel("Saved searches", { exact: true }).locator("option").first().waitFor({state:'attached'});
-    const saved = page.getByLabel("Saved searches", { exact: true });
-    capturedRunId = await saved.inputValue();
+    await page.locator(".history-entry").first().waitFor();
+    capturedRunId = (await page.locator(".query-snapshot .small").innerText()).replace("Search Run ID: ", "");
     assert(capturedRunId, "saved run id must be captured for reopen");
   });
   await check("batch-controls-and-exact-exports", async () => {
@@ -207,7 +206,7 @@ try {
       await until(async()=>(await page.locator('body').innerText()).includes(`retrieved 12 of ${total}`),'synthetic saved/provider count distinction');
       assert.equal(await page.locator('input[type="checkbox"][aria-label^="Select "]').count(),12);
     }
-    const largeRun = await page.getByLabel('Saved searches',{exact:true}).inputValue();
+    const largeRun = (await page.locator(".query-snapshot .small").innerText()).replace("Search Run ID: ", "");
     for(const limit of ['0','101','bad','']) assert.equal((await page.request.get(`${target}/api/libraries/${libraryId}/runs/${largeRun}?limit=${limit}`)).status(),400);
     const pages=[];for(const offset of [0,5,10]) { const r=await page.request.get(`${target}/api/libraries/${libraryId}/runs/${largeRun}?limit=5&offset=${offset}`);assert.equal(r.status(),200);const d=await r.json();assert.equal(d.limit,5);assert.equal(d.total,12);assert.equal(d.run.total,25001);pages.push(...d.records.map(x=>x.SearchId)); }
     assert.equal(new Set(pages).size,12);
@@ -242,7 +241,7 @@ try {
     const heldId=(await page.getByRole('heading',{name:/^Batch BAT-/}).innerText()).split(/\s+/).at(-1);
     await until(async()=>(await page.locator('.batch-panel').innerText()).includes('clarification'),'cross-page held reasons');
     await verifyXlsx('Export batch XLSX',heldId);
-    await page.getByLabel('Saved searches',{exact:true}).selectOption(capturedRunId);
+    await page.locator(".history-entry").filter({hasText: capturedRunId}).click();
     await until(async()=>await boxes.count()===3,'original saved run reopen');
     assert(await page.getByRole('button',{name:'Create batch (0/10)',exact:true}).isDisabled());
   });
@@ -252,11 +251,11 @@ try {
     const handler=async route=>{if(route.request().postDataJSON()?.format!=='xlsx')return route.continue();const response=await route.fetch();assert.equal(response.status(),200);captured();await gate;await route.fulfill({response});};
     await page.route('**/exports',handler);
     await page.getByRole('button',{name:'Export XLSX',exact:true}).click();await ready;
-    const options=await page.getByLabel('Saved searches',{exact:true}).locator('option').evaluateAll(xs=>xs.map(x=>x.value).filter(Boolean));
-    await page.getByLabel('Saved searches',{exact:true}).selectOption(options.find(x=>x!==capturedRunId));
+    const options=await page.locator('.history-id').evaluateAll(xs=>xs.map(x=>x.textContent.replace('Search Run ID: ','')));
+    await page.locator(".history-entry").filter({hasText: options.find(x=>x!==capturedRunId)}).click();
     release();await page.waitForTimeout(350);assert.equal(downloads,0,'late XLSX must not save after saved-run change');
     await page.unroute('**/exports',handler);page.off('download',observe);
-    await page.getByLabel('Saved searches',{exact:true}).selectOption(capturedRunId);
+    await page.locator(".history-entry").filter({hasText: capturedRunId}).click();
     await page.getByLabel('Saved batches',{exact:true}).selectOption(capturedBatchId);
     await until(async()=>await page.getByRole('button',{name:'Save XML',exact:true}).count()===2,'saved batch reopened after schedule');
   });
@@ -277,7 +276,7 @@ try {
     },{other,batch:capturedBatchId,owned:libraryId});
     assert.equal(denied.status,409,JSON.stringify(denied));assert(!denied.attachment);
     await choose.selectOption(libraryId);
-    await page.getByLabel('Saved searches',{exact:true}).selectOption(capturedRunId);
+    await page.locator(".history-entry").filter({hasText: capturedRunId}).click();
     await page.getByLabel('Saved batches',{exact:true}).selectOption(capturedBatchId);
     await until(async()=>await page.getByRole('button',{name:'Save XML',exact:true}).count()===2,'original library batch reopened');
   });
@@ -290,13 +289,13 @@ try {
     assert.equal(await page.getByText(/Batch /).count(), 0, "private batch must clear on logout");
     await login(account);
     await page.getByLabel('Choose library',{exact:true}).selectOption(libraryId);
-    await page.getByLabel("Saved searches", { exact: true }).selectOption(capturedRunId);
+    await page.locator(".history-entry").filter({hasText: capturedRunId}).click();
     await page.getByLabel("Saved batches", { exact: true }).selectOption(capturedBatchId);
     await until(async()=>await page.getByRole('button',{name:'Save XML',exact:true}).count()===2,'relogin batch not reopened');
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.getByLabel("Choose library", { exact: true }).waitFor();
     await page.getByLabel('Choose library',{exact:true}).selectOption(libraryId);
-    await page.getByLabel("Saved searches", { exact: true }).selectOption(capturedRunId);
+    await page.locator(".history-entry").filter({hasText: capturedRunId}).click();
     await page.getByLabel("Saved batches", { exact: true }).selectOption(capturedBatchId);
     await until(async()=>await page.getByRole('button',{name:'Save XML',exact:true}).count()===2,'reload batch not reopened');
     assert.deepEqual([searchPosts,batchPosts],prior,'reopen must not submit acquisition/search');

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -44,6 +45,11 @@ func nativeHash(password string) (string, error) {
 	if !utf8.ValidString(password) || utf8.RuneCountInString(password) < 12 || utf8.RuneCountInString(password) > 256 {
 		return "", errors.New("password must contain12–256 valid Unicode code points")
 	}
+	return hashNativePassword(password)
+}
+
+// One standard hasher serves both normal accounts and explicitly confirmed shared trials.
+func hashNativePassword(password string) (string, error) {
 	salt := make([]byte, 32)
 	if _, e := rand.Read(salt); e != nil {
 		return "", e
@@ -95,16 +101,24 @@ func nativeOperator(ctx context.Context, verb string) error {
 	password := os.Getenv("LITRADOCK_OPERATOR_PASSWORD")
 	os.Unsetenv("LITRADOCK_OPERATOR_PASSWORD")
 	var hash string
-	if verb == "provision" {
+	if verb == "provision" || verb == "transition-shared-trial" {
 		if login == "" || !utf8.ValidString(login) || utf8.RuneCountInString(login) > 120 {
 			return errors.New("invalid login")
 		}
-		hash, e = nativeHash(password)
+		if verb == "transition-shared-trial" {
+			if !uuidPattern.MatchString(os.Getenv("LITRADOCK_OPERATOR_ACCOUNT")) {
+				return errors.New("explicit existing account ID required")
+			}
+			hash, e = sharedTrialHash(password, os.Getenv("LITRADOCK_OPERATOR_SHARED_TRIAL"))
+			os.Unsetenv("LITRADOCK_OPERATOR_SHARED_TRIAL")
+		} else {
+			hash, e = nativeHash(password)
+		}
 		if e != nil {
 			return e
 		}
 	}
-	if verb != "bootstrap" && verb != "provision" && verb != "migrate-plans" && verb != "rollback-empty-plans" {
+	if verb != "bootstrap" && verb != "provision" && verb != "transition-shared-trial" && verb != "migrate-plans" && verb != "rollback-empty-plans" {
 		return errors.New("unsupported operator command")
 	}
 	tx, e := db.Begin(ctx)
@@ -132,10 +146,14 @@ func nativeOperator(ctx context.Context, verb string) error {
 		}
 	} else {
 		var version int
-		if e = tx.QueryRow(ctx, "SELECT max(version) FROM native_schema").Scan(&version); e != nil || version != 2 {
+		if e = tx.QueryRow(ctx, "SELECT max(version) FROM native_schema").Scan(&version); e != nil || (version != 2 && !(verb == "transition-shared-trial" && version == 1)) {
 			return errors.New("native schema required")
 		}
-		if _, e = tx.Exec(ctx, "INSERT INTO ld_accounts(account_id,login,password_hash) VALUES($1,$2,$3)", newUUID(), login, hash); e != nil {
+		if verb == "transition-shared-trial" {
+			if e = transitionSharedTrial(ctx, tx, os.Getenv("LITRADOCK_OPERATOR_ACCOUNT"), login, hash); e != nil {
+				return e
+			}
+		} else if _, e = tx.Exec(ctx, "INSERT INTO ld_accounts(account_id,login,password_hash) VALUES($1,$2,$3)", newUUID(), login, hash); e != nil {
 			return errors.New("account provisioning failed; existing account not changed")
 		}
 	}
@@ -143,5 +161,34 @@ func nativeOperator(ctx context.Context, verb string) error {
 		return e
 	}
 	fmt.Println("Native operator transaction committed; no credential values emitted.")
+	return nil
+}
+
+// Shared trial conversion is an explicit operator exception after reviewing data for shared use.
+// The account ID, enabled state and domain data remain unchanged; sessions are revoked.
+func sharedTrialHash(password, confirmation string) (string, error) {
+	if confirmation != "transition-reviewed-shared-trial" {
+		return "", errors.New("explicit shared trial confirmation required")
+	}
+	if !utf8.ValidString(password) || utf8.RuneCountInString(password) < 4 || utf8.RuneCountInString(password) > 256 {
+		return "", errors.New("shared trial password must contain 4–256 valid Unicode code points")
+	}
+	return hashNativePassword(password)
+}
+
+func transitionSharedTrial(ctx context.Context, tx pgx.Tx, account, login, hash string) error {
+	if !uuidPattern.MatchString(account) {
+		return errors.New("invalid account ID")
+	}
+	var locked string
+	if e := tx.QueryRow(ctx, "SELECT account_id::text FROM ld_accounts WHERE account_id=$1 FOR UPDATE", account).Scan(&locked); e != nil {
+		return errors.New("explicit account not found; no account changed")
+	}
+	if _, e := tx.Exec(ctx, "UPDATE ld_accounts SET login=$2,password_hash=$3 WHERE account_id=$1", account, login, hash); e != nil {
+		return errors.New("account transition conflict; no account changed")
+	}
+	if _, e := tx.Exec(ctx, "DELETE FROM ld_sessions WHERE account_id=$1", account); e != nil {
+		return errors.New("session revocation failed; transaction must roll back")
+	}
 	return nil
 }

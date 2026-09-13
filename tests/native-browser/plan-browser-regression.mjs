@@ -128,7 +128,7 @@ try {
     await page.getByLabel('Query',{exact:true}).fill('SYNTHETIC_PLAN_25001');
     await page.getByRole('button',{name:'Search PubMed',exact:true}).click();
     await until(async()=>(await page.locator('body').innerText()).includes('retrieved 100 of 25001'),'100 of25001 distinction');
-    capturedRunId=await page.getByLabel('Saved searches',{exact:true}).inputValue();
+    capturedRunId=(await page.locator(".query-snapshot .small").innerText()).replace("Search Run ID: ", "");
     const r=await (await page.request.get(`${target}/api/libraries/${libraryId}/runs/${capturedRunId}?limit=100`)).json();
     assert.equal(r.total,100);assert.equal(r.run.total,25001);selected=r.records.slice(0,37).map(x=>x.SearchId);assert.equal(new Set(selected).size,37);
     await page.getByLabel('Page size',{exact:true}).selectOption('25');

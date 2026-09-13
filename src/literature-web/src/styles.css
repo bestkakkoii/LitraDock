@@ -80,7 +80,7 @@ h3 {
 }
 .grid {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: 260px minmax(0, 1fr);
   gap: 1.25rem;
 }
 .panel,
@@ -162,7 +162,7 @@ textarea {
 }
 .summary {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.7rem;
   margin: 1.2rem 0;
 }
@@ -184,7 +184,12 @@ textarea {
   justify-content: space-between;
   align-items: center;
   margin: 1.4rem 0 0.7rem;
+  flex-wrap: wrap;
+  gap: 1rem;
 }
+.result-head > * { min-width: 0; }
+.batch-panel .result-head { display: block; }
+.batch-panel .result-actions { justify-content: flex-start; margin-top: 1rem; }
 .result-actions {
   display: flex;
   gap: 0.5rem;
@@ -195,13 +200,17 @@ textarea {
   margin-top: 1.25rem;
 }
 .batch-item {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) auto auto;
+  display: flex;
+  flex-direction: column;
   gap: 0.65rem;
-  align-items: center;
+  align-items: flex-start;
   border-top: 1px solid #e4ebf2;
   padding: 0.8rem 0;
 }
+.batch-item > * { min-width: 0; max-width: 100%; }
+.batch-title, .batch-state { width: 100%; }
+.batch-state { margin: 0; }
+.batch-item small { display: block; width: 100%; }
 .small-button {
   padding: 0.4rem 0.65rem;
   font-size: 0.8rem;
@@ -262,6 +271,7 @@ textarea {
   display: flex;
   gap: 1rem;
   font-size: 0.84rem;
+  flex-wrap: wrap;
 }
 .links a {
   color: #1264a3;
@@ -362,3 +372,41 @@ input, select, textarea { min-width: 0; max-width: 100%; }
 .plan-item h4 { margin: .5rem 0; }
 .plan-confirm, .plan-pending { border: 1px solid #aebfd0; border-radius: 6px; padding: 1rem; margin: 1rem 0; }
 .plan-workspace button { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+
+/* Give prose its own line; intrinsic action/link widths must never squeeze titles. */
+.query-snapshot { grid-column: 1 / -1; }
+.query-snapshot strong, .history-query { white-space: pre-wrap; }
+.history-list { list-style: none; padding: 0; margin: 1rem 0; }
+.history-list li + li { margin-top: .75rem; }
+.history-entry {
+  display: flex;
+  flex-direction: column;
+  gap: .6rem;
+  width: 100%;
+  padding: 1rem;
+  text-align: left;
+  color: #182333;
+  background: #f7f9fc;
+  border: 1px solid #bdcad8;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.history-entry[aria-pressed="true"] { border-color: #1864ab; background: #edf5fd; box-shadow: inset 4px 0 #1864ab; }
+.history-query { display: block; width: 100%; font-weight: 600; }
+.history-facts { display: flex; flex-wrap: wrap; gap: .35rem 1.25rem; font-size: .85rem; }
+.history-id, .history-reason { font-size: .8rem; }
+.history-open { color: #1864ab; font-size: .85rem; font-weight: 700; }
+.pdf-availability { border: 1px solid #bdcad8; border-left: 4px solid #1864ab; padding: 1rem; border-radius: 10px; background: #fff; margin: 1rem 0; }
+.pdf-availability p { margin: .5rem 0; }
+.pdf-availability button { margin: .5rem .75rem .5rem 0; }
+button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid #1864ab; outline-offset: 3px; }
+@media (max-width: 1100px) {
+  .grid { grid-template-columns: minmax(0, 1fr); }
+  .grid > aside { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; align-items: start; }
+}
+@media (max-width: 600px) {
+  .grid > aside { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .shell { padding: 1rem; }
+  .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .history-entry { padding: .8rem; }
+}

@@ -16,6 +16,8 @@ import { ArticleCard, SourceLinks } from "./components/ArticleCard";
 import { canAdvanceRecords } from "./pagination";
 import { searchId, selectedSearchIds, toggleArticle } from "./selection";
 import { PlanWorkspace } from "./plans/PlanWorkspace";
+import { SearchHistory } from "./components/SearchHistory";
+import { PdfAvailability } from "./components/PdfAvailability";
 import "./styles.css";
 
 function safeRightsLink(value: unknown): string | null {
@@ -108,16 +110,17 @@ function App() {
     if (!id) return;
     const requestId = ++historyRequest.current;
     const expected = sessionGeneration();
-    const data = await api.catalog(id, offset);
-    if (
-      expected !== sessionGeneration() ||
-      requestId !== historyRequest.current ||
-      id !== library
-    )
-      return;
-    setHistory(data.runs);
-    setHistoryTotal(data.totals.runs);
-    setHistoryOffset(offset);
+    const current = () => expected === sessionGeneration() &&
+      requestId === historyRequest.current && id === library;
+    try {
+      const data = await api.catalog(id, offset);
+      if (!current()) return;
+      setHistory(data.runs);
+      setHistoryTotal(data.totals.runs);
+      setHistoryOffset(offset);
+    } catch (error) {
+      if (current()) setError(`Saved searches unavailable. ${(error as Error).message}`);
+    }
   };
   useEffect(() => {
     return onSessionInvalidated(() => {
@@ -591,7 +594,6 @@ function App() {
         </section>
       </main>
     );
-  const pageCount = Math.ceil(historyTotal / 100);
   return (
     <main className="shell">
       <header className="topbar">
@@ -614,6 +616,7 @@ function App() {
                 retirePlanScope();
                 runGeneration.current += 1;
                 historyRequest.current += 1;
+                setHistory([]); setHistoryTotal(0); setHistoryOffset(0);
                 batchOperation.current += 1;
                 setLibrary(e.target.value);
                 setRecords([]);
@@ -649,43 +652,6 @@ function App() {
               </label>
               <button disabled={busy}>Create</button>
             </form>
-          </section>
-          <section className="panel">
-            <h2>Saved searches</h2>
-            <p className="muted small">
-              {historyTotal} saved {historyTotal === 1 ? "search" : "searches"}{" "}
-              · page {pageCount ? historyOffset / 100 + 1 : 0} of {pageCount}
-            </p>
-            <select
-              size={Math.min(7, Math.max(3, history.length))}
-              value={run?.run_id ?? ""}
-              onChange={(e) => openSaved(e.target.value)}
-              aria-label="Saved searches"
-            >
-              {history.map((x) => (
-                <option key={x.run_id} value={x.run_id}>
-                  {x.input} · {x.state}
-                </option>
-              ))}
-            </select>
-            <div className="pager">
-              <button
-                className="secondary"
-                disabled={historyOffset === 0 || busy}
-                onClick={() =>
-                  refreshHistory(library, Math.max(0, historyOffset - 100))
-                }
-              >
-                Previous
-              </button>
-              <button
-                className="secondary"
-                disabled={historyOffset + 100 >= historyTotal || busy}
-                onClick={() => refreshHistory(library, historyOffset + 100)}
-              >
-                Next
-              </button>
-            </div>
           </section>
           <section className="panel">
             <h2>Saved batches</h2>
@@ -754,6 +720,9 @@ function App() {
               </button>
             </form>
           </section>
+          <SearchHistory runs={history} total={historyTotal} offset={historyOffset}
+            selectedID={run?.run_id ?? ""} busy={busy} onOpen={id => void openSaved(id)}
+            onPage={offset => void refreshHistory(library, offset)} />
           {(message || error) && (
             <p className={error ? "error status" : "status"} role="status">
               {error || message}
@@ -761,9 +730,10 @@ function App() {
           )}
           {run && (
             <section className="summary">
-              <div>
+              <div className="query-snapshot">
                 <span className="muted">Query snapshot</span>
                 <strong>{snapshot}</strong>
+                <span className="small">Search Run ID: {run.run_id}</span>
               </div>
               <div>
                 <span className="muted">Provider total</span>
@@ -780,6 +750,7 @@ function App() {
             </section>
           )}
           {serviceInfo?.searchEnabled === false && <p className="muted">New searches are temporarily disabled by the operator. Saved results remain available.</p>}
+          <PdfAvailability selectedCount={selected.size} />
           <div className="result-head">
             <h2>
               Results <span className="count">{records.length}</span>
@@ -936,13 +907,13 @@ function App() {
               </div>
               {batch.items.map((item) => (
                 <div className="batch-item" key={item.search_id}>
-                  <strong>
+                  <strong className="batch-title">
                     {String(item.article.Title ?? item.search_id)}
                   </strong>
-                  <span>
+                  <p className="batch-state">
                     {item.state}
                     {item.reason ? ` · ${item.reason}` : ""}
-                  </span>
+                  </p>
                   <SourceLinks article={item.article} />
                   {item.downloadAvailable && item.original_hash ? (
                     <>
