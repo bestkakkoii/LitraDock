@@ -11,5 +11,6 @@
   "LocalTest": true,
   "SearchEnabled": false,
   "AcquisitionEnabled": false,
-  "BlockedPMCIDs": []
+  "BlockedPMCIDs": [],
+  "PlanEnabled": false
 }

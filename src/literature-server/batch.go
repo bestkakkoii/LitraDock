@@ -43,13 +43,8 @@ func (s *server) queueBatch(ctx context.Context, library, requestID string, sele
 	if !errors.Is(e, pgx.ErrNoRows) {
 		return "", e
 	}
-	var count, total int64
-	e = tx.QueryRow(ctx, "SELECT (SELECT count(*) FROM native_items),(SELECT COALESCE(sum(octet_length(content)),0) FROM native_originals)").Scan(&count, &total)
-	if e != nil {
+	if e = acquisitionCapacity(ctx, tx, len(ids)); e != nil {
 		return "", e
-	}
-	if count+int64(len(ids)) > 1000 || total >= 256*1024*1024 {
-		return "", errors.New("candidate acquisition capacity reached")
 	}
 	var saved int
 	e = tx.QueryRow(ctx, "SELECT count(*) FROM ld_records WHERE library_id=$1 AND search_id=ANY($2)", library, ids).Scan(&saved)
@@ -73,6 +68,16 @@ func (s *server) controlBatch(ctx context.Context, library, batch, action string
 		return e
 	}
 	defer tx.Rollback(context.Background())
+	if e = capacityLock(ctx, tx); e != nil {
+		return e
+	}
+	var plan string
+	if e = tx.QueryRow(ctx, "SELECT COALESCE(plan_id,'') FROM native_batches WHERE library_id=$1 AND batch_id=$2", library, batch).Scan(&plan); e != nil {
+		return e
+	}
+	if plan != "" {
+		return errors.New("This batch belongs to a processing plan; use the plan controls.")
+	}
 	var state string
 	if e = tx.QueryRow(ctx, "SELECT state FROM native_batches WHERE library_id=$1 AND batch_id=$2 FOR UPDATE", library, batch).Scan(&state); e != nil {
 		return e
@@ -93,7 +98,7 @@ func (s *server) controlBatch(ctx context.Context, library, batch, action string
 		}
 		_, e = tx.Exec(ctx, "UPDATE native_batches SET state='active' WHERE library_id=$1 AND batch_id=$2;", library, batch)
 		if e == nil {
-			_, e = tx.Exec(ctx, "UPDATE native_items SET state='queued' WHERE library_id=$1 AND batch_id=$2 AND state='paused'", library, batch)
+			_, e = tx.Exec(ctx, "UPDATE native_items SET state=CASE WHEN attempts>=3 THEN 'failed' ELSE 'queued' END WHERE library_id=$1 AND batch_id=$2 AND state='paused'", library, batch)
 		}
 	case "retry":
 		if state == "cancelled" || state == "paused" {
@@ -179,21 +184,22 @@ func (s *server) batchOne(parent context.Context) {
 	if gate.QueryRow(ctx, "SELECT required FROM ld_recovery_guard WHERE singleton").Scan(&blocked) != nil || blocked {
 		return
 	}
-	_, e = s.db.Exec(ctx, "UPDATE native_items SET state=CASE WHEN attempts>=3 THEN 'failed' ELSE 'queued' END,reason=CASE WHEN attempts>=3 THEN 'Interrupted attempt limit reached; operator review required.' ELSE reason END,lease=NULL,lease_until=NULL WHERE state='running' AND lease_until<now()")
-	if e != nil {
+	if e = s.recoverBatchLeases(ctx); e != nil {
 		return
 	}
 	_, e = s.db.Exec(ctx, "UPDATE native_batches b SET state=CASE WHEN EXISTS(SELECT 1 FROM native_items i WHERE i.library_id=b.library_id AND i.batch_id=b.batch_id AND i.state<>'acquired') THEN 'partial' ELSE 'complete' END WHERE b.state='active' AND NOT EXISTS(SELECT 1 FROM native_items i WHERE i.library_id=b.library_id AND i.batch_id=b.batch_id AND i.state IN ('queued','running','paused'))")
 	if e != nil {
 		return
 	}
-	var library, batch, id, raw string
+	if e = s.admitPlan(ctx); e != nil {
+		return
+	}
 	lease := newUUID()
-	e = s.db.QueryRow(ctx, `WITH chosen AS(SELECT i.library_id,i.batch_id,i.search_id FROM native_items i JOIN native_batches b USING(library_id,batch_id) WHERE b.state='active' AND i.state='queued' ORDER BY b.created_at,i.rank FOR UPDATE OF i SKIP LOCKED LIMIT 1)
- UPDATE native_items i SET state='running',attempts=attempts+1,lease=$1,lease_until=now()+interval '120 seconds' FROM chosen c WHERE i.library_id=c.library_id AND i.batch_id=c.batch_id AND i.search_id=c.search_id RETURNING i.library_id::text,i.batch_id,i.search_id`, lease).Scan(&library, &batch, &id)
+	library, batch, id, e := s.claimBatch(ctx, lease)
 	if e != nil {
 		return
 	}
+	var raw string
 	e = s.db.QueryRow(ctx, "SELECT metadata FROM ld_records WHERE library_id=$1 AND search_id=$2", library, id).Scan(&raw)
 	var article map[string]any
 	if e == nil {
@@ -244,6 +250,19 @@ func (s *server) batchOne(parent context.Context) {
 		return
 	}
 	defer tx.Rollback(context.Background())
+	if e = capacityLock(finish, tx); e != nil {
+		return
+	}
+	var plan string
+	if e = tx.QueryRow(finish, "SELECT COALESCE(plan_id,'') FROM native_batches WHERE library_id=$1 AND batch_id=$2", library, batch).Scan(&plan); e != nil {
+		return
+	}
+	if plan != "" {
+		var parentState string
+		if e = tx.QueryRow(finish, "SELECT state FROM native_plans WHERE library_id=$1 AND plan_id=$2 FOR UPDATE", library, plan).Scan(&parentState); e != nil || parentState != "active" || !s.cfg.PlanEnabled {
+			return
+		}
+	}
 	var batchState, itemState, token string
 	if e = tx.QueryRow(finish, "SELECT state FROM native_batches WHERE library_id=$1 AND batch_id=$2 FOR UPDATE", library, batch).Scan(&batchState); e != nil {
 		return
@@ -253,14 +272,19 @@ func (s *server) batchOne(parent context.Context) {
 	}
 	var hash any
 	if state == "acquired" {
-		if _, e = tx.Exec(finish, "SELECT pg_advisory_xact_lock(724913015)"); e != nil {
-			return
-		}
 		var total int64
 		if tx.QueryRow(finish, "SELECT COALESCE(sum(octet_length(content)),0) FROM native_originals").Scan(&total) != nil {
 			return
 		}
-		if total+int64(len(data)) > 256*1024*1024 {
+		var present bool
+		if tx.QueryRow(finish, "SELECT EXISTS(SELECT 1 FROM native_originals WHERE library_id=$1 AND search_id=$2 AND hash=$3)", library, id, info.Hash).Scan(&present) != nil {
+			return
+		}
+		added := int64(len(data))
+		if present {
+			added = 0
+		}
+		if total+added > 256*1024*1024 {
 			state, reason = "failed", "Original storage capacity reached; no partial original saved."
 		} else {
 			_, e = tx.Exec(finish, `INSERT INTO native_originals(library_id,search_id,hash,content,source_uri,rights_uri,repository_stamp,policy) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`, library, id, info.Hash, data, info.Source, info.Rights, info.Stamp, acquisitionPolicy)
@@ -286,6 +310,9 @@ func (s *server) batchOne(parent context.Context) {
 		if _, e = tx.Exec(finish, "UPDATE native_batches SET state=$3 WHERE library_id=$1 AND batch_id=$2", library, batch, final); e != nil {
 			return
 		}
+	}
+	if e = touchPlan(finish, tx, library, plan); e != nil {
+		return
 	}
 	_ = tx.Commit(finish)
 }

@@ -38,7 +38,7 @@ CREATE TABLE native_batches(library_id uuid NOT NULL REFERENCES ld_libraries,bat
 CREATE TABLE native_items(library_id uuid NOT NULL,batch_id text NOT NULL,search_id text NOT NULL,rank integer NOT NULL,state text NOT NULL,reason text NOT NULL DEFAULT '',attempts integer NOT NULL DEFAULT 0,lease uuid,lease_until timestamptz,original_hash text,PRIMARY KEY(library_id,batch_id,search_id),FOREIGN KEY(library_id,batch_id) REFERENCES native_batches,FOREIGN KEY(library_id,search_id) REFERENCES ld_records);
 CREATE TABLE native_originals(library_id uuid NOT NULL,search_id text NOT NULL,hash text NOT NULL,content bytea NOT NULL,source_uri text NOT NULL,rights_uri text NOT NULL,repository_stamp text NOT NULL,policy text NOT NULL,acquired_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(library_id,search_id,hash),FOREIGN KEY(library_id,search_id) REFERENCES ld_records,CHECK(octet_length(content)<=8388608));
 INSERT INTO native_schema(version) VALUES(1);
-`
+` + planSchema
 
 func nativeHash(password string) (string, error) {
 	if !utf8.ValidString(password) || utf8.RuneCountInString(password) < 12 || utf8.RuneCountInString(password) > 256 {
@@ -104,7 +104,7 @@ func nativeOperator(ctx context.Context, verb string) error {
 			return e
 		}
 	}
-	if verb != "bootstrap" && verb != "provision" {
+	if verb != "bootstrap" && verb != "provision" && verb != "migrate-plans" && verb != "rollback-empty-plans" {
 		return errors.New("unsupported operator command")
 	}
 	tx, e := db.Begin(ctx)
@@ -126,9 +126,13 @@ func nativeOperator(ctx context.Context, verb string) error {
 		if _, e = tx.Exec(ctx, nativeSchema); e != nil {
 			return e
 		}
+	} else if verb == "migrate-plans" || verb == "rollback-empty-plans" {
+		if e = migratePlans(ctx, tx, verb == "rollback-empty-plans"); e != nil {
+			return e
+		}
 	} else {
 		var version int
-		if e = tx.QueryRow(ctx, "SELECT max(version) FROM native_schema").Scan(&version); e != nil || version != 1 {
+		if e = tx.QueryRow(ctx, "SELECT max(version) FROM native_schema").Scan(&version); e != nil || version != 2 {
 			return errors.New("native schema required")
 		}
 		if _, e = tx.Exec(ctx, "INSERT INTO ld_accounts(account_id,login,password_hash) VALUES($1,$2,$3)", newUUID(), login, hash); e != nil {

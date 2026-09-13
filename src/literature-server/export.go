@@ -89,6 +89,9 @@ func (s *server) exportCSV(ctx context.Context, library, run, batch string) ([]b
 	return b.Bytes(), w.Error()
 }
 func (s *server) nativeRoutes(w http.ResponseWriter, r *http.Request, ctx context.Context, library string, parts []string) bool {
+	if s.planRoutes(w, r, ctx, library, parts) {
+		return true
+	}
 	if len(parts) == 4 && parts[3] == "batches" && r.Method == "POST" {
 		var input struct {
 			RequestID string
