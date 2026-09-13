@@ -96,7 +96,7 @@ try {
   const openRun = async id => { await page.locator(".history-entry").filter({ has: page.locator(".history-id", { hasText: new RegExp(`${id}$`) }) }).click(); await expect(button("Select all")).toBeEnabled(); };
   const open = async id => { await page.getByLabel("Saved plans", { exact: true }).selectOption(id); await expect(page.getByRole("heading", { name: `Plan ${id}`, exact: true })).toBeVisible(); await expect(button(names.json)).toBeEnabled(); };
   const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  const hold = async (id, format, failure = "valid") => { mode = failure; await page.evaluate(id => { window.__nextHold = id; }, id); await button(names[format]).click(); await page.waitForFunction(id => !!window.__holds[id], id); mode = "valid"; await expect(page.getByRole("status").filter({ hasText: /Preparing plan (originals ZIP|metadata JSON)|bytes received/ })).toBeVisible(); };
+  const hold = async (id, format, failure = "valid") => { mode = failure; await page.evaluate(id => { window.__nextHold = id; }, id); await button(names[format]).click(); await page.waitForFunction(id => !!window.__holds[id], id); mode = "valid"; await expect(page.getByRole("status").filter({ hasText: /Preparing (originals ZIP|metadata JSON)|bytes received/ })).toBeVisible(); };
   const release = async id => { await page.evaluate(id => window.__holds[id](), id); await settle(); };
   const verify = async (file, id, format) => {
     const data = fs.readFileSync(await file.path()); assert.deepEqual(data, bytes(id, format));
