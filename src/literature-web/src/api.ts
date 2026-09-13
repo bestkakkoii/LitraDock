@@ -102,11 +102,27 @@ function assertRequestCurrent(expected: number, signal?: AbortSignal | null) {
   if (expected !== generation || signal?.aborted)
     throw new Error("Session changed; the previous request was discarded.");
 }
+// Match the small server admission envelope. Reading the body owns the slot;
+// queued requests revalidate their captured scope before any network effect.
+let activeRequests = 0;
+const requestWaiters: Array<() => void> = [];
+function requestSlot(): (() => void) | Promise<() => void> {
+  const release = () => {
+    const next = requestWaiters.shift();
+    if (next) next(); else activeRequests -= 1;
+  };
+  if (activeRequests < 2) { activeRequests += 1; return release; }
+  if (requestWaiters.length >= 16) throw new Error("Too many pending requests. Wait for current work, then refresh.");
+  return new Promise<() => void>(resolve => requestWaiters.push(() => resolve(release)));
+}
 export async function request<T>(
   path: string,
   init: RequestInit = {},
   expectedGeneration = generation,
 ): Promise<T> {
+  const slot = requestSlot();
+  const release = typeof slot === "function" ? slot : await slot;
+  try {
   assertRequestCurrent(expectedGeneration, init.signal);
   const headers = new Headers(init.headers);
   if (init.body) headers.set("Content-Type", "application/json");
@@ -137,12 +153,16 @@ export async function request<T>(
     throw new ApiError(response.status, message);
   }
   return data as T;
+  } finally { release(); }
 }
 export async function requestBlob(
   path: string,
   init: RequestInit = {},
   expectedGeneration = generation,
 ): Promise<Blob> {
+  const slot = requestSlot();
+  const release = typeof slot === "function" ? slot : await slot;
+  try {
   assertRequestCurrent(expectedGeneration, init.signal);
   const headers = new Headers(init.headers);
   if (init.body) headers.set("Content-Type", "application/json");
@@ -165,6 +185,7 @@ export async function requestBlob(
   const blob = await response.blob();
   assertRequestCurrent(expectedGeneration, init.signal);
   return blob;
+  } finally { release(); }
 }
 export const api = {
   serviceInfo: () => request<ServiceInfo>("/service-info"),

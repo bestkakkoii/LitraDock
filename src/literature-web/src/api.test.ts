@@ -6,6 +6,24 @@ afterEach(() => {
   clearSession();
 });
 describe("same-origin API client", () => {
+  it("bounds headers and body consumption to two slots and fences queued old-session work", async () => {
+    setSession({ csrf: "synthetic-old" });
+    const release: Array<(body: string) => void> = [];
+    const transport = vi.fn(async () => ({ status: 200, ok: true,
+      text: () => new Promise<string>(resolve => release.push(resolve)),
+    } as Response));
+    vi.stubGlobal("fetch", transport);
+    const settled = Array.from({ length: 4 }, () => api.libraries().catch(error => error));
+    await vi.waitFor(() => expect(release.length).toBe(2));
+    expect(transport).toHaveBeenCalledTimes(2);
+    setSession({ csrf: "synthetic-new" });
+    release.forEach(done => done('{"items":[]}'));
+    const outcomes = await Promise.all(settled);
+    expect(outcomes.every(value => value instanceof Error && /Session changed/.test(value.message))).toBe(true);
+    expect(transport).toHaveBeenCalledTimes(2);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response('{"items":[]}')));
+    expect(await api.libraries()).toEqual({ items: [] });
+  });
   it("does not offer a next page when saved records total three but provider total is large", () => {
     expect(canAdvanceRecords(3, 0, 3)).toBe(false);
     expect(canAdvanceRecords(3298, 0, 100)).toBe(true);
