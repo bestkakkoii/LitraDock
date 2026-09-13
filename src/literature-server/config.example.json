@@ -13,5 +13,6 @@
   "AcquisitionEnabled": false,
   "BlockedPMCIDs": [],
   "PlanEnabled": false,
-  "PDFEnabled": false
+  "PDFEnabled": false,
+  "SavedSetEnabled": false
 }

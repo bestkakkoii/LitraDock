@@ -134,11 +134,11 @@ func (s *server) exportPlan(ctx context.Context, library, plan, format string) (
 		return nil, err
 	}
 	defer tx.Rollback(context.Background())
-	research, err := s.structuredResearchSnapshot(ctx, tx, library, "", "", plan)
+	p, items, err := s.loadPlan(ctx, tx, library, plan)
 	if err != nil {
 		return nil, err
 	}
-	p, items, err := s.loadPlan(ctx, tx, library, plan)
+	research, err := s.structuredResearchSnapshot(ctx, tx, library, "", "", plan, p.ScopeKind == "saved_set")
 	if err != nil {
 		return nil, err
 	}

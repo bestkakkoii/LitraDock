@@ -39,6 +39,8 @@ type planAdmission struct {
 	RetryAfter        *time.Time `json:"retryAfter"`
 }
 type planSummary struct {
+	ScopeKind          string         `json:"scopeKind,omitempty"`
+	SourceRunIDs       []string       `json:"sourceRunIDs,omitempty"`
 	RequestedFormat    string         `json:"requestedFormat"`
 	PlanID             string         `json:"planID"`
 	RunID              string         `json:"runID"`
@@ -53,6 +55,7 @@ type planSummary struct {
 	RetryEligibleCount int            `json:"retryEligibleCount"`
 }
 type planItem struct {
+	RunIDs            []string       `json:"runIDs,omitempty"`
 	MediaType         string         `json:"mediaType"`
 	DepositVersion    string         `json:"depositVersion"`
 	DepositType       string         `json:"depositType"`
@@ -195,7 +198,7 @@ func planPhase(parent string, child *string, cancelled bool) (string, error) {
 }
 func (s *server) loadPlan(ctx context.Context, tx pgx.Tx, library, id string) (planSummary, []planItem, error) {
 	p := planSummary{Counts: map[string]int{"waiting": 0, "queued": 0, "running": 0, "completed": 0, "held": 0, "retry": 0, "paused": 0, "cancelled": 0}, AllowedActions: []string{}}
-	err := tx.QueryRow(ctx, "SELECT plan_id,run_id,state,revision,created_at,updated_at,requested_format FROM native_plans WHERE library_id=$1 AND plan_id=$2", library, id).Scan(&p.PlanID, &p.RunID, &p.State, &p.Revision, &p.CreatedAt, &p.UpdatedAt, &p.RequestedFormat)
+	err := tx.QueryRow(ctx, "SELECT plan_id,COALESCE(run_id,''),state,revision,created_at,updated_at,requested_format FROM native_plans WHERE library_id=$1 AND plan_id=$2", library, id).Scan(&p.PlanID, &p.RunID, &p.State, &p.Revision, &p.CreatedAt, &p.UpdatedAt, &p.RequestedFormat)
 	if err != nil {
 		return p, nil, err
 	}
@@ -224,6 +227,11 @@ func (s *server) loadPlan(ctx context.Context, tx pgx.Tx, library, id string) (p
 	}
 	if len(items) < 1 || len(items) > 100 {
 		return p, nil, exportInvalid("Invalid persisted plan membership.")
+	}
+	if p.RunID == "" {
+		if err = loadSavedSetSources(ctx, tx, library, &p, items); err != nil {
+			return p, nil, err
+		}
 	}
 	for n := range items {
 		i := &items[n]

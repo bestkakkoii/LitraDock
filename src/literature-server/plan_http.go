@@ -39,12 +39,21 @@ func (s *server) planRoutes(w http.ResponseWriter, r *http.Request, ctx context.
 	}
 	if len(parts) == 4 && r.Method == "POST" {
 		var input struct {
-			RequestID, RunID, Format string
-			SearchIDs                []string
+			RequestID, Format string
+			RunID, ScopeKind  *string
+			SearchIDs         *[]string
+			Members           *[]savedSetMember
 		}
 		if decode(w, r, &input) {
-			v, e := s.queuePlan(ctx, library, input.RequestID, input.RunID, input.SearchIDs, input.Format)
-			planReply(w, v, e)
+			if input.ScopeKind != nil && *input.ScopeKind == "saved_set" && input.Members != nil && input.RunID == nil && input.SearchIDs == nil {
+				v, e := s.queueSavedSet(ctx, library, input.RequestID, input.Format, *input.Members)
+				planReply(w, v, e)
+			} else if input.ScopeKind == nil && input.Members == nil && input.RunID != nil && input.SearchIDs != nil {
+				v, e := s.queuePlan(ctx, library, input.RequestID, *input.RunID, *input.SearchIDs, input.Format)
+				planReply(w, v, e)
+			} else {
+				reply(w, 400, map[string]string{"error": "Choose either a single-run selection or explicit saved-set members."})
+			}
 		}
 		return true
 	}

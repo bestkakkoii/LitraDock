@@ -2,7 +2,7 @@ name: Native candidate
 on:
   workflow_dispatch:
   push:
-    branches: [native-demo-003, native-demo-004, native-demo-005, native-demo-006, native-demo-007, native-demo-008, native-demo-009]
+    branches: [native-demo-003, native-demo-004, native-demo-005, native-demo-006, native-demo-007, native-demo-008, native-demo-009, native-demo-010]
 permissions:
   contents: read
 jobs:
@@ -46,6 +46,7 @@ jobs:
           LITRADOCK_NATIVE_TEST: 'yes'
           LITRADOCK_GO_CONFIG: ${{ runner.temp }}/native-test.json
           NATIVE_WORKBOOK_TEST_OUTPUT: ${{ runner.temp }}/native-workbook
+          NATIVE_MULTIRUN_TEST_OUTPUT: ${{ runner.temp }}/native-multirun
           NATIVE_PLAN_EXPORT_TEST_OUTPUT: ${{ runner.temp }}/native-plan-export
           NATIVE_STRUCTURED_TEST_OUTPUT: ${{ runner.temp }}/native-structured
         run: |
@@ -57,6 +58,8 @@ jobs:
           python3 tests/native-browser/verify-structured.py "$RUNNER_TEMP/native-structured/postgres-synthetic.json" "$RUNNER_TEMP/native-structured/postgres-synthetic.jsonl" --negative-controls
       - name: Independent whole-plan ZIP and typed metadata controls
         run: python3 tests/native-browser/verify-plan-export.py "$RUNNER_TEMP/native-plan-export/plan-synthetic.json" "$RUNNER_TEMP/native-plan-export/plan-synthetic.zip" --synthetic --negative-controls
+      - name: Independent frozen multi-run saved-set reader
+        run: python3 tests/native-browser/verify-plan-export.py "$RUNNER_TEMP/native-multirun/saved-set.json" "$RUNNER_TEMP/native-multirun/saved-set.zip"
       - name: Independent workbook reader and mutation controls
         run: |
           python3 -m venv "$RUNNER_TEMP/workbook-reader"

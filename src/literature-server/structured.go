@@ -176,7 +176,7 @@ func (s *server) structuredResearch(ctx context.Context, library, run, batch str
 }
 
 // The caller owns one consistent snapshot, including any plan state and original bytes.
-func (s *server) structuredResearchSnapshot(ctx context.Context, tx pgx.Tx, library, run, batch, plan string) (structuredDocument, error) {
+func (s *server) structuredResearchSnapshot(ctx context.Context, tx pgx.Tx, library, run, batch, plan string, frozenPlan ...bool) (structuredDocument, error) {
 	d := structuredDocument{Schema: structuredSchema, Version: 1, Type: "document", GeneratedAt: time.Now().UTC(), Queries: []structuredQuery{}, Records: []structuredRecord{}, Scope: structuredScope{Selection: "all_saved_scope", RunID: optionalText(run), BatchID: optionalText(batch), PlanID: optionalText(plan)}}
 	var err error
 	format := ""
@@ -254,7 +254,11 @@ func (s *server) structuredResearchSnapshot(ctx context.Context, tx pgx.Tx, libr
 		return d, exportInvalid("Incomplete saved export membership")
 	}
 	// Association limits fail explicitly; related queries are never silently cut off.
-	rows, err = tx.Query(ctx, "SELECT run_id,search_id FROM ld_results WHERE library_id=$1 AND search_id=ANY($2) AND ($3='' OR run_id=$3) ORDER BY run_id,rank LIMIT 10001", library, ids, run)
+	if len(frozenPlan) > 0 && frozenPlan[0] {
+		rows, err = tx.Query(ctx, "SELECT run_id,search_id FROM native_plan_sources WHERE library_id=$1 AND plan_id=$2 ORDER BY run_id,search_id LIMIT 1001", library, plan)
+	} else {
+		rows, err = tx.Query(ctx, "SELECT run_id,search_id FROM ld_results WHERE library_id=$1 AND search_id=ANY($2) AND ($3='' OR run_id=$3) ORDER BY run_id,rank LIMIT 10001", library, ids, run)
+	}
 	if err != nil {
 		return d, err
 	}
@@ -266,6 +270,9 @@ func (s *server) structuredResearchSnapshot(ctx context.Context, tx pgx.Tx, libr
 			break
 		}
 		associations++
+		if _, ok := indices[id]; !ok {
+			return d, exportInvalid("Unknown saved-set association member")
+		}
 		d.Records[indices[id]].RunIDs = append(d.Records[indices[id]].RunIDs, rid)
 		if !seen[rid] {
 			seen[rid] = true
@@ -281,6 +288,16 @@ func (s *server) structuredResearchSnapshot(ctx context.Context, tx pgx.Tx, libr
 	}
 	if associations > 10000 || len(queryIDs) > structuredLimit {
 		return d, exportInvalid("Query association export limit reached; nothing truncated")
+	}
+	if len(frozenPlan) > 0 && frozenPlan[0] {
+		if associations > 1000 {
+			return d, exportInvalid("Saved-set association limit")
+		}
+		for _, record := range d.Records {
+			if len(record.RunIDs) == 0 {
+				return d, exportInvalid("Missing saved-set provenance")
+			}
+		}
 	}
 	var queryBytes int64
 	if err = tx.QueryRow(ctx, "SELECT COALESCE(sum(octet_length(input)+octet_length(reason)),0) FROM ld_runs WHERE library_id=$1 AND run_id=ANY($2)", library, queryIDs).Scan(&queryBytes); err != nil {

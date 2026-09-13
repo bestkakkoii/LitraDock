@@ -27,6 +27,7 @@ type config struct {
 	SearchEnabled                                                    bool
 	AcquisitionEnabled                                               bool
 	PlanEnabled                                                      bool
+	SavedSetEnabled                                                  bool
 	PDFEnabled                                                       bool
 	BlockedPMCIDs                                                    []string
 }
@@ -108,8 +109,11 @@ func run() error {
 	if strings.HasPrefix(pc.ConnConfig.Database, "litradock_native_") {
 		schemaQuery, want = "SELECT max(version) FROM native_schema", 3
 	}
-	if err = db.QueryRow(ctx, schemaQuery).Scan(&version); err != nil || version != want {
+	if err = db.QueryRow(ctx, schemaQuery).Scan(&version); err != nil || (version != want && !(want == 3 && version == 4)) {
 		return errors.New("Expected schema version required; use supported stopped-service migration.")
+	}
+	if want == 3 && version == 3 {
+		cfg.SavedSetEnabled = false
 	}
 	s := &server{native: strings.HasPrefix(pc.ConnConfig.Database, "litradock_native_"), db: db, cfg: cfg, provider: providerClient(), slots: make(chan struct{}, 2), loginGate: make(chan struct{}, 1)}
 	service := &http.Server{Addr: cfg.Listen, Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384}

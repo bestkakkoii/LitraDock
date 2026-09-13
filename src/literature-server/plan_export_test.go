@@ -359,7 +359,7 @@ func TestPlanExportActualPostgres(t *testing.T) {
 		observed := false
 		deadline := time.Now().Add(5 * time.Second)
 		for time.Now().Before(deadline) {
-			if db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT count(*),COALESCE(sum(octet_length(r.metadata))%')").Scan(&observed) != nil {
+			if db.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT m.search_id,m.rank,m.child_batch_id%')").Scan(&observed) != nil {
 				t.Fatal("lock inspection")
 			}
 			if observed {
