@@ -213,21 +213,24 @@ try {
     await page.getByLabel('Page size',{exact:true}).selectOption('5');
     const boxes=page.locator('input[type="checkbox"][aria-label^="Select "]');
     await until(async()=>await boxes.count()===5,'page-size change must reload existing run');
+    await page.getByRole('button',{name:'Deselect all',exact:true}).click();
     for(const box of await boxes.all()) await box.check();
     await page.getByRole('button',{name:'Next records',exact:true}).click();
     await until(async()=>(await page.locator('body').innerText()).includes('showing 6–10'),'second saved page');
     for(const box of await boxes.all()) await box.check();
     await page.getByRole('button',{name:'Next records',exact:true}).click();
     await until(async()=>await boxes.count()===2,'third saved page');
-    await boxes.first().click();
-    assert.equal(await boxes.first().isChecked(),false);
+    await boxes.first().check();
+    assert.equal(await boxes.first().isChecked(),true);
+    assert(await page.getByRole('button',{name:'Create batch (11/10)',exact:true}).isDisabled());
+    await boxes.first().uncheck();
     assert(await page.getByRole('button',{name:'Create batch (10/10)',exact:true}).isEnabled());
     const csrf=(await (await page.request.get(target+'/api/session')).json()).csrf;
     assert.equal((await page.request.post(`${target}/api/libraries/${libraryId}/batches`,{headers:{'X-CSRF':csrf,'Origin':target},data:{requestID:crypto.randomUUID(),searchIDs:pages.slice(0,11)}})).status(),409);
     await page.getByRole('button',{name:'Previous records',exact:true}).click();
     await until(async()=>(await page.locator('body').innerText()).includes('showing 6–10'),'previous advances by selected page size');
     assert.equal(await page.locator('input[type="checkbox"][aria-label^="Select "]:checked').count(),5);
-    await page.getByRole('button',{name:'Clear selection',exact:true}).click();
+    await page.getByRole('button',{name:'Deselect all',exact:true}).click();
     assert(await page.getByRole('button',{name:'Create batch (0/10)',exact:true}).isDisabled());
     await boxes.first().check();
     await page.getByRole('button',{name:'Previous records',exact:true}).click();
@@ -243,7 +246,7 @@ try {
     await verifyXlsx('Export batch XLSX',heldId);
     await page.locator(".history-entry").filter({hasText: capturedRunId}).click();
     await until(async()=>await boxes.count()===3,'original saved run reopen');
-    assert(await page.getByRole('button',{name:'Create batch (0/10)',exact:true}).isDisabled());
+    await until(async()=>await page.getByRole('button',{name:'Create batch (3/10)',exact:true}).isEnabled(),'new run defaults to all3 saved records');
   });
   await check('delayed-xlsx-saved-run-switch-fence',async()=>{
     let release; const gate=new Promise(r=>release=r);let captured;const ready=new Promise(r=>captured=r);let downloads=0;

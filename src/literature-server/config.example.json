@@ -12,5 +12,6 @@
   "SearchEnabled": false,
   "AcquisitionEnabled": false,
   "BlockedPMCIDs": [],
-  "PlanEnabled": false
+  "PlanEnabled": false,
+  "PDFEnabled": false
 }

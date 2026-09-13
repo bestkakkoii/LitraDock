@@ -95,12 +95,13 @@ func (s *server) nativeRoutes(w http.ResponseWriter, r *http.Request, ctx contex
 	if len(parts) == 4 && parts[3] == "batches" && r.Method == "POST" {
 		var input struct {
 			RequestID string
+			Format    string
 			SearchIDs []string
 		}
 		if !decode(w, r, &input) {
 			return true
 		}
-		id, e := s.queueBatch(ctx, library, input.RequestID, input.SearchIDs)
+		id, e := s.queueBatch(ctx, library, input.RequestID, input.SearchIDs, input.Format)
 		if e != nil {
 			reply(w, 409, map[string]string{"error": e.Error()})
 		} else {
@@ -134,8 +135,8 @@ func (s *server) nativeRoutes(w http.ResponseWriter, r *http.Request, ctx contex
 		if e != nil {
 			reply(w, 409, map[string]string{"error": "Original unavailable under current policy or integrity check; source links remain available."})
 		} else {
-			w.Header().Set("Content-Type", "application/xml")
-			w.Header().Set("Content-Disposition", "attachment; filename=\"original-"+info.Hash+".xml\"")
+			w.Header().Set("Content-Type", info.MediaType)
+			w.Header().Set("Content-Disposition", "attachment; filename=\"original-"+info.Hash+"."+strings.ToLower(info.Format)+"\"")
 			_, _ = w.Write(b)
 		}
 		return true
@@ -211,7 +212,7 @@ func (s *server) exportBundle(ctx context.Context, library, batch string) ([]byt
 				entry["state"] = "unavailable"
 				entry["reason"] = "Original failed current policy/integrity check; open source links."
 			} else {
-				filename := "originals/" + row["search_id"].(string) + "-" + hash + ".xml"
+				filename := "originals/" + row["search_id"].(string) + "-" + hash + "." + strings.ToLower(info.Format)
 				w, err := z.CreateHeader(&zip.FileHeader{Name: filename, Method: zip.Store})
 				if err != nil {
 					return nil, err
@@ -225,13 +226,16 @@ func (s *server) exportBundle(ctx context.Context, library, batch string) ([]byt
 				entry["rightsUri"] = info.Rights
 				entry["sourceUri"] = info.Source
 				entry["repositoryStamp"] = info.Stamp
-				entry["format"] = "XML"
-				entry["publicationVersion"] = "unspecified"
+				entry["format"] = info.Format
+				entry["mediaType"] = info.MediaType
+				entry["depositVersion"] = info.DepositVersion
+				entry["depositType"] = info.DepositType
+				entry["publicationVersion"] = info.Version
 			}
 		}
 		manifest = append(manifest, entry)
 	}
-	m, _ := json.MarshalIndent(map[string]any{"batchId": batch, "generatedAt": time.Now().UTC(), "policy": acquisitionPolicy, "items": manifest, "scope": "Permitted repository XML bytes; no external media or PDF supplied. Unresolved items retain source links."}, "", "  ")
+	m, _ := json.MarshalIndent(map[string]any{"batchId": batch, "generatedAt": time.Now().UTC(), "policy": acquisitionPolicy, "items": manifest, "scope": "Exact permitted repository originals in their stated format; unresolved items retain source links. Archival snapshots may not reflect current NLM data."}, "", "  ")
 	for name, b := range map[string][]byte{"manifest.json": m} {
 		w, e := z.Create(name)
 		if e != nil {

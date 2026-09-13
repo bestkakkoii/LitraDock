@@ -189,6 +189,9 @@ func TestPlanActualPostgres(t *testing.T) {
 		if e = capacityLock(ctx, tx); e != nil {
 			t.Fatal(e)
 		}
+		if e = migratePDF(ctx, tx, true); e != nil {
+			t.Fatal(e)
+		}
 		if e = migratePlans(ctx, tx, true); e != nil {
 			t.Fatal(e)
 		}
@@ -197,6 +200,9 @@ func TestPlanActualPostgres(t *testing.T) {
 			t.Fatal("rollback version")
 		}
 		if e = migratePlans(ctx, tx, false); e != nil {
+			t.Fatal(e)
+		}
+		if e = migratePDF(ctx, tx, false); e != nil {
 			t.Fatal(e)
 		}
 		if e = tx.Commit(ctx); e != nil {

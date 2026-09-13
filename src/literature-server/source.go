@@ -47,7 +47,7 @@ func providerClient() *http.Client {
 	tr := &http.Transport{Proxy: nil, MaxConnsPerHost: 1, IdleConnTimeout: 30 * time.Second, TLSHandshakeTimeout: 10 * time.Second}
 	tr.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(address)
-		if err != nil || (host != "eutils.ncbi.nlm.nih.gov" && host != "pmc.ncbi.nlm.nih.gov") || port != "443" {
+		if err != nil || (host != "eutils.ncbi.nlm.nih.gov" && host != "pmc.ncbi.nlm.nih.gov" && host != cloudHost) || port != "443" {
 			return nil, errors.New("unsupported endpoint")
 		}
 		addresses, err := net.DefaultResolver.LookupIPAddr(ctx, host)
@@ -71,8 +71,26 @@ func providerClient() *http.Client {
 	return &http.Client{Transport: tr, Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 func (s *server) request(ctx context.Context, path string, q url.Values) ([]byte, error) {
-	if path != "esearch.fcgi" && path != "efetch.fcgi" && path != "pmc-oai" {
+	if path != "esearch.fcgi" && path != "efetch.fcgi" && path != "pmc-oai" && path != "pmc-cloud" {
 		return nil, &sourceError{"unsupported", "Unsupported metadata endpoint."}
+	}
+	endpoint := "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/" + path
+	responseKind := "xml"
+	if path == "pmc-cloud" {
+		var e error
+		endpoint, responseKind, e = cloudTarget(q)
+		if e != nil {
+			return nil, e
+		}
+	} else {
+		if path == "pmc-oai" {
+			endpoint = pmcEndpoint
+		} else {
+			q.Set("db", "pubmed")
+			q.Set("retmode", "xml")
+			q.Set("tool", "LitraDock")
+		}
+		endpoint += "?" + q.Encode()
 	}
 	conn, err := s.db.Acquire(ctx)
 	if err != nil {
@@ -125,23 +143,23 @@ func (s *server) request(ctx context.Context, path string, q url.Values) ([]byte
 	if _, err = conn.Exec(ctx, "INSERT INTO ld_source_usage VALUES('ncbi',$1,1) ON CONFLICT(provider,day) DO UPDATE SET requests=ld_source_usage.requests+1", local.Format("2006-01-02")); err != nil {
 		return nil, err
 	}
-	if _, err = conn.Exec(ctx, "UPDATE ld_source_budget SET next_at=now()+interval '400 milliseconds' WHERE name='ncbi'"); err != nil {
+	if _, err = conn.Exec(ctx, "UPDATE ld_source_budget SET next_at=now()+$1::interval WHERE name='ncbi'", func() string {
+		if path == "pmc-cloud" {
+			return "1 second"
+		}
+		return "400 milliseconds"
+	}()); err != nil {
 		return nil, err
 	}
-	endpoint := "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/" + path
-	if path == "pmc-oai" {
-		endpoint = pmcEndpoint
-	} else {
-		q.Set("db", "pubmed")
-		q.Set("retmode", "xml")
-		q.Set("tool", "LitraDock")
-	}
-	req, err := http.NewRequestWithContext(ctx, "GET", endpoint+"?"+q.Encode(), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "LitraDock/Go-native-002")
 	req.Header.Set("Accept-Encoding", "gzip, deflate")
+	if path == "pmc-cloud" {
+		req.Header.Set("Accept-Encoding", "identity")
+	}
 	response, err := s.provider.Do(req)
 	if err != nil {
 		return nil, &sourceError{"transient", "Metadata network or TLS request failed; no completion assumed."}
@@ -169,6 +187,9 @@ func (s *server) request(ctx context.Context, path string, q url.Values) ([]byte
 	}
 	if response.StatusCode != 200 {
 		return nil, &sourceError{"unavailable", fmt.Sprintf("NCBI returned HTTP %d; no result fabricated.", response.StatusCode)}
+	}
+	if path == "pmc-cloud" {
+		return readCloudBody(response, responseKind)
 	}
 	return readMetadataBody(response)
 }
@@ -221,7 +242,8 @@ type node struct {
 	Start, End int64
 }
 
-func parseXML(b []byte) (*node, error) {
+func parseXML(b []byte) (*node, error) { return parseXMLDeclaration(b, "") }
+func parseXMLDeclaration(b []byte, allowed string) (*node, error) {
 	if len(b) > sourceLimit {
 		return nil, errors.New("XML bound")
 	}
@@ -284,7 +306,7 @@ func parseXML(b []byte) (*node, error) {
 			}
 		case xml.Directive:
 			fields := strings.Fields(string(v))
-			if declaredRoot != "" || root != nil || !documentType.MatchString(strings.TrimSpace(string(v))) || strings.ContainsAny(string(v), "[]") {
+			if declaredRoot != "" || root != nil || !(documentType.MatchString(strings.TrimSpace(string(v))) || allowed != "" && strings.Join(strings.Fields(string(v)), " ") == allowed) || strings.ContainsAny(string(v), "[]") {
 				return nil, &sourceError{"failed", "Unsupported XML directive."}
 			}
 			declaredRoot = fields[1]

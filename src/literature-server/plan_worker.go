@@ -158,11 +158,11 @@ func (s *server) admitPlan(ctx context.Context) error {
 	if block.BlockedReasonCode != "" {
 		return nil
 	}
-	var library, plan string
-	err = tx.QueryRow(ctx, `SELECT p.library_id::text,p.plan_id FROM native_plans p WHERE p.state='active'
+	var library, plan, format string
+	err = tx.QueryRow(ctx, `SELECT p.library_id::text,p.plan_id,p.requested_format FROM native_plans p WHERE p.state='active'
  AND EXISTS(SELECT 1 FROM native_plan_items m WHERE m.library_id=p.library_id AND m.plan_id=p.plan_id AND m.child_batch_id IS NULL AND NOT m.cancelled)
  AND NOT EXISTS(SELECT 1 FROM native_batches b JOIN native_items i USING(library_id,batch_id) WHERE b.library_id=p.library_id AND b.plan_id=p.plan_id AND i.state IN ('queued','running','paused'))
- ORDER BY p.last_scheduled_at NULLS FIRST,p.created_at,p.plan_id FOR UPDATE OF p SKIP LOCKED LIMIT 1`).Scan(&library, &plan)
+ ORDER BY p.last_scheduled_at NULLS FIRST,p.created_at,p.plan_id FOR UPDATE OF p SKIP LOCKED LIMIT 1`).Scan(&library, &plan, &format)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -183,7 +183,7 @@ func (s *server) admitPlan(ctx context.Context) error {
 	batch := newID("BAT-")
 	canonical := append([]string{}, ids...)
 	slices.Sort(canonical)
-	if _, err = tx.Exec(ctx, "INSERT INTO native_batches(library_id,batch_id,request_id,selection,state,plan_id) VALUES($1,$2,$3,$4,'active',$5)", library, batch, newUUID(), strings.Join(canonical, ","), plan); err != nil {
+	if _, err = tx.Exec(ctx, "INSERT INTO native_batches(library_id,batch_id,request_id,selection,state,plan_id,requested_format) VALUES($1,$2,$3,$4,'active',$5,$6)", library, batch, newUUID(), strings.Join(canonical, ","), plan, format); err != nil {
 		return err
 	}
 	for rank, id := range ids {

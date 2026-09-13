@@ -26,6 +26,7 @@ type config struct {
 	SearchEnabled                                                    bool
 	AcquisitionEnabled                                               bool
 	PlanEnabled                                                      bool
+	PDFEnabled                                                       bool
 	BlockedPMCIDs                                                    []string
 }
 type server struct {
@@ -103,12 +104,12 @@ func run() error {
 	var version int
 	schemaQuery, want := "SELECT max(version) FROM ld_schema", 4
 	if strings.HasPrefix(pc.ConnConfig.Database, "litradock_native_") {
-		schemaQuery, want = "SELECT max(version) FROM native_schema", 2
+		schemaQuery, want = "SELECT max(version) FROM native_schema", 3
 	}
 	if err = db.QueryRow(ctx, schemaQuery).Scan(&version); err != nil || version != want {
 		return errors.New("Expected schema version required; use supported stopped-service migration.")
 	}
-	s := &server{native: want == 2, db: db, cfg: cfg, provider: providerClient(), slots: make(chan struct{}, 2), loginGate: make(chan struct{}, 1)}
+	s := &server{native: strings.HasPrefix(pc.ConnConfig.Database, "litradock_native_"), db: db, cfg: cfg, provider: providerClient(), slots: make(chan struct{}, 2), loginGate: make(chan struct{}, 1)}
 	service := &http.Server{Addr: cfg.Listen, Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384}
 	go s.worker(ctx)
 	go func() {

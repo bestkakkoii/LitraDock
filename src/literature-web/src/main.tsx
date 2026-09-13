@@ -14,7 +14,9 @@ import {
 } from "./api";
 import { ArticleCard, SourceLinks } from "./components/ArticleCard";
 import { canAdvanceRecords } from "./pagination";
-import { searchId, selectedSearchIds, toggleArticle } from "./selection";
+import { searchId, selectedSearchIds } from "./selection";
+import { useSavedSelection } from "./savedSelection";
+import { originalKind } from "./originalKind";
 import { PlanWorkspace } from "./plans/PlanWorkspace";
 import { SearchHistory } from "./components/SearchHistory";
 import { PdfAvailability } from "./components/PdfAvailability";
@@ -53,7 +55,6 @@ function App() {
     [run, setRun] = useState<Run | null>(null),
     [pageTotal, setPageTotal] = useState(0),
     [records, setRecords] = useState<Article[]>([]),
-    [selected, setSelected] = useState<Map<string, Article>>(new Map()),
     [history, setHistory] = useState<Run[]>([]),
     [historyTotal, setHistoryTotal] = useState(0),
     [historyOffset, setHistoryOffset] = useState(0),
@@ -79,10 +80,12 @@ function App() {
     return batchScope.current.signal;
   };
   const planScope = useRef(new AbortController());
+  const [pdfPlan, setPdfPlan] = useState<{ id: string; sequence: number }>();
   const retirePlanScope = () => {
     beginBatchRequest();
     planScope.current.abort();
     planScope.current = new AbortController();
+    setPdfPlan(undefined);
   };
   const retireChildView = () => {
     beginBatchRequest();
@@ -90,7 +93,9 @@ function App() {
     setBatchBusy(false);
     setBatch(null);
   };
-  const selectionMaximum = serviceInfo?.planEnabled === true ? 100 : 10;
+  const selection = useSavedSelection(library, run, sessionGeneration(), planScope.current.signal);
+  const selected = selection.selected;
+  const selectionMaximum = 100;
   const isCurrentBatchOperation = (
     operation: number,
     expectedLibrary: string,
@@ -133,7 +138,7 @@ function App() {
       setQuery("");
       setSnapshot("");
       setRecords([]);
-      setSelected(new Map());
+      selection.deselectAll();
       setHistory([]);
       setRun(null);
       setBatch(null);
@@ -210,7 +215,7 @@ function App() {
     timer = setTimeout(poll, 1000);
     return () => { disposed = true; clearTimeout(timer); pollAbort.abort(); parentSignal.removeEventListener("abort", abortPoll); };
   }, [signedIn, library, batch?.batch.batch_id, batchBusy]);
-  const openBatch = async (id: string) => {
+  const openBatch = async (id: string, propagate = false) => {
     if (!id || !library) return;
     const expected = sessionGeneration(), expectedLibrary = library;
     const operation = ++batchOperation.current;
@@ -220,7 +225,10 @@ function App() {
       const detail = await api.batch(expectedLibrary, id, expected, signal);
       if (isCurrentBatchOperation(operation, expectedLibrary, expected)) setBatch(detail);
     } catch (e) {
-      if (isCurrentBatchOperation(operation, expectedLibrary, expected)) setError((e as Error).message);
+      if (isCurrentBatchOperation(operation, expectedLibrary, expected)) {
+        setError((e as Error).message);
+        if (propagate) throw e;
+      }
     } finally {
       if (isCurrentBatchOperation(operation, expectedLibrary, expected)) setBatchBusy(false);
     }
@@ -259,7 +267,7 @@ function App() {
       setSnapshot("");
       setRecords([]);
       setHistory([]);
-      setSelected(new Map());
+      selection.deselectAll();
       setRun(null);
       setBatch(null);
       setSavedBatches([]); setBatchOffset(0); setBatchTotal(0);
@@ -295,15 +303,16 @@ function App() {
     setBatchBusy(false); setBatch(null); setRun(null);
     const expectedSession = sessionGeneration();
     const searchLibrary = library;
+    const searchSignal = planScope.current.signal;
     setBusy(true);
     setError("");
     setRecords([]);
     setPageTotal(0);
-    setSelected(new Map());
+    selection.deselectAll();
     setRecordOffset(0);
     setSnapshot(query);
     try {
-      const queued = await api.search(searchLibrary, query, limit);
+      const queued = await api.search(searchLibrary, query, limit, expectedSession, searchSignal);
       if (
         g !== runGeneration.current ||
         expectedSession !== sessionGeneration()
@@ -312,8 +321,8 @@ function App() {
       setMessage("Search queued; waiting for source metadata.");
       for (let i = 0; i < 120; i++) {
         await new Promise((r) => setTimeout(r, 500));
-        if (g !== runGeneration.current) return;
-        const page = await api.run(searchLibrary, queued.id, 0, expectedSession, pageSize);
+        if (g !== runGeneration.current || searchSignal.aborted || expectedSession !== sessionGeneration()) return;
+        const page = await api.run(searchLibrary, queued.id, 0, expectedSession, pageSize, searchSignal);
         if (
           g !== runGeneration.current ||
           expectedSession !== sessionGeneration()
@@ -351,15 +360,16 @@ function App() {
     const g = ++runGeneration.current;
     if (id !== run?.run_id) {
       retirePlanScope();
-      setSelected(new Map()); setRecords([]); setRun(null); setBatch(null);
+      selection.deselectAll(); setRecords([]); setRun(null); setBatch(null);
       batchOperation.current += 1; setBatchBusy(false);
     }
     const expectedSession = sessionGeneration();
     const savedLibrary = library;
+    const savedSignal = planScope.current.signal;
     setBusy(true);
     setError("");
     try {
-      const page = await api.run(savedLibrary, id, offset, expectedSession, size);
+      const page = await api.run(savedLibrary, id, offset, expectedSession, size, savedSignal);
       if (
         g !== runGeneration.current ||
         expectedSession !== sessionGeneration() ||
@@ -385,7 +395,7 @@ function App() {
     }
   };
   const createBatch = async () => {
-    if (!library || selected.size < 1 || selected.size > 10) return;
+    if (!library || !selection.ready || selected.size < 1 || selected.size > 10) return;
     const ids = selectedSearchIds(selected);
     if (ids.length !== selected.size) {
       setError("Selected records do not contain stable search IDs.");
@@ -448,7 +458,8 @@ function App() {
     }
   };
   const saveOriginal = async (item: BatchDetail["items"][number]) => {
-    if (!library || !item.downloadAvailable || !item.original_hash) return;
+    const kind = originalKind(item);
+    if (!library || !kind || !item.original_hash) return;
     const expected = sessionGeneration();
     const expectedLibrary = library;
     const operation = ++batchOperation.current;
@@ -464,10 +475,11 @@ function App() {
       );
       if (!isCurrentBatchOperation(operation, expectedLibrary, expected))
         return;
+      if (kind === "pdf" && blob.type !== "application/pdf") throw new Error("The server did not return a PDF. No file was saved.");
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `${item.search_id}.xml`;
+      anchor.download = `${item.search_id}.${kind}`;
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (x) {
@@ -515,6 +527,7 @@ function App() {
       const blob = await api.exportBundle(expectedLibrary, batchId, expected, signal);
       if (!isCurrentBatchOperation(operation, expectedLibrary, expected))
         return;
+      if (blob.type !== "application/zip") throw new Error("The server did not return a ZIP bundle. No file was saved; try individual Save actions.");
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -622,7 +635,7 @@ function App() {
                 setRecords([]);
                 setRun(null);
                 setPageTotal(0);
-                setSelected(new Map());
+                selection.deselectAll();
                 setSnapshot("");
                 setBatch(null);
                 setSavedBatches([]); setBatchOffset(0); setBatchTotal(0);
@@ -750,14 +763,27 @@ function App() {
             </section>
           )}
           {serviceInfo?.searchEnabled === false && <p className="muted">New searches are temporarily disabled by the operator. Saved results remain available.</p>}
-          <PdfAvailability selectedCount={selected.size} />
+          <section className="selection-toolbar" aria-label="Saved record selection">
+            <p aria-live="polite"><strong>{selected.size} selected of {run?.fetched ?? 0} retrieved records</strong> · Provider total: {run?.total ?? 0} matches</p>
+            <p className="muted small">Selection covers the saved search across pages, up to 100 records. All saved records are selected once when the search loads; your changes remain until you choose another run. Nothing is acquired until you click a download or batch action.</p>
+            <div className="result-actions">
+              <button className="secondary" disabled={!selection.ready} onClick={selection.selectAll}>Select all</button>
+              <button className="secondary" disabled={!selection.ready || !selected.size} onClick={selection.deselectAll}>Deselect all</button>
+            </div>
+            {selection.loading && <p role="status">Loading the complete saved record selection… Admission is disabled until this finishes.</p>}
+            {selection.error && <div role="alert"><p>{selection.error}</p><button onClick={selection.retry}>Retry loading selection</button></div>}
+          </section>
+          <PdfAvailability selectedCount={selected.size} ids={selectedSearchIds(selected)} ready={selection.ready && !busy}
+            enabled={serviceInfo?.pdfEnabled === true} plansEnabled={serviceInfo?.planEnabled === true}
+            library={library} runID={run?.run_id} generation={sessionGeneration()} scopeSignal={planScope.current.signal}
+            policy={serviceInfo?.pdfPolicySummary} onStart={retireChildView}
+            onBatch={id => openBatch(id, true)} onPlan={id => setPdfPlan(value => ({ id, sequence: (value?.sequence ?? 0) + 1 }))} />
           <div className="result-head">
             <h2>
               Results <span className="count">{records.length}</span>
             </h2>
             <div className="result-actions">
               <span aria-live="polite">{selected.size} selected across saved record pages (maximum {selectionMaximum})</span>
-              <button className="secondary" disabled={selected.size === 0} onClick={() => setSelected(new Map())}>Clear selection</button>
               <button
                 className="secondary"
                 disabled={!run || batchBusy}
@@ -776,6 +802,7 @@ function App() {
                 className="secondary"
                 disabled={
                   selected.size < 1 ||
+                  !selection.ready ||
                   selected.size > 10 ||
                   batchBusy ||
                   !acquisitionEnabled
@@ -797,9 +824,10 @@ function App() {
                 key={searchId(a) || `${String(a.Pmid)}-${i}`}
                 article={a}
                 selected={selected.has(searchId(a))}
+                disabled={!selection.ready}
                 onSelect={() => {
                   if (!selected.has(searchId(a)) && selected.size >= selectionMaximum) setError(`Selection limit reached. Clear or deselect a record before choosing another; maximum ${selectionMaximum}.`);
-                  setSelected((s) => toggleArticle(s, a, selectionMaximum));
+                  selection.toggle(a);
                 }}
               />
             ))
@@ -841,6 +869,7 @@ function App() {
             library={library} runID={run?.run_id ?? ""} generation={sessionGeneration()}
             selectedIDs={selectedSearchIds(selected)} enabled={serviceInfo?.planEnabled === true}
             scopeSignal={planScope.current.signal} onPlanChange={retireChildView}
+            admissionReady={selection.ready} openRequest={pdfPlan}
             onChild={id => { retireChildView(); void openBatch(id); }}
           />}
           {batch && (
@@ -850,6 +879,7 @@ function App() {
                   <h2>Batch {batch.batch.batch_id}</h2>
                   <p className="muted small">
                     {batch.batch.state} · {batch.total} selected records
+                    {` · Requested ${(batch.requestedFormat ?? "xml").toUpperCase()}`}
                     {batch.batch.plan_id && <> · Controlled by plan {batch.batch.plan_id}. Open it in Saved plans to pause, resume, retry or cancel.</>}
                   </p>
                 </div>
@@ -901,10 +931,11 @@ function App() {
                     disabled={batchBusy}
                     onClick={exportBundle}
                   >
-                    Download original bundle
+                    {batch.requestedFormat === "pdf" ? "Save PDF ZIP" : "Download original bundle"}
                   </button>
                 </div>
               </div>
+              <p className="muted" aria-label="Batch progress">{Object.entries(batch.counts).map(([state, count]) => `${count} ${state}`).join(" · ")}. Acquired files are on the server; use Save to download to this device.</p>
               {batch.items.map((item) => (
                 <div className="batch-item" key={item.search_id}>
                   <strong className="batch-title">
@@ -915,18 +946,21 @@ function App() {
                     {item.reason ? ` · ${item.reason}` : ""}
                   </p>
                   <SourceLinks article={item.article} />
-                  {item.downloadAvailable && item.original_hash ? (
+                  {originalKind(item) && item.original_hash ? (
                     <>
                       <button
                         className="secondary small-button"
                         disabled={batchBusy}
                         onClick={() => saveOriginal(item)}
                       >
-                        Save XML
+                        {originalKind(item) === "pdf" ? "Save PDF" : "Save XML"}
                       </button>
                       <small className="muted">
                         {item.format ?? "XML"} ·{" "}
-                        {item.version ?? "repository snapshot"} · hash{" "}
+                        {item.version ?? "repository snapshot"} ·{" "}
+                        {item.mediaType ? `${item.mediaType} · ` : ""}
+                        {item.depositVersion ? `Deposit ${item.depositVersion} (${item.depositType ?? "type not supplied"}) · ` : ""}
+                        {typeof item.bytes === "number" ? `${item.bytes} bytes · ` : ""}SHA-256{" "}
                         {item.original_hash} ·{" "}
                         {safeRightsLink(item.rights_uri) ? (
                           <a
@@ -954,7 +988,7 @@ function App() {
           <section className="capability">
             <strong>Batch, download and export</strong>
             <span>
-              Search retrieves up to 100 results per run; batches select up to 10 records across saved record pages. Only repository XML with a reviewed, consistent article grant is acquired; many full-text sources remain unavailable. Selected batches acquire permitted repository XML into your server library. Save XML downloads a file to this device; XLSX provides text identifiers and clickable source links, while CSV and ZIP remain available. Exports retain unavailable-item reasons. Publisher PDF access and account-based publisher login are not provided.
+              Search retrieves up to 100 results per run; each batch processes up to 10 saved records. PDF acquisition requires the current server policy and a permitted repository original; unavailable records retain reasons and source links. Create batch acquires XML, while Download PDFs explicitly requests PDF. Server acquisition is separate from Save XML, Save PDF or ZIP downloads to this device. Existing CSV/XLSX exports remain available. No publisher account login or plan-wide bundle is provided.
             </span>
           </section>
         </section>

@@ -12,7 +12,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func (s *server) queueBatch(ctx context.Context, library, requestID string, selected []string) (string, error) {
+func (s *server) queueBatch(ctx context.Context, library, requestID string, selected []string, formats ...string) (string, error) {
+	format, err := requestedFormat(formats)
+	if err != nil {
+		return "", err
+	}
 	if !uuidPattern.MatchString(requestID) || len(selected) < 1 || len(selected) > 10 {
 		return "", errors.New("batch requires request UUID and1–10 saved record IDs")
 	}
@@ -32,16 +36,19 @@ func (s *server) queueBatch(ctx context.Context, library, requestID string, sele
 	if _, e = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(724913015)"); e != nil {
 		return "", e
 	}
-	var previous, previousSelection string
-	e = tx.QueryRow(ctx, "SELECT batch_id,selection FROM native_batches WHERE library_id=$1 AND request_id=$2", library, requestID).Scan(&previous, &previousSelection)
+	var previous, previousSelection, previousFormat string
+	e = tx.QueryRow(ctx, "SELECT batch_id,selection,requested_format FROM native_batches WHERE library_id=$1 AND request_id=$2", library, requestID).Scan(&previous, &previousSelection, &previousFormat)
 	if e == nil {
-		if selection != previousSelection {
+		if selection != previousSelection || format != previousFormat {
 			return "", errors.New("request ID already has another selection")
 		}
 		return previous, nil
 	}
 	if !errors.Is(e, pgx.ErrNoRows) {
 		return "", e
+	}
+	if format == "pdf" && (!s.cfg.PDFEnabled || !s.cfg.AcquisitionEnabled) {
+		return "", errors.New("PDF acquisition is disabled by the operator")
 	}
 	if e = acquisitionCapacity(ctx, tx, len(ids)); e != nil {
 		return "", e
@@ -52,7 +59,7 @@ func (s *server) queueBatch(ctx context.Context, library, requestID string, sele
 		return "", errors.New("selection includes unavailable records")
 	}
 	batch := newID("BAT-")
-	if _, e = tx.Exec(ctx, "INSERT INTO native_batches(library_id,batch_id,request_id,selection,state) VALUES($1,$2,$3,$4,'active')", library, batch, requestID, selection); e != nil {
+	if _, e = tx.Exec(ctx, "INSERT INTO native_batches(library_id,batch_id,request_id,selection,state,requested_format) VALUES($1,$2,$3,$4,'active',$5)", library, batch, requestID, selection, format); e != nil {
 		return "", e
 	}
 	for i, id := range ids {
@@ -117,7 +124,7 @@ func (s *server) controlBatch(ctx context.Context, library, batch, action string
 	return tx.Commit(ctx)
 }
 func (s *server) batchDetail(ctx context.Context, library, batch string) (any, error) {
-	batches, e := s.rows(ctx, "SELECT batch_id,state,created_at,plan_id FROM native_batches WHERE library_id=$1 AND batch_id=$2", library, batch)
+	batches, e := s.rows(ctx, "SELECT batch_id,state,created_at,plan_id,requested_format FROM native_batches WHERE library_id=$1 AND batch_id=$2", library, batch)
 	if e != nil {
 		return nil, e
 	}
@@ -145,21 +152,29 @@ func (s *server) batchDetail(ctx context.Context, library, batch string) (any, e
 		delete(item, "metadata")
 		item["acquisitionState"] = state
 		item["downloadAvailable"] = false
+		item["format"] = ""
+		item["mediaType"] = ""
+		item["version"] = ""
+		item["depositVersion"] = ""
+		item["depositType"] = ""
 		if state == "acquired" {
 			hash, _ := item["original_hash"].(string)
-			if _, _, err := s.original(ctx, library, item["search_id"].(string), hash); err != nil {
+			if _, info, err := s.original(ctx, library, item["search_id"].(string), hash); err != nil {
 				state = "unavailable"
 				item["reason"] = "Stored original retained; current policy or integrity check prevents download. Open source links."
 			} else {
 				item["downloadAvailable"] = true
+				item["format"] = info.Format
+				item["mediaType"] = info.MediaType
+				item["version"] = info.Version
+				item["depositVersion"] = info.DepositVersion
+				item["depositType"] = info.DepositType
 			}
 		}
 		item["state"] = state
 		counts[state]++
-		item["format"] = "XML"
-		item["version"] = "repository snapshot; publication version unspecified"
 	}
-	return map[string]any{"batch": batches[0], "items": items, "total": len(items), "counts": counts, "policy": acquisitionPolicy}, nil
+	return map[string]any{"requestedFormat": batches[0]["requested_format"], "batch": batches[0], "items": items, "total": len(items), "counts": counts, "policy": acquisitionPolicy}, nil
 }
 func (s *server) batchOne(parent context.Context) {
 	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
@@ -201,7 +216,14 @@ func (s *server) batchOne(parent context.Context) {
 	if e == nil {
 		e = json.Unmarshal([]byte(raw), &article)
 	}
-	var data []byte
+	var data, proof []byte
+	var format string
+	if e == nil {
+		e = s.db.QueryRow(ctx, "SELECT requested_format FROM native_batches WHERE library_id=$1 AND batch_id=$2", library, batch).Scan(&format)
+	}
+	if e == nil && format == "pdf" && !s.cfg.PDFEnabled {
+		e = pdfHeld("PDF acquisition is disabled by the operator.")
+	}
 	var info originalInfo
 	if e == nil && slices.Contains(s.cfg.BlockedPMCIDs, articleString(article, "Pmcid")) {
 		e = &sourceError{"unavailable", "Operator source restriction: article rights need clarification; open source links."}
@@ -211,11 +233,13 @@ func (s *server) batchOne(parent context.Context) {
 	}
 	if e == nil {
 		// Reuse only after validating the complete bytes and current identity/rights policy.
-		reuse := s.db.QueryRow(ctx, "SELECT content FROM native_originals WHERE library_id=$1 AND search_id=$2 ORDER BY acquired_at DESC LIMIT 1", library, id).Scan(&data)
+		reuse := s.db.QueryRow(ctx, "SELECT content,proof FROM native_originals WHERE library_id=$1 AND search_id=$2 AND format=$3 ORDER BY acquired_at DESC LIMIT 1", library, id, format).Scan(&data, &proof)
 		if reuse == nil {
-			info, e = validateOriginal(data, article)
+			info, e = validateStored(data, proof, format, article)
 		} else if !errors.Is(reuse, pgx.ErrNoRows) {
 			e = reuse
+		} else if format == "pdf" {
+			data, info, e = s.acquirePDF(ctx, article)
 		} else {
 			var qErr error
 			q, qErr := pmcQuery(article)
@@ -228,7 +252,7 @@ func (s *server) batchOne(parent context.Context) {
 			}
 		}
 	}
-	state, reason := "acquired", "Original XML acquired on server; use Save to download to your device."
+	state, reason := "acquired", "Original "+strings.ToUpper(format)+" acquired on server; use Save to download to your device."
 	if e != nil {
 		state, reason = "failed", "Acquisition failed; no original accepted."
 		var se *sourceError
@@ -269,21 +293,21 @@ func (s *server) batchOne(parent context.Context) {
 	var hash any
 	if state == "acquired" {
 		var total int64
-		if tx.QueryRow(finish, "SELECT COALESCE(sum(octet_length(content)),0) FROM native_originals").Scan(&total) != nil {
+		if tx.QueryRow(finish, "SELECT COALESCE(sum(octet_length(content)+octet_length(proof)),0) FROM native_originals").Scan(&total) != nil {
 			return
 		}
 		var present bool
 		if tx.QueryRow(finish, "SELECT EXISTS(SELECT 1 FROM native_originals WHERE library_id=$1 AND search_id=$2 AND hash=$3)", library, id, info.Hash).Scan(&present) != nil {
 			return
 		}
-		added := int64(len(data))
+		added := int64(len(data) + len(info.Proof))
 		if present {
 			added = 0
 		}
 		if total+added > 256*1024*1024 {
 			state, reason = "failed", "Original storage capacity reached; no partial original saved."
 		} else {
-			_, e = tx.Exec(finish, `INSERT INTO native_originals(library_id,search_id,hash,content,source_uri,rights_uri,repository_stamp,policy) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`, library, id, info.Hash, data, info.Source, info.Rights, info.Stamp, acquisitionPolicy)
+			_, e = tx.Exec(finish, `INSERT INTO native_originals(library_id,search_id,hash,content,source_uri,rights_uri,repository_stamp,policy,format,proof) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT DO NOTHING`, library, id, info.Hash, data, info.Source, info.Rights, info.Stamp, formatPolicy(format), format, nonNilBytes(info.Proof))
 			if e != nil {
 				return
 			}
@@ -321,9 +345,9 @@ func (s *server) original(ctx context.Context, library, id, hash string) ([]byte
 	if len(hash) != 64 {
 		return nil, info, errors.New("invalid hash")
 	}
-	var b []byte
-	var raw string
-	e := s.db.QueryRow(ctx, "SELECT o.content,r.metadata FROM native_originals o JOIN ld_records r USING(library_id,search_id) WHERE o.library_id=$1 AND o.search_id=$2 AND o.hash=$3", library, id, hash).Scan(&b, &raw)
+	var b, proof []byte
+	var raw, format string
+	e := s.db.QueryRow(ctx, "SELECT o.content,r.metadata,o.format,o.proof FROM native_originals o JOIN ld_records r USING(library_id,search_id) WHERE o.library_id=$1 AND o.search_id=$2 AND o.hash=$3", library, id, hash).Scan(&b, &raw, &format, &proof)
 	if e != nil {
 		return nil, info, e
 	}
@@ -334,7 +358,10 @@ func (s *server) original(ctx context.Context, library, id, hash string) ([]byte
 	if slices.Contains(s.cfg.BlockedPMCIDs, articleString(a, "Pmcid")) {
 		return nil, info, errors.New("operator source restriction")
 	}
-	info, e = validateOriginal(b, a)
+	if format == "pdf" && !s.cfg.PDFEnabled {
+		return nil, info, errors.New("PDF policy disabled")
+	}
+	info, e = validateStored(b, proof, format, a)
 	if e != nil || info.Hash != hash {
 		return nil, info, fmt.Errorf("original hash or current policy validation failed")
 	}

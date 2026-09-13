@@ -35,11 +35,11 @@ func (s *server) planRoutes(w http.ResponseWriter, r *http.Request, ctx context.
 	}
 	if len(parts) == 4 && r.Method == "POST" {
 		var input struct {
-			RequestID, RunID string
-			SearchIDs        []string
+			RequestID, RunID, Format string
+			SearchIDs                []string
 		}
 		if decode(w, r, &input) {
-			v, e := s.queuePlan(ctx, library, input.RequestID, input.RunID, input.SearchIDs)
+			v, e := s.queuePlan(ctx, library, input.RequestID, input.RunID, input.SearchIDs, input.Format)
 			planReply(w, v, e)
 		}
 		return true

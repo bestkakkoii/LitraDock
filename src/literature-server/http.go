@@ -98,7 +98,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return 10
 			}
 			return 0
-		}(), "planEnabled": s.native && s.cfg.PlanEnabled, "planSelectionLimit": 100, "planGroupLimit": 10, "acquisitionEnabled": s.cfg.AcquisitionEnabled, "source": s.cfg.Revision})
+		}(), "pdfEnabled": s.native && s.cfg.PDFEnabled && s.cfg.AcquisitionEnabled, "pdfPolicySummary": pdfPolicySummary, "planEnabled": s.native && s.cfg.PlanEnabled, "planSelectionLimit": 100, "planGroupLimit": 10, "acquisitionEnabled": s.cfg.AcquisitionEnabled, "source": s.cfg.Revision})
 		return
 	}
 	if !strings.HasPrefix(r.URL.Path, "/api/") {

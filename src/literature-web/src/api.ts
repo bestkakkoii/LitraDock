@@ -38,6 +38,8 @@ export type LibraryPage = {
   limit: number;
 };
 export type ServiceInfo = {
+  pdfEnabled?: boolean;
+  pdfPolicySummary?: string;
   planEnabled?: boolean;
   planSelectionLimit?: number;
   planGroupLimit?: number;
@@ -51,6 +53,9 @@ export type ServiceInfo = {
   retention?: string;
 };
 export type BatchItem = {
+  mediaType?: string;
+  depositVersion?: string;
+  depositType?: string;
   search_id: string;
   rank: number;
   state: string;
@@ -67,6 +72,7 @@ export type BatchItem = {
   version?: string;
 };
 export type BatchDetail = {
+  requestedFormat?: "xml" | "pdf";
   batch: { batch_id: string; state: string; created_at: string; plan_id?: string | null };
   items: BatchItem[];
   total: number;
@@ -223,21 +229,22 @@ export const api = {
     request<LibraryPage>(
       `/api/libraries/${encodeURIComponent(id)}?offset=${encodeURIComponent(offset)}`,
     ),
-  search: (id: string, query: string, limit: number) =>
+  search: (id: string, query: string, limit: number, g = generation, signal?: AbortSignal) =>
     request<{ id: string }>(`/api/libraries/${encodeURIComponent(id)}/search`, {
       method: "POST",
       body: JSON.stringify({ query, limit }),
-    }),
-  run: (library: string, run: string, offset: number, g = generation, limit = 100) =>
+      signal,
+    }, g),
+  run: (library: string, run: string, offset: number, g = generation, limit = 100, signal?: AbortSignal) =>
     request<RunPage>(
       `/api/libraries/${encodeURIComponent(library)}/runs/${encodeURIComponent(run)}?offset=${encodeURIComponent(offset)}&limit=${encodeURIComponent(limit)}`,
-      {},
+      { signal },
       g,
     ),
-  createBatch: (library: string, requestID: string, searchIDs: string[], g = generation, signal?: AbortSignal) =>
+  createBatch: (library: string, requestID: string, searchIDs: string[], g = generation, signal?: AbortSignal, format?: "xml" | "pdf") =>
     request<{ id: string }>(
       `/api/libraries/${encodeURIComponent(library)}/batches`,
-      { method: "POST", body: JSON.stringify({ requestID, searchIDs }), signal },
+      { method: "POST", body: JSON.stringify({ requestID, searchIDs, ...(format ? { format } : {}) }), signal },
       g,
     ),
   batch: (library: string, id: string, g = generation, signal?: AbortSignal) =>

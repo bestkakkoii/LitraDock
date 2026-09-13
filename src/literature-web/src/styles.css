@@ -398,6 +398,8 @@ input, select, textarea { min-width: 0; max-width: 100%; }
 .history-open { color: #1864ab; font-size: .85rem; font-weight: 700; }
 .pdf-availability { border: 1px solid #bdcad8; border-left: 4px solid #1864ab; padding: 1rem; border-radius: 10px; background: #fff; margin: 1rem 0; }
 .pdf-availability p { margin: .5rem 0; }
+.selection-toolbar { padding: 1rem; background: #e9f2fb; border-radius: 10px; margin: 1rem 0; }
+.selection-toolbar .result-actions { justify-content: flex-start; }
 .pdf-availability button { margin: .5rem .75rem .5rem 0; }
 button:focus-visible, a:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid #1864ab; outline-offset: 3px; }
 @media (max-width: 1100px) {

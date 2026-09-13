@@ -12,6 +12,7 @@ type Props = {
   library: string; runID: string; generation: number; selectedIDs: string[];
   enabled: boolean; scopeSignal: AbortSignal;
   onPlanChange: () => void; onChild: (id: string) => void;
+  admissionReady?: boolean; openRequest?: { id: string; sequence: number };
 };
 
 export function PlanWorkspace(props: Props) {
@@ -28,6 +29,9 @@ export function PlanWorkspace(props: Props) {
     else stop();
     return () => { props.scopeSignal.removeEventListener("abort", stop); model.dispose(); controller.current = null; };
   }, [props.library, props.runID, props.generation, props.scopeSignal]);
+  useLayoutEffect(() => {
+    if (props.openRequest && !props.scopeSignal.aborted) void controller.current?.read(props.openRequest.id);
+  }, [props.openRequest]);
   useLayoutEffect(() => { if (confirmCancel) cancelButton.current?.focus(); }, [confirmCancel]);
   const current = () => props.generation === sessionGeneration() && !props.scopeSignal.aborted;
   const page = state.page;
@@ -47,7 +51,7 @@ export function PlanWorkspace(props: Props) {
     <h2>Processing plans</h2>
     <p>Process up to 100 selected saved records in groups of at most 10. Plans remain in your library when you close this page.</p>
     {props.enabled ? <button
-      disabled={state.busy || !!state.pending || !props.runID || props.selectedIDs.length < 1 || props.selectedIDs.length > 100}
+      disabled={props.admissionReady === false || state.busy || !!state.pending || !props.runID || props.selectedIDs.length < 1 || props.selectedIDs.length > 100}
       onClick={() => {
         if (!current()) return;
         props.onPlanChange();
@@ -76,7 +80,7 @@ export function PlanWorkspace(props: Props) {
     </div>}
     {page && plan && <>
       <h3>Plan {plan.planID}</h3>
-      <p>{plan.state} · {plan.selectedCount} selected saved records · Run {plan.runID}</p>
+      <p>{plan.state} · {plan.selectedCount} selected saved records · Requested {(plan.requestedFormat ?? "xml").toUpperCase()} · Run {plan.runID}</p>
       <p className="muted">Last confirmed server update: {plan.updatedAt}</p>
       <p>{plan.admission.admittedCount} admitted to child batches · {plan.admission.waitingCount} awaiting admission (including paused records)</p>
       {plan.admission.reason && <p>{plan.admission.reason}{plan.admission.retryAfter ? ` · Check after ${plan.admission.retryAfter}` : ""}</p>}
@@ -117,7 +121,7 @@ export function PlanWorkspace(props: Props) {
         <span>{page.total ? page.offset + 1 : 0}–{page.offset + page.items.length} of {page.total} selected records</span>
         <button className="secondary" disabled={state.busy || page.items.length === 0 || page.offset + page.items.length >= page.total} onClick={() => void controller.current?.read(plan.planID, page.offset + page.limit)}>Next plan items</button>
       </div>
-      <p className="muted">Plan-wide export is unavailable. Open a child batch for its XML originals, XLSX, CSV and ZIP. No publisher PDF or publisher login is provided.</p>
+      <p className="muted">Plan-wide export is unavailable. Open a child batch to save its available PDF or XML originals and ZIP, or export XLSX/CSV. No publisher account login is provided.</p>
     </>}
   </section>;
 }

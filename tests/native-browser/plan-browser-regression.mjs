@@ -134,6 +134,7 @@ try {
     await page.getByLabel('Page size',{exact:true}).selectOption('25');
     const boxes=page.locator('input[type="checkbox"][aria-label^="Select "]');
     await until(async()=>await boxes.count()===25,'25 saved records per page');
+    await page.getByRole('button',{name:'Deselect all',exact:true}).click();
     for(const box of await boxes.all())await box.check();
     await page.getByRole('button',{name:'Next records',exact:true}).click();
     await until(async()=>(await page.locator('body').innerText()).includes('showing 26–50'),'second saved page');

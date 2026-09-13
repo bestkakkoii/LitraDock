@@ -4,6 +4,7 @@ export const phases = ["waiting", "queued", "running", "completed", "held", "ret
 export type Phase = typeof phases[number];
 export type PlanAction = "pause" | "resume" | "cancel" | "retry";
 export type PlanSummary = {
+  requestedFormat?: "xml" | "pdf";
   planID: string; runID: string; state: string; selectedCount: number;
   createdAt: string; updatedAt: string; revision: number; allowedActions: string[];
   counts: Record<Phase, number>;
@@ -11,6 +12,7 @@ export type PlanSummary = {
   retryEligibleCount: number;
 };
 export type PlanItem = {
+  mediaType?: string; depositVersion?: string; depositType?: string;
   searchID: string; rank: number; childBatchID: string | null; phase: Phase;
   acquisitionState: string | null; reason: string; attempts: number;
   retryEligible: boolean; downloadAvailable: boolean; article: Article;
@@ -19,7 +21,7 @@ export type PlanItem = {
 };
 export type PlanPage = { plan: PlanSummary; items: PlanItem[]; total: number; offset: number; limit: number; nextPollAfterMs: number; policy: string };
 export type PlanCatalog = { plans: PlanSummary[]; total: number; offset: number; limit: number };
-export type CreatePlan = { requestID: string; runID: string; searchIDs: string[] };
+export type CreatePlan = { requestID: string; runID: string; searchIDs: string[]; format?: "xml" | "pdf" };
 export type ControlPlan = { requestID: string; expectedRevision: number; value: PlanAction };
 export type Receipt = { planID: string; revision: number; state: string; selectedCount?: number; affectedCount?: number };
 

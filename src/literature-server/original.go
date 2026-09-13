@@ -17,7 +17,18 @@ const originalLimit = 8 * 1024 * 1024
 var pmcidPattern = regexp.MustCompile(`^PMC[1-9][0-9]*$`)
 var permissionConflict = regexp.MustCompile(`(?i)all rights reserved|may not be redistributed|no redistribution|non[- ]commercial|no commercial re[- ]?use|no derivatives|permission (is )?required`)
 
-type originalInfo struct{ Hash, Rights, Stamp, Source string }
+type originalInfo struct {
+	Hash, Rights, Stamp, Source                             string
+	Format, MediaType, Version, DepositVersion, DepositType string
+	Proof                                                   []byte
+}
+
+func xmlInfo(out originalInfo) originalInfo {
+	out.Format = "XML"
+	out.MediaType = "application/xml"
+	out.Version = "repository snapshot; publication version unspecified"
+	return out
+}
 
 func articleString(a map[string]any, k string) string { v, _ := a[k].(string); return v }
 func pmcQuery(a map[string]any) (url.Values, error) {
@@ -89,6 +100,33 @@ func validateOriginal(b []byte, expected map[string]any) (originalInfo, error) {
 		return fail("Expected one complete article structure.")
 	}
 	article := metadata.Children[0]
+	rights, e := validateArticleGrant(article, expected)
+	if e != nil {
+		return out, e
+	}
+	out.Rights = rights
+	sum := sha256.Sum256(b)
+	out.Hash = hex.EncodeToString(sum[:])
+	out.Stamp = stamp.Text
+	out.Source = pmcEndpoint + "?" + q.Encode()
+	return xmlInfo(out), nil
+}
+
+// Shared article-level validator: the OAI envelope and cloud version binding remain separate.
+func validateArticleGrant(article *node, expected map[string]any) (string, error) {
+	return validateArticleGrantNS(article, expected, "https://jats.nlm.nih.gov/ns/archiving/1.4/")
+}
+func validateArticleGrantNS(article *node, expected map[string]any, jatsNS string) (string, error) {
+	rights := ""
+	fail := func(reason string) (string, error) {
+		return "", &sourceError{"unavailable", reason + " No original accepted; open source links."}
+	}
+	one := func(n *node, name string) *node {
+		if len(n.direct(name)) != 1 {
+			return nil
+		}
+		return n.child(name)
+	}
 	front := one(article, "front")
 	am := one(front, "article-meta")
 	body := one(article, "body")
@@ -129,7 +167,7 @@ func validateOriginal(b []byte, expected map[string]any) (originalInfo, error) {
 	var reviewedStructure func(*node) bool
 	reviewedStructure = func(n *node) bool {
 		attrs := map[string]string{}
-		namespace := "https://jats.nlm.nih.gov/ns/archiving/1.4/"
+		namespace := jatsNS
 		childrenAre := func(names ...string) bool {
 			if len(n.Children) != len(names) {
 				return false
@@ -283,11 +321,7 @@ func validateOriginal(b []byte, expected map[string]any) (originalInfo, error) {
 		return fail("Article permission unknown or conflicting.")
 	}
 	for grant := range grants {
-		out.Rights = grant
+		rights = grant
 	}
-	sum := sha256.Sum256(b)
-	out.Hash = hex.EncodeToString(sum[:])
-	out.Stamp = stamp.Text
-	out.Source = pmcEndpoint + "?" + q.Encode()
-	return out, nil
+	return rights, nil
 }

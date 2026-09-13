@@ -39,6 +39,7 @@ type planAdmission struct {
 	RetryAfter        *time.Time `json:"retryAfter"`
 }
 type planSummary struct {
+	RequestedFormat    string         `json:"requestedFormat"`
 	PlanID             string         `json:"planID"`
 	RunID              string         `json:"runID"`
 	State              string         `json:"state"`
@@ -52,6 +53,9 @@ type planSummary struct {
 	RetryEligibleCount int            `json:"retryEligibleCount"`
 }
 type planItem struct {
+	MediaType         string         `json:"mediaType"`
+	DepositVersion    string         `json:"depositVersion"`
+	DepositType       string         `json:"depositType"`
 	SearchID          string         `json:"searchID"`
 	Rank              int            `json:"rank"`
 	ChildBatchID      *string        `json:"childBatchID"`
@@ -81,7 +85,7 @@ func capacityLock(ctx context.Context, tx pgx.Tx) error {
 func acquisitionCapacity(ctx context.Context, tx pgx.Tx, extra int) error {
 	var count, total int64
 	err := tx.QueryRow(ctx, `SELECT (SELECT count(*) FROM native_items)+(SELECT count(*) FROM native_plan_items WHERE child_batch_id IS NULL),
- (SELECT COALESCE(sum(octet_length(content)),0) FROM native_originals)`).Scan(&count, &total)
+ (SELECT COALESCE(sum(octet_length(content)+octet_length(proof)),0) FROM native_originals)`).Scan(&count, &total)
 	if err != nil {
 		return err
 	}
@@ -97,8 +101,12 @@ func touchPlan(ctx context.Context, tx pgx.Tx, library, plan string) error {
 	_, err := tx.Exec(ctx, "UPDATE native_plans SET revision=revision+1,updated_at=now() WHERE library_id=$1 AND plan_id=$2", library, plan)
 	return err
 }
-func (s *server) queuePlan(ctx context.Context, library, requestID, run string, selected []string) (planReceipt, error) {
+func (s *server) queuePlan(ctx context.Context, library, requestID, run string, selected []string, formats ...string) (planReceipt, error) {
 	var receipt planReceipt
+	format, fe := requestedFormat(formats)
+	if fe != nil {
+		return receipt, &planError{400, fe.Error()}
+	}
 	if !uuidPattern.MatchString(requestID) || !runIDPattern.MatchString(run) || len(selected) < 1 || len(selected) > 100 {
 		return receipt, &planError{400, "A plan requires a request UUID, saved run and 1–100 unique saved IDs."}
 	}
@@ -118,11 +126,11 @@ func (s *server) queuePlan(ctx context.Context, library, requestID, run string, 
 	if err = capacityLock(ctx, tx); err != nil {
 		return receipt, err
 	}
-	var previous string
+	var previous, previousFormat string
 	var raw []byte
-	err = tx.QueryRow(ctx, "SELECT selection,receipt FROM native_plans WHERE library_id=$1 AND request_id=$2", library, requestID).Scan(&previous, &raw)
+	err = tx.QueryRow(ctx, "SELECT selection,receipt,requested_format FROM native_plans WHERE library_id=$1 AND request_id=$2", library, requestID).Scan(&previous, &raw, &previousFormat)
 	if err == nil {
-		if previous != selection {
+		if previous != selection || previousFormat != format {
 			return receipt, planConflict("Request ID already has another selection.")
 		}
 		err = json.Unmarshal(raw, &receipt)
@@ -130,6 +138,9 @@ func (s *server) queuePlan(ctx context.Context, library, requestID, run string, 
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return receipt, err
+	}
+	if format == "pdf" && (!s.cfg.PDFEnabled || !s.cfg.AcquisitionEnabled) {
+		return receipt, planConflict("PDF acquisition is disabled by the operator.")
 	}
 	if !s.cfg.PlanEnabled {
 		return receipt, planConflict("New processing plans are disabled by the operator.")
@@ -149,7 +160,7 @@ func (s *server) queuePlan(ctx context.Context, library, requestID, run string, 
 	if err != nil {
 		return receipt, err
 	}
-	if _, err = tx.Exec(ctx, "INSERT INTO native_plans(library_id,plan_id,run_id,request_id,selection,receipt) VALUES($1,$2,$3,$4,$5,$6)", library, receipt.PlanID, run, requestID, selection, raw); err != nil {
+	if _, err = tx.Exec(ctx, "INSERT INTO native_plans(library_id,plan_id,run_id,request_id,selection,receipt,requested_format) VALUES($1,$2,$3,$4,$5,$6,$7)", library, receipt.PlanID, run, requestID, selection, raw, format); err != nil {
 		return receipt, err
 	}
 	for rank, id := range selected {
@@ -184,7 +195,7 @@ func planPhase(parent string, child *string, cancelled bool) (string, error) {
 }
 func (s *server) loadPlan(ctx context.Context, tx pgx.Tx, library, id string) (planSummary, []planItem, error) {
 	p := planSummary{Counts: map[string]int{"waiting": 0, "queued": 0, "running": 0, "completed": 0, "held": 0, "retry": 0, "paused": 0, "cancelled": 0}, AllowedActions: []string{}}
-	err := tx.QueryRow(ctx, "SELECT plan_id,run_id,state,revision,created_at,updated_at FROM native_plans WHERE library_id=$1 AND plan_id=$2", library, id).Scan(&p.PlanID, &p.RunID, &p.State, &p.Revision, &p.CreatedAt, &p.UpdatedAt)
+	err := tx.QueryRow(ctx, "SELECT plan_id,run_id,state,revision,created_at,updated_at,requested_format FROM native_plans WHERE library_id=$1 AND plan_id=$2", library, id).Scan(&p.PlanID, &p.RunID, &p.State, &p.Revision, &p.CreatedAt, &p.UpdatedAt, &p.RequestedFormat)
 	if err != nil {
 		return p, nil, err
 	}
@@ -279,7 +290,7 @@ func (s *server) planBlock(ctx context.Context, tx pgx.Tx) (planAdmission, error
 	var next time.Time
 	var used, total int64
 	err := tx.QueryRow(ctx, `SELECT next_at,(SELECT COALESCE(sum(requests),0) FROM ld_source_usage WHERE provider='ncbi'),
- (SELECT COALESCE(sum(octet_length(content)),0) FROM native_originals) FROM ld_source_budget WHERE name='ncbi'`).Scan(&next, &used, &total)
+ (SELECT COALESCE(sum(octet_length(content)+octet_length(proof)),0) FROM native_originals) FROM ld_source_budget WHERE name='ncbi'`).Scan(&next, &used, &total)
 	if err != nil {
 		return a, err
 	}
@@ -349,20 +360,26 @@ func (s *server) planDetail(ctx context.Context, library, id string, offset, lim
 		}
 		links(i.Article)
 		if i.AcquisitionState != nil && *i.AcquisitionState == "acquired" {
-			var b []byte
-			err = tx.QueryRow(ctx, "SELECT content,rights_uri,source_uri,repository_stamp FROM native_originals WHERE library_id=$1 AND search_id=$2 AND hash=$3", library, i.SearchID, i.OriginalHash).Scan(&b, &i.RightsURI, &i.SourceURI, &i.RepositoryStamp)
+			var b, proof []byte
+			var format string
+			err = tx.QueryRow(ctx, "SELECT content,rights_uri,source_uri,repository_stamp,format,proof FROM native_originals WHERE library_id=$1 AND search_id=$2 AND hash=$3", library, i.SearchID, i.OriginalHash).Scan(&b, &i.RightsURI, &i.SourceURI, &i.RepositoryStamp, &format, &proof)
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return nil, err
 			}
 			i.Bytes = len(b)
-			info, e := validateOriginal(b, i.Article)
-			i.DownloadAvailable = err == nil && e == nil && info.Hash == i.OriginalHash && s.cfg.AcquisitionEnabled && !slices.Contains(s.cfg.BlockedPMCIDs, articleString(i.Article, "Pmcid"))
+			info, e := validateStored(b, proof, format, i.Article)
+			if e == nil {
+				i.Format = info.Format
+				i.MediaType = info.MediaType
+				i.Version = info.Version
+				i.DepositVersion = info.DepositVersion
+				i.DepositType = info.DepositType
+			}
+			i.DownloadAvailable = err == nil && e == nil && info.Hash == i.OriginalHash && s.cfg.AcquisitionEnabled && (format != "pdf" || s.cfg.PDFEnabled) && !slices.Contains(s.cfg.BlockedPMCIDs, articleString(i.Article, "Pmcid"))
 			if !i.DownloadAvailable {
 				i.Reason = "Historical original retained; current policy or integrity prevents Save. Open source links."
 			}
 		}
-		i.Format = "XML"
-		i.Version = "repository snapshot; publication version unspecified"
 	}
 	return map[string]any{"plan": p, "items": page, "total": len(items), "offset": offset, "limit": limit, "nextPollAfterMs": 2000, "policy": acquisitionPolicy}, tx.Commit(ctx)
 }
