@@ -1,5 +1,6 @@
 // Synthetic transport/bytes only. No native handler, real-source or product PDF qualification.
 import assert from "node:assert/strict";
+import { installBodyGates } from "./body-gates.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -33,21 +34,11 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } }); page.setDefaultTimeout(15000);
   const errors = [], downloads = [], posts = [], gets = [];
   page.on("pageerror", e => errors.push(String(e))); page.on("download", d => downloads.push(d));
-  await page.addInitScript(() => {
-    const fetch = window.fetch.bind(window);
-    window.fetch = async (...args) => {
-      const response = await fetch(...args);
-      if (window.__holdOriginal && String(args[0]).includes("/originals/")) {
-        const consume = response.blob.bind(response);
-        response.blob = async () => { const body = await consume(); window.__bodyStarted = true; await new Promise(resolve => { window.__releaseBody = resolve; }); return body; };
-      }
-      return response;
-    };
-  });
+  await page.addInitScript(installBodyGates, { mode: "pdf" });
   let authenticated = false, pdfEnabled = true, lost = true, batchReads = 0;
   const article = i => ({ SearchId: `S${i}`, Title: `SYNTHETIC long α 中文 record ${i}`, Pmid: `99000${i}`, OriginalUri: `https://pubmed.ncbi.nlm.nih.gov/99000${i}/` });
   const run = n => ({ run_id: `R${n}`, input: `SYNTHETIC ${n} saved records; complex MeSH query`, total: 25001, fetched: n, state: "partial" });
-  const plan = { planID: "P1", runID: "R11", requestedFormat: "pdf", state: "complete", selectedCount: 11, createdAt: "2026-09-13", updatedAt: "2026-09-13", revision: 1, allowedActions: [], counts: { waiting: 0, queued: 0, running: 0, completed: 2, held: 9, retry: 0, paused: 0, cancelled: 0 }, admission: { admittedCount: 11, waitingCount: 0, blockedReasonCode: "", reason: "", retryAfter: null }, retryEligibleCount: 0 };
+  const plan = { planID: "PLN-00000000000000000000000000000001", runID: "R11", requestedFormat: "pdf", state: "complete", selectedCount: 11, createdAt: "2026-09-13", updatedAt: "2026-09-13", revision: 1, allowedActions: [], counts: { waiting: 0, queued: 0, running: 0, completed: 2, held: 9, retry: 0, paused: 0, cancelled: 0 }, admission: { admittedCount: 11, waitingCount: 0, blockedReasonCode: "", reason: "", retryAfter: null }, retryEligibleCount: 0 };
   await page.route("**/*", async route => {
     const request = route.request(), url = new URL(request.url()), method = request.method();
     if (url.origin !== origin) return route.abort();
@@ -65,9 +56,9 @@ try {
       return reply({ run: run(n), records: Array.from({ length: Math.max(0, Math.min(5, n - offset)) }, (_, i) => article(offset + i)), total: n, offset, limit: 5 });
     }
     if (url.pathname.endsWith("/batches") && method === "POST") { if (lost) { lost = false; return route.abort("failed"); } return reply({ id: "B1" }); }
-    if (url.pathname.endsWith("/plans") && method === "POST") return reply({ planID: "P1", revision: 1, selectedCount: 11, state: "active" });
+    if (url.pathname.endsWith("/plans") && method === "POST") return reply({ planID: "PLN-00000000000000000000000000000001", revision: 1, selectedCount: 11, state: "active", affectedCount: 0 });
     if (url.pathname.endsWith("/plans")) return reply({ plans: [plan], total: 1, offset: 0, limit: 25 });
-    if (url.pathname.includes("/plans/P1")) return reply({ plan, items: Array.from({ length: 11 }, (_, i) => ({ searchID: `S${i}`, rank: i + 1, childBatchID: "B1", phase: i < 2 ? "completed" : "held", acquisitionState: i < 2 ? "acquired" : "unavailable", reason: "SYNTHETIC rights decision", attempts: 1, retryEligible: false, downloadAvailable: i < 2, article: article(i), format: i < 2 ? "PDF" : "", mediaType: i < 2 ? "application/pdf" : "", original_hash: i < 2 ? hash : "", bytes: i < 2 ? pdf.length : 0 })), total: 11, offset: 0, limit: 25, nextPollAfterMs: 2000, policy: "SYNTHETIC" });
+    if (url.pathname.includes("/plans/PLN-00000000000000000000000000000001")) return reply({ plan, items: Array.from({ length: 11 }, (_, i) => ({ searchID: `S${i}`, rank: i + 1, childBatchID: "B1", phase: i < 2 ? "completed" : "held", acquisitionState: i < 2 ? "acquired" : "unavailable", reason: "SYNTHETIC rights decision", attempts: 1, retryEligible: false, downloadAvailable: i < 2, article: article(i), format: i < 2 ? "PDF" : "", mediaType: i < 2 ? "application/pdf" : "", original_hash: i < 2 ? hash : "", bytes: i < 2 ? pdf.length : 0 })), total: 11, offset: 0, limit: 25, nextPollAfterMs: 2000, policy: "SYNTHETIC" });
     if (url.pathname.includes("/batches/")) {
       const isXml = url.pathname.endsWith("XML1"), running = !isXml && ++batchReads === 1;
       return reply({ requestedFormat: isXml ? "xml" : "pdf", batch: { batch_id: isXml ? "XML1" : "B1", state: running ? "running" : "partial", created_at: "2026-09-13" }, items: Array.from({ length: isXml ? 1 : 3 }, (_, i) => ({ search_id: `S${i}`, rank: i + 1, state: running ? "queued" : i < 2 ? "acquired" : "unavailable", reason: i < 2 ? "" : "SYNTHETIC no permitted PDF; source links remain", attempts: 1, article: article(i), downloadAvailable: !running && i < 2, original_hash: isXml ? digest(xml) : hash, format: running || i === 2 ? "" : isXml ? "XML" : "PDF", mediaType: running || i === 2 ? "" : isXml ? "application/xml" : "application/pdf", version: "SYNTHETIC deposit 1", depositVersion: isXml ? "" : "1", depositType: "published article", bytes: isXml ? xml.length : pdf.length })), total: isXml ? 1 : 3, counts: running ? { queued: 3 } : { acquired: 2, unavailable: 1 } });
@@ -115,7 +106,7 @@ try {
   assert(gets.includes(`/api/libraries/L1/originals/S1/${hash}`));
   assert.deepEqual(posts.find(p => p.path.endsWith("/exports")).body, { batchID: "B1", format: "zip" });
   await page.locator('.batch-panel').screenshot({ path: path.join(out, "mixed-pdf-held-batch.png") });
-  await open(11); await page.getByRole("button", { name: "Download PDFs (11 selected)", exact: true }).click(); await page.getByRole("heading", { name: "Plan P1", exact: true }).waitFor();
+  await open(11); await page.getByRole("button", { name: "Download PDFs (11 selected)", exact: true }).click(); await page.getByRole("heading", { name: "Plan PLN-00000000000000000000000000000001", exact: true }).waitFor();
   assert.equal(posts.filter(p => p.path.endsWith("/plans")).length, 1); assert.equal(posts.find(p => p.path.endsWith("/plans")).body.format, "pdf");
   await page.getByRole("button", { name: "Open child batch B1", exact: true }).first().click();
   await page.evaluate(() => { window.__holdOriginal = true; });

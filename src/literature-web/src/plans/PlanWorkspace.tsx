@@ -81,7 +81,7 @@ export function PlanWorkspace(props: Props) {
         <label>Requested originals <select aria-label="Basket original format" value={format} onChange={event => setFormat(event.target.value as "pdf" | "xml")}>
           <option value="pdf">PDF</option><option value="xml">XML</option>
         </select></label>
-        <button disabled={!props.savedSetEnabled || (format === "pdf" && !props.pdfEnabled) || !basket.length || state.busy || !!state.pending}
+        <button disabled={!props.savedSetEnabled || (format === "pdf" && !props.pdfEnabled) || !basket.length || state.busy || !!state.pending || !!state.confirmed}
           onClick={() => {
             if (!current()) return;
             props.onPlanChange(); retireExports(); setConfirmCancel(false);
@@ -101,7 +101,7 @@ export function PlanWorkspace(props: Props) {
       </details>
     </section>
     {props.enabled ? <button
-      disabled={props.admissionReady === false || state.busy || !!state.pending || !props.runID || props.selectedIDs.length < 1 || props.selectedIDs.length > 100}
+      disabled={props.admissionReady === false || state.busy || !!state.pending || !!state.confirmed || !props.runID || props.selectedIDs.length < 1 || props.selectedIDs.length > 100}
       onClick={() => {
         if (!current()) return;
         props.onPlanChange();
@@ -125,6 +125,10 @@ export function PlanWorkspace(props: Props) {
     {state.busy && <p role="status">Updating plan status…</p>}
     {state.error && <p role="alert" className="error">{state.error}</p>}
     {state.notice && <p role="status">{state.notice}</p>}
+    {state.confirmed && <div className="plan-pending">
+      <p>Confirmed plan {state.confirmed.planID}. Loading its saved status does not submit or retry work.</p>
+      <button disabled={state.busy} onClick={() => { if (current() && state.confirmed) open(state.confirmed.planID); }}>Reopen confirmed plan</button>
+    </div>}
     {state.pending && !state.busy && <div className="plan-pending">
       <p>Unconfirmed {state.pending.kind === "create" ? `plan submission for ${"members" in state.pending.body ? state.pending.body.members.length : state.pending.body.searchIDs.length} records (${state.pending.body.format ?? "xml"})` : `${state.pending.body.value} request`}. Retry sends the same request; it does not create a replacement.</p>
       <button onClick={() => { if (current()) void controller.current?.retrySubmission(); }}>Retry same submission</button>
@@ -149,7 +153,7 @@ export function PlanWorkspace(props: Props) {
         scopeSignal={props.scopeSignal} planSignal={exportScope.current.signal} />
       <div className="plan-actions">
         {(["pause", "resume", "retry", "cancel"] as const).map(action => <button key={action} className="secondary"
-          disabled={state.busy || !!state.pending || !plan.allowedActions.includes(action) || (!props.enabled && (action === "resume" || action === "retry"))}
+          disabled={state.busy || !!state.pending || !!state.confirmed || !plan.allowedActions.includes(action) || (!props.enabled && (action === "resume" || action === "retry"))}
           onClick={() => act(action)}>{({pause: "Pause plan", resume: "Resume plan", retry: "Retry next eligible group", cancel: "Cancel plan"})[action]}</button>)}
         <button className="secondary" disabled={state.busy} onClick={() => { if (current()) void controller.current?.read(plan.planID, page.offset); }}>Refresh plan</button>
       </div>

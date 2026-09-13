@@ -29,6 +29,26 @@ export type CreatePlan = { requestID: string; runID: string; searchIDs: string[]
   { requestID: string; scopeKind: "saved_set"; members: SavedMember[]; format: "xml" | "pdf" };
 export type ControlPlan = { requestID: string; expectedRevision: number; value: PlanAction };
 export type Receipt = { planID: string; revision: number; state: string; selectedCount?: number; affectedCount?: number };
+const receiptError = () => new Error("The server receipt was not confirmed. Retry only the same submission to check its outcome.");
+function receiptObject(value: unknown): asserts value is Receipt {
+  if (!value || typeof value !== "object" || Array.isArray(value) ||
+    !("planID" in value) || typeof value.planID !== "string" || !/^PLN-[0-9a-f]{32}$/.test(value.planID)) throw receiptError();
+}
+export function validateCreateReceipt(value: unknown, body: CreatePlan): Receipt {
+  receiptObject(value);
+  const count = "members" in body ? body.members.length : body.searchIDs.length;
+  if (value.revision !== 1 || value.state !== "active" || value.selectedCount !== count ||
+    value.affectedCount !== 0) throw receiptError();
+  return value;
+}
+export function validateControlReceipt(value: unknown, planID: string, selectedCount?: number): Receipt {
+  receiptObject(value);
+  if (value.planID !== planID || !Number.isSafeInteger(value.revision) || value.revision < 1 ||
+    !["active", "paused", "cancelled", "complete", "partial"].includes(value.state) || !Number.isSafeInteger(value.affectedCount) || value.affectedCount! < 0 ||
+    (value.selectedCount !== undefined && (!Number.isSafeInteger(value.selectedCount) || value.selectedCount < 1 ||
+      value.selectedCount > 100 || (selectedCount !== undefined && value.selectedCount !== selectedCount)))) throw receiptError();
+  return value;
+}
 
 export function validateSummary(plan: PlanSummary) {
   if (!plan || !plan.planID || !Number.isInteger(plan.revision) || plan.revision < 1 ||
@@ -65,11 +85,11 @@ export function planApi(library: string, generation: number) {
       if (page.plan.planID !== id || page.offset !== offset) throw new Error("Plan response did not match the requested page.");
       return page;
     },
-    create(body: CreatePlan, signal: AbortSignal) {
-      return request<Receipt>(base, { method: "POST", body: JSON.stringify(body), signal }, generation);
+    async create(body: CreatePlan, signal: AbortSignal) {
+      return validateCreateReceipt(await request<unknown>(base, { method: "POST", body: JSON.stringify(body), signal }, generation), body);
     },
-    control(id: string, body: ControlPlan, signal: AbortSignal) {
-      return request<Receipt>(`${base}/${encodeURIComponent(id)}/control`, { method: "POST", body: JSON.stringify(body), signal }, generation);
+    async control(id: string, body: ControlPlan, signal: AbortSignal, selectedCount?: number) {
+      return validateControlReceipt(await request<unknown>(`${base}/${encodeURIComponent(id)}/control`, { method: "POST", body: JSON.stringify(body), signal }, generation), id, selectedCount);
     },
   };
 }

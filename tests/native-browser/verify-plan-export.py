@@ -165,6 +165,7 @@ if __name__ == "__main__":
     parser.add_argument("--negative-controls", action="store_true")
     parser.add_argument("--pdf", action="store_true")
     parser.add_argument("--synthetic", action="store_true")
+    parser.add_argument("--synthetic-transport", action="store_true", help="Label isolated synthetic data without imposing the legacy 100-record fixture")
     parser.add_argument("--expected-saved-set", type=pathlib.Path)
     args = parser.parse_args()
     result = []
@@ -193,4 +194,4 @@ if __name__ == "__main__":
                 assert d["items"][0]["file"] == d["items"][1]["file"] != d["items"][2]["file"]
                 assert d["items"][2]["original"]["depositVersion"] == "2"
         result.append({"file": pathlib.Path(path).name, "members": len(d["items"]), "counts": d["counts"], "pdfs": pages, "savedSetNegativeControls": saved_controls, "negativeControls": negatives(d, members) if args.negative_controls else 0})
-    print(json.dumps({"pass": True, "synthetic": args.synthetic, "files": result}))
+    print(json.dumps({"pass": True, "synthetic": args.synthetic or args.synthetic_transport, "files": result}))

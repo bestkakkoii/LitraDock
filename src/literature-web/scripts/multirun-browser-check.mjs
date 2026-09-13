@@ -9,7 +9,7 @@ import { chromium, expect } from "@playwright/test";
 import { zipSync, unzipSync } from "../../../tests/native-browser/node_modules/fflate/esm/index.mjs";
 
 const root = process.cwd();
-const out = path.join(root, ".litradock/runtime/frontend015", new Date().toISOString().replaceAll(/[:.]/g, "-"));
+const out = path.join(root, ".litradock/runtime/frontend016", new Date().toISOString().replaceAll(/[:.]/g, "-"));
 fs.mkdirSync(out, { recursive: true });
 const hash = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
 const tree = folder => Object.fromEntries(fs.readdirSync(path.join(root, folder), { recursive: true })
@@ -24,14 +24,19 @@ const article = i => ({ SearchId: `S${i}`, Title: title(i), Pmid: `000${i}`, Pmc
 const runs = { R1: [0, 1], R2: [1, 2], R3: [3], R4: [4, 5, 6, 7, 8, 9] };
 const run = id => ({ run_id: id, input: `${title(id)} SYNTHETIC query`, total: 25001, fetched: runs[id].length, state: "partial" });
 const originals = [0, 1].map(i => Buffer.from(`%PDF-1.4\n% SYNTHETIC test transport only ${i} 中文\n%%EOF\n`));
-let account = "A", authenticated = false, admission = true, createLost = true, serial = 0, nextExport = null, active = false;
+let account = "A", authenticated = false, admission = true, serial = 0, nextExport = null, active = false, failedDetail = false, invalidControl = true;
+const receiptFailures = ["invalidJSON", "closedBody", {}, { planID: "PLN-00000000000000000000000000000001" },
+  { planID: "PLN-00000000000000000000000000000001", revision: 0, state: "active", selectedCount: 3, affectedCount: 0 },
+  { planID: "PLN-00000000000000000000000000000001", revision: 1, state: "active", selectedCount: 2, affectedCount: 0 },
+  { planID: "FOREIGN-MALFORMED", revision: 1, state: "active", selectedCount: 3, affectedCount: 0 }];
+const admissionCalls = receiptFailures.length + 1;
 const plans = new Map(), posts = [], holds = new Map(), reads = [];
 function plan(id) { return plans.get(id); }
 function summary(id) {
   const saved = plan(id), completed = Math.min(saved.members.length, 2);
   return { planID: id, runID: saved.scopeKind ? "" : saved.runID, ...(saved.scopeKind ? { scopeKind: "saved_set", sourceRunIDs: [...new Set(saved.members.flatMap(item => item.runIDs))].sort() } : {}),
     requestedFormat: saved.format, selectedCount: saved.members.length, revision: 2, state: active ? "active" : "partial",
-    createdAt: "2026-09-13T00:00:00Z", updatedAt: "2026-09-13T00:00:01Z", allowedActions: [],
+    createdAt: "2026-09-13T00:00:00Z", updatedAt: "2026-09-13T00:00:01Z", allowedActions: ["pause"],
     counts: { waiting: 0, queued: 0, running: 0, completed, held: saved.members.length - completed, retry: 0, paused: 0, cancelled: 0 },
     admission: { admittedCount: saved.members.length, waitingCount: 0, blockedReasonCode: "", reason: "", retryAfter: null }, retryEligibleCount: 0 };
 }
@@ -82,13 +87,24 @@ const server = http.createServer(async (req, res) => {
       if (!admission) return reply({ error: "SYNTHETIC admission disabled" }, 409);
       assert.equal(body.scopeKind, "saved_set"); assert.equal(body.format, "pdf"); assert.equal(req.headers["x-csrf"], "SYNTHETIC");
       let id = [...plans].find(([, value]) => value.requestID === body.requestID)?.[0];
-      if (!id) { id = `P${++serial}`; plans.set(id, { ...body, library: route.split("/")[3], account }); }
+      if (!id) { id = `PLN-${String(++serial).padStart(32, "0")}`; plans.set(id, { ...body, library: route.split("/")[3], account }); }
       // A broken receipt after commit, not socket reset (Chromium may itself
       // retry a reset connection before exposing a response to the application).
-      if (createLost) { createLost = false; res.writeHead(200, { "Content-Type": "application/json" }); return res.end('{"planID":'); }
-      return reply({ planID: id, revision: 1, selectedCount: body.members.length });
+      if (receiptFailures.length) {
+        const failure = receiptFailures.shift();
+        if (failure === "invalidJSON") { res.writeHead(200, { "Content-Type": "application/json" }); return res.end('{"planID":'); }
+        if (failure === "closedBody") { res.writeHead(200, { "Content-Type": "application/json", "Content-Length": "100", "Connection": "close" }); res.flushHeaders(); return res.end('{"planID":'); }
+        return reply(failure);
+      }
+      failedDetail = true;
+      return reply({ planID: id, revision: 1, state: "active", selectedCount: body.members.length, affectedCount: 0 });
     }
     if (route.endsWith("/plans")) { const visible = [...plans].filter(([, value]) => value.account === account && value.library === route.split("/")[3]).map(([id]) => summary(id)); return reply({ plans: visible, total: visible.length, offset: 0, limit: 25 }); }
+    if (route.endsWith("/control")) {
+      const id = route.split("/").at(-2);
+      if (invalidControl) { invalidControl = false; return reply({ planID: "PLN-ffffffffffffffffffffffffffffffff", revision: 2, state: "paused", affectedCount: 0 }); }
+      return reply({ planID: id, revision: 2, state: "paused", affectedCount: 0 });
+    }
     if (route.endsWith("/exports")) {
       const id = route.split("/").at(-2), mode = nextExport ?? {}; nextExport = null;
       assert.deepEqual(Object.keys(body), ["format"]);
@@ -105,6 +121,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (route.includes("/plans/")) {
+      if (failedDetail) return reply({ error: "SYNTHETIC known receipt, detail unavailable" }, 503);
       const id = route.split("/").at(-1); reads.push(id);
       return reply({ plan: summary(id), total: plan(id).members.length, offset: 0, limit: 25, nextPollAfterMs: 2000, policy: "SYNTHETIC",
         items: plan(id).members.map((member, i) => ({ searchID: member.searchID, runIDs: member.runIDs, rank: i + 1, childBatchID: "B1", phase: i < 2 ? "completed" : "held", acquisitionState: i < 2 ? "acquired" : "unavailable", reason: i < 2 ? "SYNTHETIC acquired" : "SYNTHETIC source policy held", attempts: 1, retryEligible: false, downloadAvailable: false, article: article(i) })) });
@@ -159,10 +176,18 @@ try {
   await expect(page.locator(".saved-basket")).toContainText("3 records in basket · 2 saved searches");
   assert.equal(posts.filter(post => post.path.endsWith("/plans")).length, 0);
   await button("Download basket PDFs (3)").click(); await expect(button("Retry same submission")).toBeVisible();
-  await openRun("R3"); await button("Retry same submission").click(); await expect(page.getByRole("heading", { name: "Plan P1", exact: true })).toBeVisible();
-  const creates = posts.filter(post => post.path.endsWith("/plans")); assert.equal(creates.length, 2); assert.deepEqual(creates[0].body, creates[1].body);
+  await openRun("R3"); await add(1); // Changed draft must not replace the unconfirmed three-member body.
+  while (receiptFailures.length) { await button("Retry same submission").click(); await expect(button("Retry same submission")).toBeVisible(); await expect(button("Download basket PDFs (4)")).toBeDisabled(); }
+  await button("Retry same submission").click(); await expect(button("Reopen confirmed plan")).toBeVisible();
+  await expect(button("Retry same submission")).toHaveCount(0); await openRun("R1"); await expect(button("Download basket PDFs (4)")).toBeDisabled();
+  const creates = posts.filter(post => post.path.endsWith("/plans")); assert.equal(creates.length, admissionCalls); creates.forEach(post => assert.deepEqual(post.body, creates[0].body));
+  failedDetail = false; await button("Reopen confirmed plan").click(); await expect(page.getByRole("heading", { name: "Plan PLN-00000000000000000000000000000001", exact: true })).toBeVisible();
+  assert.equal(posts.filter(post => post.path.endsWith("/plans")).length, admissionCalls);
+  await button("Remove S3").click();
+  await button("Pause plan").click(); await expect(button("Retry same submission")).toBeVisible(); await button("Retry same submission").click(); await expect(button("Retry same submission")).toHaveCount(0);
+  const controls = posts.filter(post => post.path.endsWith("/control")); assert.equal(controls.length, 2); assert.deepEqual(controls[0].body, controls[1].body);
   assert.deepEqual(creates[0].body.members, [{ searchID: "S0", runIDs: ["R1"] }, { searchID: "S1", runIDs: ["R1", "R2"] }, { searchID: "S2", runIDs: ["R2"] }]);
-  result.cases.push("Explicit multi-run unique basket, remove/clear/keyboard Add and actual saved pagination without duplicates; four true associations; frozen PDF replay after malformed committed receipt and run change; no auto admission");
+  result.cases.push("035-F1 invalidJSON, closed/truncated HTTP body, validJSON empty/missing/revision0/wrongcount/malformedID receipts preserve exact PDF UUID/body across run/draft change; validated receipt plus detail503 retains known ID and GET-only recovery; wrong-target control preserves exact replay");
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 1000 });
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
@@ -173,50 +198,50 @@ try {
   }
   result.cases.push("Populated1280/390 long multilingual Boolean titles, provenance and controls have readable width/height and no document overflow");
   await held("run-independent", "zip"); await expect(page.locator(".plan-exports [role=status]")).toContainText("%");
-  const download = page.waitForEvent("download"); await openRun("R1"); await expect(exportButton("zip")).toBeDisabled(); await release("run-independent"); await verify(await download, "P1", "zip");
+  const download = page.waitForEvent("download"); await openRun("R1"); await expect(exportButton("zip")).toBeDisabled(); await release("run-independent"); await verify(await download, "PLN-00000000000000000000000000000001", "zip");
   await expect(exportButton("zip")).toBeEnabled();
   for (const extra of [{ unknown: true }, { encoded: true }]) {
     await held("bytes-only", "json", extra); await expect(page.locator(".plan-exports [role=status]")).not.toContainText("%");
-    const event = page.waitForEvent("download"); await release("bytes-only"); await verify(await event, "P1", "json"); await expect(exportButton("json")).toBeEnabled();
+    const event = page.waitForEvent("download"); await release("bytes-only"); await verify(await event, "PLN-00000000000000000000000000000001", "json"); await expect(exportButton("json")).toBeEnabled();
   }
   active = true; await button("Refresh plan").click(); await held("poll", "json"); const readCount = reads.length;
   await expect.poll(() => reads.length).toBeGreaterThan(readCount); await expect(exportButton("json")).toBeDisabled();
-  const pollDownload = page.waitForEvent("download"); await release("poll"); await verify(await pollDownload, "P1", "json"); active = false;
+  const pollDownload = page.waitForEvent("download"); await release("poll"); await verify(await pollDownload, "PLN-00000000000000000000000000000001", "json"); active = false;
   result.cases.push("Real paced HTTP byte progress; comparable length percentage versus encoded/unknown bytes-only; exact files survive run change and active plan refresh");
-  await page.reload(); await expect(page.getByLabel("Choose library", { exact: true })).toHaveValue("L1"); await open("P1");
-  await expect(page.locator(".saved-basket")).toContainText("0 records in basket"); assert.equal(posts.filter(post => post.path.endsWith("/plans")).length, 2);
-  admission = false; await page.reload(); await expect(page.getByLabel("Choose library", { exact: true })).toHaveValue("L1"); await open("P1");
+  await page.reload(); await expect(page.getByLabel("Choose library", { exact: true })).toHaveValue("L1"); await open("PLN-00000000000000000000000000000001");
+  await expect(page.locator(".saved-basket")).toContainText("0 records in basket"); assert.equal(posts.filter(post => post.path.endsWith("/plans")).length, admissionCalls);
+  admission = false; await page.reload(); await expect(page.getByLabel("Choose library", { exact: true })).toHaveValue("L1"); await open("PLN-00000000000000000000000000000001");
   await expect(page.locator(".saved-basket")).toContainText("New multi-search plans are unavailable");
-  const disabledExport = page.waitForEvent("download"); await exportButton("json").click(); await verify(await disabledExport, "P1", "json");
+  const disabledExport = page.waitForEvent("download"); await exportButton("json").click(); await verify(await disabledExport, "PLN-00000000000000000000000000000001", "json");
   result.cases.push("Reload/reopen is GET-only; admission-disabled saved sets and exports remain visible independently of current run");
-  plans.set("P2", { ...plans.get("P1"), requestID: "SYNTHETIC-P2" }); await button("Refresh saved plans").click();
-  await expect(page.getByLabel("Saved plans", { exact: true })).toContainText("P2");
+  plans.set("PLN-00000000000000000000000000000002", { ...plans.get("PLN-00000000000000000000000000000001"), requestID: "SYNTHETIC-PLN-00000000000000000000000000000002" }); await button("Refresh saved plans").click();
+  await expect(page.getByLabel("Saved plans", { exact: true })).toContainText("PLN-00000000000000000000000000000002");
   for (const status of [200, 401, 503]) {
-    await open("P1"); const count = downloads.length; await page.evaluate(() => { window.__ignoreAbort = true; }); await held(`old-${status}`, "json", { status });
-    await open("P2"); await held(`new-${status}`, "zip"); await release(`old-${status}`);
+    await open("PLN-00000000000000000000000000000001"); const count = downloads.length; await page.evaluate(() => { window.__ignoreAbort = true; }); await held(`old-${status}`, "json", { status });
+    await open("PLN-00000000000000000000000000000002"); await held(`new-${status}`, "zip"); await release(`old-${status}`);
     await expect(exportButton("zip")).toBeDisabled(); assert.equal(downloads.length, count); await expect(page.locator(".plan-exports [role=alert]")).toHaveCount(0);
-    const event = page.waitForEvent("download"); await release(`new-${status}`); await verify(await event, "P2", "zip"); await expect(exportButton("zip")).toBeEnabled();
+    const event = page.waitForEvent("download"); await release(`new-${status}`); await verify(await event, "PLN-00000000000000000000000000000002", "zip"); await expect(exportButton("zip")).toBeEnabled();
     await page.evaluate(() => { window.__ignoreAbort = false; });
   }
   result.cases.push("Delayed old200/401/503 after plan change preserve newer busy/error/session and only save newer complete bytes; synthetic error bodies ignore transport abort deliberately");
   const beforeCancel = downloads.length;
   await held("cancelled", "zip"); await button("Cancel transfer").click(); await expect(exportButton("zip")).toBeEnabled();
   await held("after-cancel", "json"); await release("cancelled"); assert.equal(downloads.length, beforeCancel); await expect(exportButton("json")).toBeDisabled();
-  const resumedDownload = page.waitForEvent("download"); await release("after-cancel"); await verify(await resumedDownload, "P2", "json"); await expect(exportButton("json")).toBeEnabled();
+  const resumedDownload = page.waitForEvent("download"); await release("after-cancel"); await verify(await resumedDownload, "PLN-00000000000000000000000000000002", "json"); await expect(exportButton("json")).toBeEnabled();
   result.cases.push("Explicit transfer cancel saves no prefix; later same-plan transfer owns busy state and exact completed bytes");
   for (const scope of ["library", "account"]) for (const status of [200, 401, 503]) {
-    await open("P1"); await openRun("R1"); await add(2); const count = downloads.length;
+    await open("PLN-00000000000000000000000000000001"); await openRun("R1"); await add(2); const count = downloads.length;
     await page.evaluate(() => { window.__ignoreAbort = true; }); await held(scope, "zip", { status });
     if (scope === "library") await page.getByLabel("Choose library", { exact: true }).selectOption("L2");
     else { await button("Sign out").click(); await login("B"); }
     await release(scope); await page.evaluate(() => { window.__ignoreAbort = false; }); assert.equal(downloads.length, count); await expect(page.locator(".saved-basket")).toContainText("0 records in basket");
-    await expect(page.getByRole("heading", { name: "Plan P1", exact: true })).toHaveCount(0);
-    await expect(page.getByLabel("Saved plans", { exact: true })).not.toContainText("P1");
+    await expect(page.getByRole("heading", { name: "Plan PLN-00000000000000000000000000000001", exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Saved plans", { exact: true })).not.toContainText("PLN-00000000000000000000000000000001");
     if (scope === "library") await page.getByLabel("Choose library", { exact: true }).selectOption("L1");
     else { await button("Sign out").click(); await login("A"); }
   }
-  await open("P1"); nextExport = { status: 401 }; await exportButton("json").click(); await expect(page.getByLabel("Login", { exact: true })).toBeVisible();
-  await login("A"); await open("P1"); const finalDownload = page.waitForEvent("download"); await exportButton("json").click(); await verify(await finalDownload, "P1", "json");
+  await open("PLN-00000000000000000000000000000001"); nextExport = { status: 401 }; await exportButton("json").click(); await expect(page.getByLabel("Login", { exact: true })).toBeVisible();
+  await login("A"); await open("PLN-00000000000000000000000000000001"); const finalDownload = page.waitForEvent("download"); await exportButton("json").click(); await verify(await finalDownload, "PLN-00000000000000000000000000000001", "json");
   result.cases.push("Library/account retirement clears basket/private set and blocks held downloads; current401 clears private UI and permits relogin/reopen/current export");
   assert.deepEqual(errors, []); assert.deepEqual(external, []); assert.deepEqual(serverErrors, []);
   result.posts = posts; result.after = { source: tree("src"), dist: tree("dist") }; assert.deepEqual(result.after, before); result.pass = true;

@@ -6,8 +6,10 @@ import { exportFixture } from "./export-fixture.test-support";
 import { exportPlan } from "./exports";
 
 const models: PlanController[] = [];
-const saved = () => ({ ...summary(), scopeKind: "saved_set" as const, runID: "", sourceRunIDs: ["R1", "R2"], state: "partial" });
-const page = () => ({ ...detail(), plan: saved() });
+const saved = () => ({ ...summary(), scopeKind: "saved_set" as const, runID: "", sourceRunIDs: ["R1", "R2"], state: "complete", selectedCount: 1,
+  counts: { waiting: 0, queued: 0, running: 0, completed: 1, held: 0, retry: 0, paused: 0, cancelled: 0 },
+  admission: { admittedCount: 1, waitingCount: 0, blockedReasonCode: "", reason: "", retryAfter: null }, allowedActions: [], retryEligibleCount: 0 });
+const page = () => ({ ...detail(), plan: saved(), total: 1 });
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 function model() { const model = new PlanController("L", "R1", sessionGeneration(), () => {}); models.push(model); return model; }
 afterEach(() => { models.splice(0).forEach(model => model.dispose()); vi.unstubAllGlobals(); clearSession(); });
@@ -18,9 +20,9 @@ it("saved-set lost response freezes exact format, ordered members and UUID acros
     if (init.method === "POST") {
       bodies.push(JSON.parse(String(init.body)));
       if (bodies.length === 1) throw new Error("SYNTHETIC lost reply");
-      return json({ planID: "synthetic-plan", revision: 1 });
+      return json({ planID: "PLN-00000000000000000000000000000001", revision: 1, state: "active", selectedCount: 1, affectedCount: 0 });
     }
-    return json(url.includes("/synthetic-plan?") ? page() : { plans: [saved()], total: 1, offset: 0, limit: 25 });
+    return json(url.includes("/PLN-00000000000000000000000000000001?") ? page() : { plans: [saved()], total: 1, offset: 0, limit: 25 });
   }));
   const controller = model(), members = [{ searchID: "S1", runIDs: ["R2", "R1"] }];
   await controller.createSavedSet(members, "pdf");
@@ -30,7 +32,7 @@ it("saved-set lost response freezes exact format, ordered members and UUID acros
   expect(bodies[1]).toEqual(bodies[0]);
   expect(bodies[0]).toEqual({ requestID: expect.any(String), scopeKind: "saved_set", members: [{ searchID: "S1", runIDs: ["R1", "R2"] }], format: "pdf" });
   expect(controller.state.page?.plan.scopeKind).toBe("saved_set");
-  controller.changeRun("R4"); await controller.read("synthetic-plan"); expect(bodies).toHaveLength(2);
+  controller.changeRun("R4"); await controller.read("PLN-00000000000000000000000000000001"); expect(bodies).toHaveLength(2);
   await controller.createSavedSet([{ searchID: "changed", runIDs: ["R4"] }], "xml");
   expect(bodies[2].requestID).not.toBe(bodies[0].requestID); expect(bodies[2].format).toBe("xml");
 });
@@ -43,7 +45,7 @@ it.each([200, 401, 503])("late single-run%d body cannot clear a newer saved-set 
   controller.changeRun("R2");
   let releaseNew!: (response: Response) => void;
   vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(resolve => { releaseNew = resolve; })));
-  const newer = controller.read("synthetic-plan");
+  const newer = controller.read("PLN-00000000000000000000000000000001");
   release(JSON.stringify(status === 200 ? { ...detail(), plan: { ...summary(), planID: "old" } } : { error: "SYNTHETIC old" }));
   await old; expect(controller.state.busy).toBe(true); expect(controller.state.error).toBe("");
   const generation = sessionGeneration(); releaseNew(json(page())); await newer;
@@ -73,14 +75,14 @@ it("run change between confirmed saved-set receipt and delayed detail preserves 
   let release!: (response: Response) => void, start!: () => void;
   const reading = new Promise<void>(resolve => { start = resolve; });
   vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
-    if (init.method === "POST") return json({ planID: "synthetic-plan", revision: 1 });
-    if (url.includes("/synthetic-plan?")) { start(); return new Promise<Response>(resolve => { release = resolve; }); }
+    if (init.method === "POST") return json({ planID: "PLN-00000000000000000000000000000001", revision: 1, state: "active", selectedCount: 1, affectedCount: 0 });
+    if (url.includes("/PLN-00000000000000000000000000000001?")) { start(); return new Promise<Response>(resolve => { release = resolve; }); }
     return json({ plans: [saved()], total: 1, offset: 0, limit: 25 });
   }));
   const controller = model(); const creation = controller.createSavedSet([{ searchID: "S", runIDs: ["R1"] }], "pdf");
   await reading; expect(controller.state.pending).toBeNull(); expect(controller.changeRun("R2")).toBe(false);
   expect(controller.state.busy).toBe(true); release(json(page())); await creation;
-  expect(controller.state.page?.plan.planID).toBe("synthetic-plan"); expect(controller.state.busy).toBe(false);
+  expect(controller.state.page?.plan.planID).toBe("PLN-00000000000000000000000000000001"); expect(controller.state.busy).toBe(false);
 });
 
 it.each([[], ["R3"], ["R1", "R1"]].map(runIds => ({ runIds })))("saved-set export rejects missing, foreign or duplicate record provenance $runIds", async ({ runIds }) => {

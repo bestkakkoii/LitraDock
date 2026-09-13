@@ -9,7 +9,7 @@ it.each([1, 10, 11, 100])("%i IDs admit exactly one format-bound request to the 
   const calls: { url: string; body: Record<string, unknown> }[] = [];
   vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
     calls.push({ url, body: JSON.parse(String(init.body)) });
-    return new Response(JSON.stringify(count <= 10 ? { id: "B1" } : { planID: "P1" }));
+    return new Response(JSON.stringify(count <= 10 ? { id: "B1" } : { planID: "PLN-00000000000000000000000000000001", revision: 1, state: "active", selectedCount: count, affectedCount: 0 }));
   }));
   const request = new PdfRequest("L1", "R1", Array.from({ length: count }, (_, i) => `SYNTHETIC-${i}`), sessionGeneration(), true);
   await request.send(new AbortController().signal);
@@ -26,7 +26,7 @@ it.each([1, 11])("uncertain retries of %i IDs keep UUID, IDs and format; confirm
   const bodies: string[] = [];
   vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
     bodies.push(String(init.body)); if (bodies.length === 1) throw new Error("SYNTHETIC lost reply");
-    return new Response(JSON.stringify({ id: "B1", planID: "P1" }));
+    return new Response(JSON.stringify({ id: "B1", planID: "PLN-00000000000000000000000000000001", revision: 1, state: "active", selectedCount: count, affectedCount: 0 }));
   }));
   const ids = Array.from({ length: count }, (_, i) => `SYNTHETIC-${i}`), snapshot = [...ids], request = new PdfRequest("L1", "R1", ids, sessionGeneration(), true);
   ids.push("changed-draft");

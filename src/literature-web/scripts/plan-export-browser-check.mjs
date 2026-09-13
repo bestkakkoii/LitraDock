@@ -1,5 +1,6 @@
 // SYNTHETIC loopback transport and files only; not native Go/PG/provider evidence.
 import assert from "node:assert/strict";
+import { installBodyGates } from "./body-gates.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -57,19 +58,7 @@ try {
   result.browser = browser.version(); page = await browser.newPage({ viewport: { width: 1280, height: 1000 } }); page.setDefaultTimeout(12000);
   const errors = [], downloads = [], posts = [], external = [], reads = [];
   page.on("pageerror", error => errors.push(String(error))); page.on("download", file => downloads.push(file));
-  await page.addInitScript(() => {
-    const originalFetch = window.fetch.bind(window); window.__holds = {};
-    window.fetch = async (...args) => {
-      const gate = String(args[0]).endsWith("/exports") ? window.__nextHold : undefined;
-      if (gate) window.__nextHold = undefined;
-      const response = await originalFetch(...args);
-      if (gate) {
-        const method = response.ok ? "blob" : "text", consume = response[method].bind(response);
-        response[method] = async () => { const body = await consume(); await new Promise(resolve => { window.__holds[gate] = resolve; }); return body; };
-      }
-      return response;
-    };
-  });
+  await page.addInitScript(installBodyGates);
   let account = "A", authenticated = false, mode = "valid", active = false, revision = 2;
   await page.route("**/*", async route => {
     const request = route.request(), url = new URL(request.url()), method = request.method();
@@ -107,7 +96,7 @@ try {
   const openRun = async id => { await page.locator(".history-entry").filter({ has: page.locator(".history-id", { hasText: new RegExp(`${id}$`) }) }).click(); await expect(button("Select all")).toBeEnabled(); };
   const open = async id => { await page.getByLabel("Saved plans", { exact: true }).selectOption(id); await expect(page.getByRole("heading", { name: `Plan ${id}`, exact: true })).toBeVisible(); await expect(button(names.json)).toBeEnabled(); };
   const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  const hold = async (id, format, failure = "valid") => { mode = failure; await page.evaluate(id => { window.__nextHold = id; }, id); await button(names[format]).click(); await page.waitForFunction(id => !!window.__holds[id], id); mode = "valid"; await expect(page.getByText(/^Preparing plan (originals ZIP|metadata JSON)/)).toBeVisible(); };
+  const hold = async (id, format, failure = "valid") => { mode = failure; await page.evaluate(id => { window.__nextHold = id; }, id); await button(names[format]).click(); await page.waitForFunction(id => !!window.__holds[id], id); mode = "valid"; await expect(page.getByRole("status").filter({ hasText: /Preparing plan (originals ZIP|metadata JSON)|bytes received/ })).toBeVisible(); };
   const release = async id => { await page.evaluate(id => window.__holds[id](), id); await settle(); };
   const verify = async (file, id, format) => {
     const data = fs.readFileSync(await file.path()); assert.deepEqual(data, bytes(id, format));

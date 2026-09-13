@@ -27,8 +27,8 @@ it('a confirmed PDF plan with failed initial detail retains GET-only recovery',a
  (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;setSession({csrf:'SYNTHETIC'});
  let posts=0;const scope=new AbortController(),ids=Array.from({length:11},(_,i)=>`SYNTHETIC-${i}`);
  vi.stubGlobal('fetch',vi.fn(async(url:string,init:RequestInit)=>{
-  if(init.method==='POST'){posts++;return new Response('{"planID":"P1"}');}
-  if(url.includes('/plans/P1'))return new Response('{"error":"SYNTHETIC detail failed"}',{status:503});
+  if(init.method==='POST'){posts++;return new Response('{"planID":"PLN-00000000000000000000000000000001","revision":1,"state":"active","selectedCount":11,"affectedCount":0}');}
+  if(url.includes('/plans/PLN-00000000000000000000000000000001'))return new Response('{"error":"SYNTHETIC detail failed"}',{status:503});
   return new Response('{"plans":[],"total":0,"offset":0,"limit":25}');
  }));
  function Harness(){const [open,setOpen]=useState<{id:string;sequence:number}>();return <>

@@ -23,9 +23,9 @@ describe("plan controller with synthetic HTTP transport", () => {
         expect(new Headers(init.headers).get("X-CSRF")).toBe("synthetic-csrf");
         bodies.push(JSON.parse(init.body as string));
         if (bodies.length === 1) throw new TypeError("Synthetic connection lost after commit");
-        return json({ planID: "synthetic-plan", revision: 1, selectedCount: 37, state: "active" });
+        return json({ planID: "PLN-00000000000000000000000000000001", revision: 1, selectedCount: 37, state: "active", affectedCount: 0 });
       }
-      return json(url.includes("/synthetic-plan?") ? detail({ revision: 9, state: "partial" }) : catalog());
+      return json(url.includes("/PLN-00000000000000000000000000000001?") ? detail({ revision: 9, state: "partial" }) : catalog());
     });
     vi.stubGlobal("fetch", fetchMock);
     const { controller } = model();
@@ -53,10 +53,10 @@ describe("plan controller with synthetic HTTP transport", () => {
         if (++posts === 1) throw new TypeError("Synthetic lost reply");
         return json({ error: "revision conflict" }, 409);
       }
-      return json(url.includes("/synthetic-plan?") ? detail({ revision: posts ? 10 : 3 }) : catalog());
+      return json(url.includes("/PLN-00000000000000000000000000000001?") ? detail({ revision: posts ? 10 : 3 }) : catalog());
     }));
     const { controller } = model();
-    await controller.read("synthetic-plan");
+    await controller.read("PLN-00000000000000000000000000000001");
     await controller.control("resume");
     expect(posts).toBe(0); // Not in server allowedActions.
     await controller.control("pause");
@@ -76,12 +76,12 @@ describe("plan controller with synthetic HTTP transport", () => {
       if (init.method === "POST") {
         posts++;
         expect(JSON.parse(String(init.body)).value).toBe("retry");
-        return json({planID:"synthetic-plan",revision:4,state:"active",affectedCount:10});
+        return json({planID:"PLN-00000000000000000000000000000001",revision:4,state:"active",affectedCount:10});
       }
-      return json(url.includes("/synthetic-plan?") ? detail({allowedActions:posts ? ["pause","cancel"] : ["retry","cancel"],retryEligibleCount:20}) : catalog());
+      return json(url.includes("/PLN-00000000000000000000000000000001?") ? detail({allowedActions:posts ? ["pause","cancel"] : ["retry","cancel"],retryEligibleCount:20}) : catalog());
     }));
     const { controller } = model();
-    await controller.read("synthetic-plan");
+    await controller.read("PLN-00000000000000000000000000000001");
     await controller.control("retry");
     expect(controller.state.notice).toContain("confirmed for 10 items");
     expect(controller.state.page?.plan.retryEligibleCount).toBe(20);
@@ -134,7 +134,7 @@ describe("plan controller with synthetic HTTP transport", () => {
     const fetchMock = vi.fn(async () => json({ ...detail(), nextPollAfterMs: 5000 }));
     vi.stubGlobal("fetch", fetchMock);
     const { controller } = model();
-    await controller.read("synthetic-plan");
+    await controller.read("PLN-00000000000000000000000000000001");
     await vi.advanceTimersByTimeAsync(4999);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1 + 119 * 5000);
@@ -142,7 +142,7 @@ describe("plan controller with synthetic HTTP transport", () => {
     expect(controller.state.pollingStopped).toBe(true);
     await vi.advanceTimersByTimeAsync(50_000);
     expect(fetchMock).toHaveBeenCalledTimes(121);
-    await controller.read("synthetic-plan");
+    await controller.read("PLN-00000000000000000000000000000001");
     expect(controller.state.automaticReads).toBe(0);
     await vi.advanceTimersByTimeAsync(5000);
     expect(fetchMock).toHaveBeenCalledTimes(123);
@@ -155,7 +155,7 @@ describe("plan controller with synthetic HTTP transport", () => {
       .mockImplementationOnce(() => new Promise<Response>(resolve => { release = resolve; }));
     vi.stubGlobal("fetch", fetchMock);
     const { controller } = model();
-    await controller.read("synthetic-plan");
+    await controller.read("PLN-00000000000000000000000000000001");
     await vi.advanceTimersByTimeAsync(2000);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -169,19 +169,19 @@ describe("plan controller with synthetic HTTP transport", () => {
   });
 
   it("reopen and relogin only read; malformed counts cannot replace valid saved state", async () => {
-    const fetchMock = vi.fn(async (url: string) => json(url.includes("/synthetic-plan?") ? detail() : catalog()));
+    const fetchMock = vi.fn(async (url: string) => json(url.includes("/PLN-00000000000000000000000000000001?") ? detail() : catalog()));
     vi.stubGlobal("fetch", fetchMock);
     const first = model();
     await first.controller.catalog();
-    await first.controller.read("synthetic-plan");
+    await first.controller.read("PLN-00000000000000000000000000000001");
     first.controller.dispose();
     setSession({ csrf: "synthetic-new" });
     const second = model();
     await second.controller.catalog();
-    await second.controller.read("synthetic-plan");
+    await second.controller.read("PLN-00000000000000000000000000000001");
     expect(fetchMock.mock.calls.every(call => (call as unknown as [string, RequestInit])[1].method !== "POST")).toBe(true);
     fetchMock.mockResolvedValueOnce(json(detail({ selectedCount: 38 })));
-    await second.controller.read("synthetic-plan");
+    await second.controller.read("PLN-00000000000000000000000000000001");
     expect(second.controller.state.page?.plan.selectedCount).toBe(37);
     expect(second.controller.state.error).toContain("invalid server counts");
   });

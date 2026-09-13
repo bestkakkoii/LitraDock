@@ -29,7 +29,7 @@ async function mount(enabled = true, signal = new AbortController().signal) {
 async function openPlan() {
   await act(async () => {
     const select = host.querySelector<HTMLSelectElement>('[aria-label="Saved plans"]')!;
-    select.value = "synthetic-plan"; select.dispatchEvent(new Event("change", { bubbles: true }));
+    select.value = "PLN-00000000000000000000000000000001"; select.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
 
@@ -38,8 +38,8 @@ it("renders scoped counts, held safe links and child navigation; cancel needs ex
   const paused = { state: "paused", counts: { ...summary().counts, waiting: 0, paused: 27 } };
   vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
     calls.push({url, body: init.body ? JSON.parse(String(init.body)) : undefined});
-    return new Response(JSON.stringify(init.method === "POST" ? {planID:"synthetic-plan",revision:4,state:"cancelled"}
-      : url.includes("/synthetic-plan?") ? detail(paused) : {plans:[summary(paused)],total:1,offset:0,limit:25}), {status:200});
+    return new Response(JSON.stringify(init.method === "POST" ? {planID:"PLN-00000000000000000000000000000001",revision:4,state:"cancelled",affectedCount:32}
+      : url.includes("/PLN-00000000000000000000000000000001?") ? detail(paused) : {plans:[summary(paused)],total:1,offset:0,limit:25}), {status:200});
   }));
   const { child, change } = await mount();
   expect(button("Create processing plan (37/100)").disabled).toBe(false);
@@ -66,7 +66,7 @@ it("renders scoped counts, held safe links and child navigation; cancel needs ex
 });
 
 it("disabled capability preserves GET catalog and permitted controls; scope abort clears private detail", async () => {
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(JSON.stringify(url.includes("/synthetic-plan?") ? detail() : {plans:[summary()],total:1,offset:0,limit:25}))));
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(JSON.stringify(url.includes("/PLN-00000000000000000000000000000001?") ? detail() : {plans:[summary()],total:1,offset:0,limit:25}))));
   const abort = new AbortController();
   await mount(false, abort.signal);
   expect(host.textContent).not.toContain("Create processing plan (");
@@ -75,5 +75,5 @@ it("disabled capability preserves GET catalog and permitted controls; scope abor
   expect(button("Resume plan").disabled).toBe(true);
   await act(async () => abort.abort());
   expect(host.textContent).not.toContain("Synthetic <script>");
-  expect(host.textContent).not.toContain("Plan synthetic-plan");
+  expect(host.textContent).not.toContain("Plan PLN-00000000000000000000000000000001");
 });

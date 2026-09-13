@@ -74,12 +74,14 @@ try {
     assert((await basket.innerText()).includes('3 records in basket · 2 saved searches'));
     await basket.getByLabel('Basket original format',{exact:true}).selectOption('xml');
   });
-  await check('lost-response-same-intent-single-durable-plan',async()=>{
+  await check('unconfirmed-receipt-same-intent-single-durable-plan',async()=>{
     const endpoint=`${target}/api/libraries/${library}/plans`;
     let lost=false;
     await page.route(endpoint,async route=>{
       if(route.request().method()!=='POST'||lost)return route.continue();
-      lost=true;const response=await route.fetch();assert.equal(response.status(),200);plan=(await response.json()).planID;await route.abort('failed');
+      // A malformed committed receipt avoids Chromium transparently retrying a socket reset.
+      lost=true;const response=await route.fetch();assert.equal(response.status(),200);plan=(await response.json()).planID;
+      await route.fulfill({status:200,contentType:'application/json',body:'{"unconfirmed":true}'});
     });
     await basket.getByRole('button',{name:'Download basket XMLs (3)',exact:true}).click();
     await plans.getByRole('button',{name:'Retry same submission',exact:true}).click();
@@ -107,7 +109,7 @@ try {
       const download=await wait;assert.equal(await download.failure(),null);
       const filename=inputPath+'.download.'+format;await download.saveAs(filename);
       const raw=fs.readFileSync(filename);
-      const reader=execFileSync('python3',[fileURLToPath(new URL('./verify-plan-export.py',import.meta.url)),filename,'--expected-saved-set',intentFile,'--negative-controls'],{encoding:'utf8'});
+      const reader=execFileSync('python3',[fileURLToPath(new URL('./verify-plan-export.py',import.meta.url)),filename,'--expected-saved-set',intentFile,'--negative-controls','--synthetic-transport'],{encoding:'utf8'});
       assert.equal(JSON.parse(reader).pass,true);
       if(format==='zip'){
         const entries=unzipSync(raw),m=JSON.parse(new TextDecoder().decode(entries['manifest.json']));

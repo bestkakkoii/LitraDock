@@ -2,14 +2,15 @@ import { ApiError, sessionGeneration } from "../api";
 import { ControlPlan, CreatePlan, PlanAction, PlanCatalog, PlanPage, planApi } from "./api";
 import { SavedMember, savedMembers } from "./basket";
 
-type Pending = { kind: "create"; body: CreatePlan } | { kind: "control"; planID: string; body: ControlPlan };
+type Pending = { kind: "create"; body: CreatePlan } | { kind: "control"; planID: string; body: ControlPlan; selectedCount: number; savedSet: boolean };
 export type PlanState = {
   catalog: PlanCatalog; page: PlanPage | null; busy: boolean; error: string;
   notice: string; pending: Pending | null; automaticReads: number; pollingStopped: boolean;
+  confirmed: { planID: string; savedSet: boolean } | null;
 };
 export const emptyPlanState = (): PlanState => ({
   catalog: { plans: [], total: 0, offset: 0, limit: 25 }, page: null,
-  busy: false, error: "", notice: "", pending: null, automaticReads: 0, pollingStopped: false,
+  busy: false, error: "", notice: "", pending: null, confirmed: null, automaticReads: 0, pollingStopped: false,
 });
 
 // A controller belongs to one mounted account/library/run scope. All requests,
@@ -79,14 +80,15 @@ export class PlanController {
     this.runID = runID;
     if (this.mutationSavedSet) return false;
     const pending = this.state.pending;
-    if (!pending && !this.openedID && !this.state.page) return false; // Initial catalog is library-scoped.
+    if (this.state.confirmed?.savedSet) return false;
+    if (!pending && !this.openedID && !this.state.page && !this.state.confirmed) return false; // Initial catalog is library-scoped.
     const savedSet = pending?.kind === "create" ? "scopeKind" in pending.body
-      : (this.state.page?.plan ?? this.state.catalog.plans.find(plan => plan.planID === this.openedID))?.scopeKind === "saved_set";
+      : pending?.kind === "control" ? pending.savedSet : (this.state.page?.plan ?? this.state.catalog.plans.find(plan => plan.planID === this.openedID))?.scopeKind === "saved_set";
     if (savedSet) return false;
     // Library catalog remains visible; only obsolete single-run operations retire.
     this.operation++; this.abort?.abort(); clearTimeout(this.timer);
     this.openedID = "";
-    this.set({ page: null, pending: null, busy: false, error: "", notice: "", automaticReads: 0, pollingStopped: false });
+    this.set({ page: null, pending: null, confirmed: null, busy: false, error: "", notice: "", automaticReads: 0, pollingStopped: false });
     return true;
   }
   async catalog(offset = 0) {
@@ -105,7 +107,7 @@ export class PlanController {
     if (!id || this.disposed) return;
     this.openedID = id;
     const changed = id !== this.state.page?.plan.planID;
-    if (changed) this.set({ page: null, pending: null, notice: "" });
+    if (changed) this.set({ page: null, notice: "" }); // A GET cannot settle an uncertain POST.
     this.set(automatic ? { automaticReads: this.state.automaticReads + 1 } : { automaticReads: 0, pollingStopped: false });
     const task = this.begin();
     try {
@@ -118,7 +120,7 @@ export class PlanController {
     }
   }
   private acceptPage(page: PlanPage) {
-    this.set({ page, catalog: { ...this.state.catalog,
+    this.set({ page, confirmed: this.state.confirmed?.planID === page.plan.planID ? null : this.state.confirmed, catalog: { ...this.state.catalog,
       plans: this.state.catalog.plans.map(plan => plan.planID === page.plan.planID ? page.plan : plan),
     } });
   }
@@ -130,13 +132,13 @@ export class PlanController {
     }
     // Until a receipt resolves, a second submission must replay the frozen body.
     // Changing the draft never silently changes a possibly committed request.
-    if (this.state.pending) return;
+    if (this.state.pending || this.state.confirmed) return;
     const pending: Pending = { kind: "create", body: { requestID: crypto.randomUUID(), runID: this.runID, searchIDs: [...searchIDs] } };
     this.set({ pending });
     await this.mutate(pending);
   }
   async createSavedSet(members: SavedMember[], format: "pdf" | "xml") {
-    if (this.disposed || this.state.busy || this.state.pending) return;
+    if (this.disposed || this.state.busy || this.state.pending || this.state.confirmed) return;
     let frozen: SavedMember[];
     try { frozen = savedMembers(members); }
     catch (error) { this.set({ error: (error as Error).message }); return; }
@@ -145,9 +147,9 @@ export class PlanController {
   }
   async control(value: PlanAction) {
     const plan = this.state.page?.plan;
-    if (!plan || this.disposed || this.state.busy || this.state.pending || !plan.allowedActions.includes(value)) return;
+    if (!plan || this.disposed || this.state.busy || this.state.pending || this.state.confirmed || !plan.allowedActions.includes(value)) return;
     const pending: Pending = { kind: "control", planID: plan.planID,
-      body: { requestID: crypto.randomUUID(), expectedRevision: plan.revision, value } };
+      body: { requestID: crypto.randomUUID(), expectedRevision: plan.revision, value }, selectedCount: plan.selectedCount, savedSet: plan.scopeKind === "saved_set" };
     this.set({ pending });
     await this.mutate(pending);
   }
@@ -156,15 +158,17 @@ export class PlanController {
   }
   private async mutate(pending: Pending) {
     const task = this.begin();
-    this.mutationSavedSet = pending.kind === "create" ? "scopeKind" in pending.body : this.state.page?.plan.scopeKind === "saved_set";
+    this.set({ notice: "" });
+    this.mutationSavedSet = pending.kind === "create" ? "scopeKind" in pending.body : pending.savedSet;
     let committed = false;
     try {
       const receipt = pending.kind === "create"
         ? await this.api.create(pending.body, task.signal)
-        : await this.api.control(pending.planID, pending.body, task.signal);
+        : await this.api.control(pending.planID, pending.body, task.signal, pending.selectedCount);
       if (!task.current()) return;
       committed = true;
-      this.set({ pending: null, notice: "Request confirmed. Loading current plan status.", automaticReads: 0, pollingStopped: false });
+      this.openedID = receipt.planID;
+      this.set({ pending: null, confirmed: { planID: receipt.planID, savedSet: this.mutationSavedSet }, notice: "Request confirmed. Loading current plan status.", automaticReads: 0, pollingStopped: false });
       // Replayed receipts can be old; only a current GET supplies displayed state.
       const page = await this.api.detail(receipt.planID, 0, task.signal);
       if (!task.current()) return;
@@ -176,7 +180,9 @@ export class PlanController {
       if (task.current()) this.set({ catalog });
     } catch (error) {
       if (!task.current()) return;
-      if (error instanceof ApiError && error.status === 409) {
+      if (committed) {
+        this.set({ error: "Request confirmed, but current status is unavailable. Reopen the confirmed plan; no new submission is needed." });
+      } else if (error instanceof ApiError && error.status === 409) {
         this.set({ pending: null, error: "The request conflicts with current plan status or capacity. Refreshing; review before choosing another action." });
         try {
           if (pending.kind === "control") {

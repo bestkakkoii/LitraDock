@@ -1,5 +1,6 @@
 // Isolated SYNTHETIC transport. Tests the compiled frontend, not native Go/source provenance.
 import assert from "node:assert/strict";
+import { installBodyGates } from "./body-gates.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -43,33 +44,7 @@ try {
   page.setDefaultTimeout(12000);
   const errors = [], downloads = [], posts = [], external = [];
   page.on("pageerror", error => errors.push(String(error))); page.on("download", download => downloads.push(download));
-  await page.addInitScript(() => {
-    const originalFetch = window.fetch.bind(window);
-    window.__holds = {};
-    window.fetch = async (...args) => {
-      const gate = String(args[0]).endsWith("/exports") ? window.__nextHold : undefined;
-      if (gate) window.__nextHold = undefined;
-      const response = await originalFetch(...args);
-      if (String(args[0]).endsWith("/exports") && response.ok) {
-        const read = response.blob.bind(response);
-        response.blob = async () => {
-          const blob = await read();
-          window.__lastExport = { type: blob.type, text: await blob.text() };
-          return blob;
-        };
-      }
-      if (gate) {
-        const consume = response.ok ? "blob" : "text", original = response[consume].bind(response);
-        response[consume] = async () => {
-          const body = await original();
-          await new Promise(resolve => { window.__holds[gate] = { release: resolve }; });
-          window.__holds[gate].released = true;
-          return body;
-        };
-      }
-      return response;
-    };
-  });
+  await page.addInitScript(installBodyGates);
   let authenticated = false, account = "A", mode = "valid";
   await page.route("**/*", async route => {
     const request = route.request(), url = new URL(request.url()), method = request.method();
@@ -117,7 +92,7 @@ try {
   const hold = async (id, name, status = "valid") => {
     mode = status; await page.evaluate(id => { window.__nextHold = id; }, id);
     await button(name).click(); await page.waitForFunction(id => !!window.__holds[id], id);
-    await expect(page.getByText(/^Preparing (saved run|batch) JSONL? export/)).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: /Preparing (saved run|batch) JSONL? export|bytes received/ })).toBeVisible();
     mode = "valid";
   };
   const release = async id => { await page.evaluate(id => window.__holds[id].release(), id); await settle(); };
