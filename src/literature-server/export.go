@@ -146,6 +146,21 @@ func (s *server) nativeRoutes(w http.ResponseWriter, r *http.Request, ctx contex
 		if !decode(w, r, &input) {
 			return true
 		}
+		if input.Format == "json" || input.Format == "jsonl" {
+			document, e := s.structuredResearch(ctx, library, input.RunID, input.BatchID)
+			var data []byte
+			if e == nil {
+				data, e = encodeStructured(ctx, document, input.Format)
+			}
+			if e != nil {
+				reply(w, 409, map[string]string{"error": "Structured export unavailable: the saved scope is missing, inconsistent, or exceeds export limits. No partial file was returned."})
+			} else {
+				w.Header().Set("Content-Type", structuredMedia(input.Format))
+				w.Header().Set("Content-Disposition", "attachment; filename=\"litradock-research."+input.Format+"\"")
+				_, _ = w.Write(data)
+			}
+			return true
+		}
 		if input.Format == "zip" && input.BatchID != "" && input.RunID == "" {
 			b, e := s.exportBundle(ctx, library, input.BatchID)
 			if e != nil {
@@ -169,7 +184,7 @@ func (s *server) nativeRoutes(w http.ResponseWriter, r *http.Request, ctx contex
 			return true
 		}
 		if input.Format != "csv" {
-			reply(w, 400, map[string]string{"error": "Choose CSV or XLSX metadata, or ZIP for one saved batch."})
+			reply(w, 400, map[string]string{"error": "Choose CSV, XLSX, JSON or JSONL metadata, or ZIP for one saved batch."})
 			return true
 		}
 		b, e := s.exportCSV(ctx, library, input.RunID, input.BatchID)

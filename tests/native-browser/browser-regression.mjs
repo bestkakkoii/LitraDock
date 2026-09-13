@@ -177,6 +177,42 @@ try {
     assert.deepEqual([...zipObserved].sort(),[...expectedOriginals.keys()].sort());
     assert.equal(Buffer.compare(Buffer.from(entries["records.csv"]), csvBytes), 0, "ZIP records.csv must equal CSV export bytes");
   });
+  await check('structured-four-device-files-whole-scope-and-no-acquisition', async () => {
+    const priorSearch = searchPosts, priorBatch = batchPosts;
+    await page.getByRole('button', {name:'Deselect all', exact:true}).click();
+    const runResponse = await page.request.get(`${target}/api/libraries/${libraryId}/runs/${capturedRunId}?limit=100`);
+    assert.equal(runResponse.status(),200); const saved = await runResponse.json();
+    const batchResponse = await page.request.get(`${target}/api/libraries/${libraryId}/batches/${capturedBatchId}`);
+    assert.equal(batchResponse.status(),200); const batch = await batchResponse.json();
+    const directory=fs.mkdtempSync(path.join(os.tmpdir(),'native-structured-'));
+    const results={};
+    try {
+      for (const scope of ['run','batch']) for (const format of ['json','jsonl']) {
+        const label=scope==='run'?`Export saved run ${format.toUpperCase()}`:`Export batch ${format.toUpperCase()}`;
+        const waiting=page.waitForEvent('download'); await page.getByRole('button',{name:label,exact:true}).click();
+        const file=await waiting; assert.equal(file.suggestedFilename(),`litradock-research.${format}`);
+        const destination=path.join(directory,`${scope}.${format}`);await file.saveAs(destination);
+        const parsed=JSON.parse(execFileSync(process.env.NATIVE_STRUCTURED_PYTHON||'python3',[fileURLToPath(new URL('./verify-structured.py',import.meta.url)),destination],{encoding:'utf8'}));
+        assert.deepEqual(parsed.records,[3]);
+        const text=fs.readFileSync(destination,'utf8');let d;
+        if(format==='json')d=JSON.parse(text);else{const lines=text.trimEnd().split('\n').map(x=>JSON.parse(x));d=lines[0];d.records=lines.slice(1).map(x=>x.record);}
+        assert.equal(d.scope.kind,scope);assert.equal(d.scope.runId,scope==='run'?capturedRunId:null);assert.equal(d.scope.batchId,scope==='batch'?capturedBatchId:null);
+        assert.equal(d.counts.exportedRecords,3);assert.equal(d.counts.providerMatches,scope==='run'?25000:null);
+        assert.equal(d.queryContexts[0].query,saved.run.input);assert.equal(d.queryContexts[0].retrievalComplete,false);
+        const oracle=scope==='run'?saved.records:batch.items.map(x=>x.article);
+        assert.deepEqual(d.records.map(x=>x.searchId),oracle.map(x=>x.SearchId));
+        for(let i=0;i<3;i++) {const record=d.records[i],article=oracle[i];assert.equal(record.publication.title,article.Title);assert.equal(record.identifiers.pmid,article.Pmid);assert.equal(record.identifiers.pmcid,article.Pmcid);assert.equal(record.identifiers.doi,article.Doi);assert.equal(record.publication.abstract,article.Abstract||null);}
+        if(scope==='batch'){
+          const held=d.records.find(x=>x.acquisition.state==='unavailable');assert(held&&held.acquisition.reason&&held.sourceLinks.pubmed);
+          assert.equal(d.records.flatMap(x=>x.originals).length,2);
+          for(const r of d.records)for(const o of r.originals){assert.equal(o.sha256,expectedOriginals.get(r.identifiers.pmid).sha256);assert.equal(o.availability,'not_revalidated');}
+        }
+        results[scope+format]=d.records;
+      }
+      assert.deepEqual(results.runjson,results.runjsonl);assert.deepEqual(results.batchjson,results.batchjsonl);
+    } finally {fs.rmSync(directory,{recursive:true,force:true});}
+    assert.equal(searchPosts,priorSearch);assert.equal(batchPosts,priorBatch);
+  });
   await check("original-rights-and-fidelity", async () => {
     const saves = page.getByRole("button", { name: "Save XML", exact: true });
     assert.equal(await saves.count(), 2, "exactly two permitted originals must have Save XML actions");

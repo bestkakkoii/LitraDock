@@ -17,6 +17,7 @@ import { canAdvanceRecords } from "./pagination";
 import { searchId, selectedSearchIds } from "./selection";
 import { useSavedSelection } from "./savedSelection";
 import { originalKind } from "./originalKind";
+import { structuredExport, type ExportScope, type StructuredFormat } from "./structuredExport";
 import { PlanWorkspace } from "./plans/PlanWorkspace";
 import { SearchHistory } from "./components/SearchHistory";
 import { PdfAvailability } from "./components/PdfAvailability";
@@ -73,6 +74,7 @@ function App() {
   const historyRequest = useRef(0);
   const batchHistoryRequest = useRef(0);
   const batchOperation = useRef(0);
+  const [exportProgress, setExportProgress] = useState<{ operation: number; label: string } | null>(null);
   const batchScope = useRef(new AbortController());
   const beginBatchRequest = () => {
     batchScope.current.abort();
@@ -561,6 +563,31 @@ function App() {
       if (isCurrentBatchOperation(operation, expectedLibrary, expected)) setBatchBusy(false);
     }
   };
+  const exportStructured = async (scope: ExportScope, format: StructuredFormat) => {
+    if (!library || batchBusy) return;
+    const expected = sessionGeneration(), expectedLibrary = library;
+    const operation = ++batchOperation.current;
+    const signal = beginBatchRequest();
+    const current = () => !signal.aborted && isCurrentBatchOperation(operation, expectedLibrary, expected);
+    setBatchBusy(true);
+    setExportProgress({ operation, label: `Preparing ${scope.runID ? "saved run" : "batch"} ${format.toUpperCase()} export…` });
+    setError("");
+    try {
+      const { blob, filename } = await structuredExport(expectedLibrary, scope, format, expected, signal);
+      if (!current()) return;
+      const url = URL.createObjectURL(blob);
+      try {
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = filename;
+        anchor.click();
+      } finally { URL.revokeObjectURL(url); }
+    } catch (failure) {
+      if (current()) setError((failure as Error).message);
+    } finally {
+      if (current()) { setBatchBusy(false); setExportProgress(null); }
+    }
+  };
   if (!signedIn)
     return (
       <main className="shell">
@@ -799,6 +826,13 @@ function App() {
               >
                 Export XLSX
               </button>
+              {(["json", "jsonl"] as const).map(format => (
+                <button className="secondary" key={format} disabled={!run || busy || batchBusy}
+                  aria-describedby="run-structured-scope"
+                  onClick={() => run && void exportStructured({ runID: run.run_id }, format)}>
+                  Export saved run {format.toUpperCase()}
+                </button>
+              ))}
               <button
                 className="secondary"
                 disabled={
@@ -819,6 +853,8 @@ function App() {
               </button>
             </div>
           </div>
+          {batchBusy && exportProgress?.operation === batchOperation.current && <p role="status">{exportProgress.label}</p>}
+          <p id="run-structured-scope" className="muted small">JSON / JSONL exports include all saved records in the run, not just selected checkboxes or the current page. Provider matches that were not retrieved are not included. These are metadata files, not full-text downloads.</p>
           {records.length ? (
             records.map((a, i) => (
               <ArticleCard
@@ -927,6 +963,13 @@ function App() {
                   >
                     Export batch XLSX
                   </button>
+                  {(["json", "jsonl"] as const).map(format => (
+                    <button className="secondary" key={format} disabled={batchBusy}
+                      aria-describedby="batch-structured-scope"
+                      onClick={() => void exportStructured({ batchID: batch.batch.batch_id }, format)}>
+                      Export batch {format.toUpperCase()}
+                    </button>
+                  ))}
                   <button
                     className="secondary"
                     disabled={batchBusy}
@@ -937,6 +980,7 @@ function App() {
                 </div>
               </div>
               <p className="muted" aria-label="Batch progress">{Object.entries(batch.counts).map(([state, count]) => `${count} ${state}`).join(" · ")}. Acquired files are on the server; use Save to download to this device.</p>
+              <p id="batch-structured-scope" className="muted small">JSON / JSONL exports include all saved records in this batch, including held outcomes, independent of checkboxes and page. Original-file metadata does not confirm current download availability; use the current Save actions for available originals.</p>
               {batch.items.map((item) => (
                 <div className="batch-item" key={item.search_id}>
                   <strong className="batch-title">
