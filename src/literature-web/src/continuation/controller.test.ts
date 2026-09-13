@@ -65,6 +65,13 @@ it("definite validation rejection releases the draft, while503 retains the exact
   expect(JSON.parse(posts[1]).requestID).not.toBe(JSON.parse(posts[0]).requestID);
   expect(controller.state.pending).not.toBeNull(); await controller.retry(); expect(posts[2]).toBe(posts[1]);
 });
+it("conflicting cancellation refreshes saved status and preserves an actionable notice", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) =>
+    init.method === "POST" ? json({ error: "Run changed" }, 409) : json(page())));
+  const { controller } = model(); await controller.action(status({ canCancel: true }), "cancel");
+  expect(controller.state.pending).toBeNull(); expect(controller.state.notice).toContain("not applied");
+  expect(controller.state.notice).toContain("choose the action again");
+});
 it.each(["search", "continuation"])("valid %s receipt plus GET503 retains known run and only GET recovers", async kind => {
   const posts: string[] = []; let unavailable = true;
   vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {

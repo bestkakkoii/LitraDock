@@ -59,6 +59,7 @@ try{
   fs.writeFileSync(inputPath+'.metadata-hold','synthetic schedule');
   await panel.getByRole('button',{name:'Retrieve next metadata page',exact:true}).click();
   await until(()=>fs.existsSync(inputPath+'.metadata-entered'),'held actual native source attempt');
+  await until(async()=>(await panel.locator('[role=status] strong').innerText())==='running','published running revision before cancellation');
   await until(async()=>await panel.getByRole('button',{name:'Cancel metadata page',exact:true}).isEnabled(),'cancel running enabled');
   await panel.getByRole('button',{name:'Cancel metadata page',exact:true}).click();await panel.getByRole('button',{name:'Confirm metadata cancellation',exact:true}).click();
   await until(async()=>(await detail()).continuation.state==='cancelled','cancel persisted');
@@ -99,5 +100,5 @@ try{
   assert.equal(posts.filter(p=>/\/(search|continuation|plans|batches)$/.test(p.url)).length,before);assert.equal(sources().length,sourceBefore);
  });
  assert.deepEqual(errors,[]);console.log(JSON.stringify({scope:'SYNTHETIC provider transport; actual native PostgreSQL and compiled React; no genuine-source claim',revision:input.source_revision,checks,providerTotal:25000,window:1000,saved:200,sourceCalls:sources().length}));
-}catch(e){console.error(JSON.stringify({checks,body:await page.locator('body').innerText()}));throw e;}
+}catch(e){console.error(JSON.stringify({checks,posts,body:await page.locator('body').innerText()}));throw e;}
 finally{fs.writeFileSync(inputPath+'.metadata-release','finally');await context.close();await browser.close();}

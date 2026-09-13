@@ -68,8 +68,8 @@ const server = http.createServer(async (req, res) => {
       const total = runID === legacy ? 0 : count;
       const payload = { run: run(runID), continuation: runID === legacy ? null : continuation(), records: Array.from({ length: Math.max(0, Math.min(limit, total - offset)) }, (_, i) => article(offset + i)), total, offset, limit };
       if (holdRecordRead && offset === holdRecordRead.offset && limit === holdRecordRead.limit) {
-        const key = holdRecordRead.key; holdRecordRead = null; res.writeHead(200, { "Content-Type": "application/json" }); res.flushHeaders();
-        held.set(key, () => res.end(JSON.stringify(payload))); return;
+        const key = holdRecordRead.key, status = holdRecordRead.status ?? 200; holdRecordRead = null; res.writeHead(status, { "Content-Type": "application/json" }); res.flushHeaders();
+        held.set(key, () => res.end(JSON.stringify(status === 200 ? payload : { error: "SYNTHETIC obsolete page" }))); return;
       }
       return reply(payload);
     }
@@ -124,9 +124,14 @@ try {
   result.cases.push("All ten actual states, attempts3 denial, explicit retry and confirmed cancel; reads never admit pages");
   state = "ready"; count = 101; await refresh(); await button("Select all on this page (25)").click();
   await page.evaluate(() => { window.__ignoreAbort = true; });
-  holdRecordRead = { key: "old-page", offset: 25, limit: 25 }; await button("Next records").click(); await expect.poll(() => held.has("old-page")).toBe(true);
-  await button("Retrieve next metadata page").click(); await expect(page.locator(".selection-toolbar")).toContainText("25 selected of 201");
-  held.get("old-page")(); held.delete("old-page"); await expect(page.locator(".selection-toolbar")).toContainText("25 selected of 201");
+  for (const status of [200, 401, 503]) {
+    count = 101; await refresh();
+    holdRecordRead = { key: "old-page", offset: 25, limit: 25, status }; await button("Next records").click(); await expect.poll(() => held.has("old-page")).toBe(true);
+    await button("Retrieve next metadata page").click(); await expect(page.locator(".selection-toolbar")).toContainText("25 selected of 201");
+    held.get("old-page")(); held.delete("old-page");
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await expect(button("Sign out")).toBeVisible(); await expect(page.locator(".selection-toolbar")).toContainText("25 selected of 201");
+  }
   holdRecordRead = { key: "old-enumeration", offset: 0, limit: 100 }; count = 100; await refresh(); await expect.poll(() => held.has("old-enumeration")).toBe(true);
   count = 101; await refresh(); held.get("old-enumeration")(); held.delete("old-enumeration");
   await expect(page.locator(".selection-toolbar")).toContainText("25 selected of 101"); await expect(button("Select all on this page (25)")).toBeEnabled();

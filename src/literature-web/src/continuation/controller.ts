@@ -59,11 +59,11 @@ export class SearchController {
         this.set({ pending: null, error: "Request was not admitted. Check the query and retrieval limit before submitting again." });
       } else if (error instanceof ApiError && error.status === 409) {
         this.set({ pending: null, error: "Request conflict. Review current saved status before choosing another action." });
-        if (pending.kind === "continuation") await this.read(pending.runID);
+        if (pending.kind === "continuation") await this.read(pending.runID, false, "Request was not applied because saved status changed. Review the refreshed status and choose the action again.");
       } else this.set({ error: confirmed ? "Request confirmed; refresh saved status only." : "Response unconfirmed. Retry the same request; changing the draft does not replace it." });
     } finally { if (task.current()) this.set({ busy: false }); }
   }
-  async read(id: string, automatic = false) {
+  async read(id: string, automatic = false, notice = "") {
     if (!this.live()) return;
     if (!automatic) this.reads = 0;
     const task = this.begin();
@@ -73,6 +73,7 @@ export class SearchController {
       if (page.run.run_id !== id) throw new Error("Saved run identity did not match.");
       this.set({ confirmed: this.state.confirmed === id ? null : this.state.confirmed });
       this.page(page);
+      if (notice) this.set({ notice });
       const active = page.continuation ? ["queued", "running"].includes(page.continuation.state) : ["queued", "running"].includes(page.run.state);
       if (active && !this.state.pending) {
         if (++this.reads < 120) this.timer = setTimeout(() => { if (task.current()) void this.read(id, true); }, 2000);

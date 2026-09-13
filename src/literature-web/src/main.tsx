@@ -76,6 +76,11 @@ function App() {
     [message, setMessage] = useState(""),
     [error, setError] = useState("");
   const runGeneration = useRef(0);
+  const recordPageScope = useRef(new AbortController());
+  const retireRecordPage = () => {
+    recordPageScope.current.abort();
+    recordPageScope.current = new AbortController();
+  };
   const historyRequest = useRef(0);
   const batchHistoryRequest = useRef(0);
   const batchOperation = useRef(0);
@@ -95,6 +100,7 @@ function App() {
   const [confirmedPdfPlan, setConfirmedPdfPlan] = useState<string>();
   const [pdfPlan, setPdfPlan] = useState<{ id: string; sequence: number }>();
   const retirePlanScope = () => {
+    retireRecordPage();
     beginBatchRequest();
     planScope.current.abort();
     planScope.current = new AbortController();
@@ -116,6 +122,7 @@ function App() {
     return () => searchController.dispose();
   }, [searchController]);
   applySearchPage.current = page => {
+    retireRecordPage();
     runGeneration.current++;
     if (page.run.run_id !== run?.run_id) { retirePlanScope(); retireChildView(); }
     setRun(page.run); setContinuation(page.continuation ?? null); setRecords(page.records);
@@ -337,6 +344,7 @@ function App() {
     }
     if (searchState.pending || searchState.confirmed || searchState.busy) return;
     if (serviceInfo?.searchContinuationEnabled === true) {
+      retireRecordPage();
       runGeneration.current++;
       await searchController.search(query, limit);
       return;
@@ -402,6 +410,7 @@ function App() {
   };
   const openSaved = async (id: string, offset = 0, size = pageSize) => {
     if (!id || !library) return;
+    retireRecordPage();
     searchController.navigate();
     const g = ++runGeneration.current;
     if (id !== run?.run_id) {
@@ -412,7 +421,7 @@ function App() {
     }
     const expectedSession = sessionGeneration();
     const savedLibrary = library;
-    const savedSignal = planScope.current.signal;
+    const savedSignal = AbortSignal.any([planScope.current.signal, recordPageScope.current.signal]);
     setBusy(true);
     setError("");
     try {
