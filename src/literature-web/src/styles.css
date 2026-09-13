@@ -351,3 +351,14 @@ code {
 .panel, .summary, footer { overflow-wrap: anywhere; }
 input, select, textarea { min-width: 0; max-width: 100%; }
 .pager { flex-wrap: wrap; }
+
+.plan-workspace { margin-top: 1.5rem; }
+.plan-catalog { display: block; margin-top: 1rem; }
+.plan-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: .75rem; }
+.plan-counts > div { background: #edf2f7; border-radius: 6px; padding: .75rem; }
+.plan-counts dd { font-size: 1.35rem; font-weight: 600; margin: .35rem 0 0; }
+.plan-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.plan-item { border-top: 1px solid #d9e2ec; margin-top: 1rem; padding-top: 1rem; }
+.plan-item h4 { margin: .5rem 0; }
+.plan-confirm, .plan-pending { border: 1px solid #aebfd0; border-radius: 6px; padding: 1rem; margin: 1rem 0; }
+.plan-workspace button { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }

@@ -61,6 +61,13 @@
     "src/literature-web/src/components/ArticleCard.tsx": "src/literature-web/src/components/ArticleCard.tsx",
     "src/literature-web/src/main.tsx": "src/literature-web/src/main.tsx",
     "src/literature-web/src/pagination.ts": "src/literature-web/src/pagination.ts",
+    "src/literature-web/src/plans/PlanWorkspace.test.tsx": "src/literature-web/src/plans/PlanWorkspace.test.tsx",
+    "src/literature-web/src/plans/PlanWorkspace.tsx": "src/literature-web/src/plans/PlanWorkspace.tsx",
+    "src/literature-web/src/plans/api.ts": "src/literature-web/src/plans/api.ts",
+    "src/literature-web/src/plans/controller.test.ts": "src/literature-web/src/plans/controller.test.ts",
+    "src/literature-web/src/plans/controller.ts": "src/literature-web/src/plans/controller.ts",
+    "src/literature-web/src/plans/download-scope.test.ts": "src/literature-web/src/plans/download-scope.test.ts",
+    "src/literature-web/src/plans/fixtures.test-support.ts": "src/literature-web/src/plans/fixtures.test-support.ts",
     "src/literature-web/src/selection.test.ts": "src/literature-web/src/selection.test.ts",
     "src/literature-web/src/selection.ts": "src/literature-web/src/selection.ts",
     "src/literature-web/src/styles.css": "src/literature-web/src/styles.css",
@@ -70,6 +77,7 @@
     "tests/native-browser/browser-regression.mjs": "tests/native-browser/browser-regression.mjs",
     "tests/native-browser/package-lock.json": "tests/native-browser/package-lock.json",
     "tests/native-browser/package.json": "tests/native-browser/package.json",
+    "tests/native-browser/plan-browser-regression.mjs": "tests/native-browser/plan-browser-regression.mjs",
     "tests/native-browser/verify-workbook.py": "tests/native-browser/verify-workbook.py",
     "tests/native-browser/workbook-requirements.txt": "tests/native-browser/workbook-requirements.txt"
   }

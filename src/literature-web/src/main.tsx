@@ -15,6 +15,7 @@ import {
 import { ArticleCard, SourceLinks } from "./components/ArticleCard";
 import { canAdvanceRecords } from "./pagination";
 import { searchId, selectedSearchIds, toggleArticle } from "./selection";
+import { PlanWorkspace } from "./plans/PlanWorkspace";
 import "./styles.css";
 
 function safeRightsLink(value: unknown): string | null {
@@ -69,6 +70,25 @@ function App() {
   const historyRequest = useRef(0);
   const batchHistoryRequest = useRef(0);
   const batchOperation = useRef(0);
+  const batchScope = useRef(new AbortController());
+  const beginBatchRequest = () => {
+    batchScope.current.abort();
+    batchScope.current = new AbortController();
+    return batchScope.current.signal;
+  };
+  const planScope = useRef(new AbortController());
+  const retirePlanScope = () => {
+    beginBatchRequest();
+    planScope.current.abort();
+    planScope.current = new AbortController();
+  };
+  const retireChildView = () => {
+    beginBatchRequest();
+    batchOperation.current += 1;
+    setBatchBusy(false);
+    setBatch(null);
+  };
+  const selectionMaximum = serviceInfo?.planEnabled === true ? 100 : 10;
   const isCurrentBatchOperation = (
     operation: number,
     expectedLibrary: string,
@@ -101,6 +121,7 @@ function App() {
   };
   useEffect(() => {
     return onSessionInvalidated(() => {
+      retirePlanScope();
       runGeneration.current += 1;
       batchOperation.current += 1;
       setSignedIn(false);
@@ -165,12 +186,16 @@ function App() {
     if (!signedIn || !library || !batch || batchBusy) return;
     const id = batch.batch.batch_id, expected = sessionGeneration();
     const operation = batchOperation.current;
+    const pollAbort = new AbortController();
+    const parentSignal = batchScope.current.signal;
+    const abortPoll = () => pollAbort.abort();
+    parentSignal.addEventListener("abort", abortPoll);
     let disposed = false, reads = 0;
     let timer: ReturnType<typeof setTimeout>;
     const current = () => !disposed && expected === sessionGeneration() && operation === batchOperation.current;
     const poll = async () => {
       try {
-        const detail = await api.batch(library, id, expected);
+        const detail = await api.batch(library, id, expected, pollAbort.signal);
         if (!current()) return;
         setBatch(detail);
         if (['active', 'queued', 'running'].includes(detail.batch.state)) {
@@ -180,15 +205,16 @@ function App() {
       } catch (e) { if (current()) setError((e as Error).message); }
     };
     timer = setTimeout(poll, 1000);
-    return () => { disposed = true; clearTimeout(timer); };
+    return () => { disposed = true; clearTimeout(timer); pollAbort.abort(); parentSignal.removeEventListener("abort", abortPoll); };
   }, [signedIn, library, batch?.batch.batch_id, batchBusy]);
   const openBatch = async (id: string) => {
     if (!id || !library) return;
     const expected = sessionGeneration(), expectedLibrary = library;
     const operation = ++batchOperation.current;
+    const signal = beginBatchRequest();
     setBatchBusy(true); setError('');
     try {
-      const detail = await api.batch(expectedLibrary, id, expected);
+      const detail = await api.batch(expectedLibrary, id, expected, signal);
       if (isCurrentBatchOperation(operation, expectedLibrary, expected)) setBatch(detail);
     } catch (e) {
       if (isCurrentBatchOperation(operation, expectedLibrary, expected)) setError((e as Error).message);
@@ -213,6 +239,8 @@ function App() {
     }
   };
   const signOut = async () => {
+    planScope.current.abort();
+    retireChildView();
     const operation = ++runGeneration.current;
     setBusy(true);
     try {
@@ -259,6 +287,7 @@ function App() {
       return;
     }
     const g = ++runGeneration.current;
+    retirePlanScope();
     batchOperation.current += 1;
     setBatchBusy(false); setBatch(null); setRun(null);
     const expectedSession = sessionGeneration();
@@ -318,6 +347,7 @@ function App() {
     if (!id || !library) return;
     const g = ++runGeneration.current;
     if (id !== run?.run_id) {
+      retirePlanScope();
       setSelected(new Map()); setRecords([]); setRun(null); setBatch(null);
       batchOperation.current += 1; setBatchBusy(false);
     }
@@ -361,6 +391,7 @@ function App() {
     const expected = sessionGeneration();
     const expectedLibrary = library;
     const operation = ++batchOperation.current;
+    const signal = beginBatchRequest();
     setBatchBusy(true);
     setError("");
     try {
@@ -368,10 +399,12 @@ function App() {
         expectedLibrary,
         crypto.randomUUID(),
         ids,
+        expected,
+        signal,
       );
       if (!isCurrentBatchOperation(operation, expectedLibrary, expected))
         return;
-      const detail = await api.batch(expectedLibrary, created.id, expected);
+      const detail = await api.batch(expectedLibrary, created.id, expected, signal);
       if (!isCurrentBatchOperation(operation, expectedLibrary, expected))
         return;
       setBatch(detail);
@@ -393,13 +426,14 @@ function App() {
     const expected = sessionGeneration();
     const expectedLibrary = library;
     const operation = ++batchOperation.current;
+    const signal = beginBatchRequest();
     const batchId = batch.batch.batch_id;
     setBatchBusy(true);
     try {
-      await api.controlBatch(expectedLibrary, batchId, value);
+      await api.controlBatch(expectedLibrary, batchId, value, expected, signal);
       if (!isCurrentBatchOperation(operation, expectedLibrary, expected))
         return;
-      const detail = await api.batch(expectedLibrary, batchId, expected);
+      const detail = await api.batch(expectedLibrary, batchId, expected, signal);
       if (isCurrentBatchOperation(operation, expectedLibrary, expected))
         setBatch(detail);
     } catch (x) {
@@ -415,6 +449,7 @@ function App() {
     const expected = sessionGeneration();
     const expectedLibrary = library;
     const operation = ++batchOperation.current;
+    const signal = beginBatchRequest();
     setBatchBusy(true);
     try {
       const blob = await api.original(
@@ -422,6 +457,7 @@ function App() {
         item.search_id,
         item.original_hash,
         expected,
+        signal,
       );
       if (!isCurrentBatchOperation(operation, expectedLibrary, expected))
         return;
@@ -444,9 +480,10 @@ function App() {
     const expected = sessionGeneration();
     const expectedLibrary = library;
     const operation = ++batchOperation.current;
+    const signal = beginBatchRequest();
     setBatchBusy(true);
     try {
-      const blob = await api.exportCsv(expectedLibrary, selection, expected);
+      const blob = await api.exportCsv(expectedLibrary, selection, expected, signal);
       if (!isCurrentBatchOperation(operation, expectedLibrary, expected))
         return;
       const url = URL.createObjectURL(blob);
@@ -468,10 +505,11 @@ function App() {
     const expected = sessionGeneration();
     const expectedLibrary = library;
     const operation = ++batchOperation.current;
+    const signal = beginBatchRequest();
     const batchId = batch.batch.batch_id;
     setBatchBusy(true);
     try {
-      const blob = await api.exportBundle(expectedLibrary, batchId, expected);
+      const blob = await api.exportBundle(expectedLibrary, batchId, expected, signal);
       if (!isCurrentBatchOperation(operation, expectedLibrary, expected))
         return;
       const url = URL.createObjectURL(blob);
@@ -492,9 +530,10 @@ function App() {
     if (!library) return;
     const expected = sessionGeneration(), expectedLibrary = library;
     const operation = ++batchOperation.current;
+    const signal = beginBatchRequest();
     setBatchBusy(true);
     try {
-      const blob = await api.exportXlsx(expectedLibrary, selection, expected);
+      const blob = await api.exportXlsx(expectedLibrary, selection, expected, signal);
       if (!isCurrentBatchOperation(operation, expectedLibrary, expected)) return;
       const url = URL.createObjectURL(blob), anchor = document.createElement("a");
       anchor.href = url; anchor.download = selection.batchID ? `batch-${selection.batchID}.xlsx` : "literature-export.xlsx";
@@ -572,6 +611,7 @@ function App() {
               value={library}
               onChange={(e) => {
                 if (e.target.value === library) return;
+                retirePlanScope();
                 runGeneration.current += 1;
                 historyRequest.current += 1;
                 batchOperation.current += 1;
@@ -745,7 +785,7 @@ function App() {
               Results <span className="count">{records.length}</span>
             </h2>
             <div className="result-actions">
-              <span aria-live="polite">{selected.size} selected across saved record pages (maximum 10)</span>
+              <span aria-live="polite">{selected.size} selected across saved record pages (maximum {selectionMaximum})</span>
               <button className="secondary" disabled={selected.size === 0} onClick={() => setSelected(new Map())}>Clear selection</button>
               <button
                 className="secondary"
@@ -787,8 +827,8 @@ function App() {
                 article={a}
                 selected={selected.has(searchId(a))}
                 onSelect={() => {
-                  if (!selected.has(searchId(a)) && selected.size >= 10) setError("Selection limit reached. Clear or deselect a record before choosing another; maximum 10 per batch.");
-                  setSelected((s) => toggleArticle(s, a));
+                  if (!selected.has(searchId(a)) && selected.size >= selectionMaximum) setError(`Selection limit reached. Clear or deselect a record before choosing another; maximum ${selectionMaximum}.`);
+                  setSelected((s) => toggleArticle(s, a, selectionMaximum));
                 }}
               />
             ))
@@ -825,6 +865,13 @@ function App() {
                 </button>
               </div>
             )}
+          {library && <PlanWorkspace
+            key={`${sessionGeneration()}:${library}:${run?.run_id ?? ""}`}
+            library={library} runID={run?.run_id ?? ""} generation={sessionGeneration()}
+            selectedIDs={selectedSearchIds(selected)} enabled={serviceInfo?.planEnabled === true}
+            scopeSignal={planScope.current.signal} onPlanChange={retireChildView}
+            onChild={id => { retireChildView(); void openBatch(id); }}
+          />}
           {batch && (
             <section className="panel batch-panel">
               <div className="result-head">
@@ -832,33 +879,34 @@ function App() {
                   <h2>Batch {batch.batch.batch_id}</h2>
                   <p className="muted small">
                     {batch.batch.state} · {batch.total} selected records
+                    {batch.batch.plan_id && <> · Controlled by plan {batch.batch.plan_id}. Open it in Saved plans to pause, resume, retry or cancel.</>}
                   </p>
                 </div>
                 <div className="result-actions">
                   <button
                     className="secondary"
-                    disabled={batchBusy}
+                    disabled={batchBusy || !!batch.batch.plan_id}
                     onClick={() => controlBatch("pause")}
                   >
                     Pause
                   </button>
                   <button
                     className="secondary"
-                    disabled={batchBusy}
+                    disabled={batchBusy || !!batch.batch.plan_id}
                     onClick={() => controlBatch("resume")}
                   >
                     Resume
                   </button>
                   <button
                     className="secondary"
-                    disabled={batchBusy}
+                    disabled={batchBusy || !!batch.batch.plan_id}
                     onClick={() => controlBatch("retry")}
                   >
                     Retry eligible
                   </button>
                   <button
                     className="secondary"
-                    disabled={batchBusy}
+                    disabled={batchBusy || !!batch.batch.plan_id}
                     onClick={() => controlBatch("cancel")}
                   >
                     Cancel

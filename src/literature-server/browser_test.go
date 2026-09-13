@@ -101,10 +101,16 @@ func TestBrowserServer(t *testing.T) {
 	cfg.Listen = listener.Addr().String()
 	cfg.Origin = "http://" + cfg.Listen
 	cfg.LocalTest, cfg.SearchEnabled, cfg.AcquisitionEnabled = true, true, true
+	cfg.PlanEnabled = os.Getenv("LITRADOCK_PLAN_BROWSER_TEST") == "yes"
+	if cfg.PlanEnabled {
+		for i := 3; i <= 100; i++ {
+			cfg.BlockedPMCIDs = append(cfg.BlockedPMCIDs, fmt.Sprintf("PMC990002%03d", i))
+		}
+	}
 	cfg.Revision = "https://github.com/bestkakkoii/LitraDock/tree/" + revision
 	cfg.Operator, cfg.Contact, cfg.Retention = "SYNTHETIC isolated browser qualification", "No external contact", "Disposable test data only"
 	cfg.Expires = time.Now().Add(time.Hour)
-	cfg.BlockedPMCIDs = []string{"PMC990000003"}
+	cfg.BlockedPMCIDs = append(cfg.BlockedPMCIDs, "PMC990000003")
 	for i := 1; i <= 12; i++ {
 		cfg.BlockedPMCIDs = append(cfg.BlockedPMCIDs, fmt.Sprintf("PMC990001%03d", i))
 	}
@@ -138,10 +144,17 @@ func TestBrowserServer(t *testing.T) {
 					}
 				}
 			}
+			if cfg.PlanEnabled && r.URL.Query().Get("term") == "SYNTHETIC_PLAN_25001" {
+				body = `<eSearchResult><Count>25001</Count><IdList><Id>990000001</Id><Id>990000002</Id>`
+				for i := 3; i <= 100; i++ {
+					body += fmt.Sprintf("<Id>990002%03d</Id>", i)
+				}
+				body += `</IdList><QueryTranslation>SYNTHETIC plan transport only</QueryTranslation></eSearchResult>`
+			}
 		case r.URL.Host == "eutils.ncbi.nlm.nih.gov" && strings.HasSuffix(r.URL.Path, "/efetch.fcgi"):
 			body = `<PubmedArticleSet>`
 			for _, id := range strings.Split(r.URL.Query().Get("id"), ",") {
-				if !regexp.MustCompile(`^99000[01][0-9]{3}$`).MatchString(id) {
+				if !regexp.MustCompile(`^99000[012][0-9]{3}$`).MatchString(id) {
 					return nil, fmt.Errorf("unexpected synthetic metadata ID")
 				}
 				body += fmt.Sprintf(`<PubmedArticle><MedlineCitation><PMID>%s</PMID><Article><Journal><Title>SYNTHETIC Journal</Title><JournalIssue><PubDate><Year>2026</Year></PubDate></JournalIssue></Journal><ArticleTitle>SYNTHETIC ONLY α 中文 %s</ArticleTitle><Abstract><AbstractText>Isolated transport, never a live result.</AbstractText></Abstract></Article></MedlineCitation><PubmedData><ArticleIdList><ArticleId IdType="doi">10.0000/synthetic%s</ArticleId><ArticleId IdType="pmc">PMC%s</ArticleId></ArticleIdList></PubmedData></PubmedArticle>`, id, id, id, id)

@@ -117,7 +117,7 @@ func (s *server) controlBatch(ctx context.Context, library, batch, action string
 	return tx.Commit(ctx)
 }
 func (s *server) batchDetail(ctx context.Context, library, batch string) (any, error) {
-	batches, e := s.rows(ctx, "SELECT batch_id,state,created_at FROM native_batches WHERE library_id=$1 AND batch_id=$2", library, batch)
+	batches, e := s.rows(ctx, "SELECT batch_id,state,created_at,plan_id FROM native_batches WHERE library_id=$1 AND batch_id=$2", library, batch)
 	if e != nil {
 		return nil, e
 	}

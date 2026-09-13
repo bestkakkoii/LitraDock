@@ -5,6 +5,18 @@ import { searchId, selectedSearchIds, toggleArticle } from "./selection";
 const article = (id: string): Article => ({ SearchId: id, Pmid: id });
 
 describe("cross-page selection", () => {
+  it("retains37 across saved pages and enforces the enabled100/101 boundary with deselection", () => {
+    let selected = new Map<string, Article>();
+    for (let i = 0; i < 37; i++) selected = toggleArticle(selected, article(`S${i}`), 100);
+    expect(selectedSearchIds(selected)).toHaveLength(37);
+    for (let i = 37; i < 101; i++) selected = toggleArticle(selected, article(`S${i}`), 100);
+    expect(selected.size).toBe(100);
+    expect(selected.has("S100")).toBe(false);
+    selected = toggleArticle(selected, article("S0"), 100);
+    selected = toggleArticle(selected, article("S100"), 100);
+    expect(selected.size).toBe(100);
+    expect(new Set(selectedSearchIds(selected)).size).toBe(100);
+  });
   it("retains distinct stable IDs and supports toggle/deselection", () => {
     let selected = new Map<string, Article>();
     selected = toggleArticle(selected, article("S1"));

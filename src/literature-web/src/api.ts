@@ -38,6 +38,9 @@ export type LibraryPage = {
   limit: number;
 };
 export type ServiceInfo = {
+  planEnabled?: boolean;
+  planSelectionLimit?: number;
+  planGroupLimit?: number;
   searchEnabled?: boolean;
   contact?: string;
   expiresAt?: string;
@@ -64,7 +67,7 @@ export type BatchItem = {
   version?: string;
 };
 export type BatchDetail = {
-  batch: { batch_id: string; state: string; created_at: string };
+  batch: { batch_id: string; state: string; created_at: string; plan_id?: string | null };
   items: BatchItem[];
   total: number;
   counts: Record<string, number>;
@@ -89,11 +92,22 @@ export const setSession = (value: Session) => {
   generation += 1;
   csrf = value.csrf;
 };
+export class ApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+function assertRequestCurrent(expected: number, signal?: AbortSignal | null) {
+  if (expected !== generation || signal?.aborted)
+    throw new Error("Session changed; the previous request was discarded.");
+}
 export async function request<T>(
   path: string,
   init: RequestInit = {},
   expectedGeneration = generation,
 ): Promise<T> {
+  assertRequestCurrent(expectedGeneration, init.signal);
   const headers = new Headers(init.headers);
   if (init.body) headers.set("Content-Type", "application/json");
   if (init.body && csrf) headers.set("X-CSRF", csrf);
@@ -102,15 +116,13 @@ export async function request<T>(
     credentials: "same-origin",
     headers,
   });
-  if (expectedGeneration !== generation)
-    throw new Error("Session changed; the previous request was discarded.");
+  assertRequestCurrent(expectedGeneration, init.signal);
+  const text = await response.text();
+  assertRequestCurrent(expectedGeneration, init.signal);
   if (response.status === 401) {
     clearSession();
-    throw new Error("Your session has expired. Please sign in again.");
+    throw new ApiError(401, "Your session has expired. Please sign in again.");
   }
-  const text = await response.text();
-  if (expectedGeneration !== generation)
-    throw new Error("Session changed; the previous response was discarded.");
   let data: unknown = {};
   try {
     data = text ? JSON.parse(text) : {};
@@ -122,7 +134,7 @@ export async function request<T>(
       typeof data === "object" && data && "error" in data
         ? String(data.error)
         : `Request unavailable (HTTP ${response.status}).`;
-    throw new Error(message);
+    throw new ApiError(response.status, message);
   }
   return data as T;
 }
@@ -131,6 +143,7 @@ export async function requestBlob(
   init: RequestInit = {},
   expectedGeneration = generation,
 ): Promise<Blob> {
+  assertRequestCurrent(expectedGeneration, init.signal);
   const headers = new Headers(init.headers);
   if (init.body) headers.set("Content-Type", "application/json");
   if (init.body && csrf) headers.set("X-CSRF", csrf);
@@ -139,17 +152,18 @@ export async function requestBlob(
     credentials: "same-origin",
     headers,
   });
-  if (expectedGeneration !== generation)
-    throw new Error("Session changed; the previous download was discarded.");
-  if (response.status === 401) {
-    clearSession();
-    throw new Error("Your session has expired. Please sign in again.");
+  assertRequestCurrent(expectedGeneration, init.signal);
+  if (!response.ok) {
+    await response.text();
+    assertRequestCurrent(expectedGeneration, init.signal);
+    if (response.status === 401) {
+      clearSession();
+      throw new ApiError(401, "Your session has expired. Please sign in again.");
+    }
+    throw new ApiError(response.status, `Download unavailable (HTTP ${response.status}).`);
   }
-  if (!response.ok)
-    throw new Error(`Download unavailable (HTTP ${response.status}).`);
   const blob = await response.blob();
-  if (expectedGeneration !== generation)
-    throw new Error("Session changed; the previous download was discarded.");
+  assertRequestCurrent(expectedGeneration, init.signal);
   return blob;
 }
 export const api = {
@@ -199,56 +213,62 @@ export const api = {
       {},
       g,
     ),
-  createBatch: (library: string, requestID: string, searchIDs: string[]) =>
+  createBatch: (library: string, requestID: string, searchIDs: string[], g = generation, signal?: AbortSignal) =>
     request<{ id: string }>(
       `/api/libraries/${encodeURIComponent(library)}/batches`,
-      { method: "POST", body: JSON.stringify({ requestID, searchIDs }) },
+      { method: "POST", body: JSON.stringify({ requestID, searchIDs }), signal },
+      g,
     ),
-  batch: (library: string, id: string, g = generation) =>
+  batch: (library: string, id: string, g = generation, signal?: AbortSignal) =>
     request<BatchDetail>(
       `/api/libraries/${encodeURIComponent(library)}/batches/${encodeURIComponent(id)}`,
-      {},
+      { signal },
       g,
     ),
   controlBatch: (
     library: string,
     id: string,
     value: "pause" | "resume" | "cancel" | "retry",
+    g = generation,
+    signal?: AbortSignal,
   ) =>
     request(
       `/api/libraries/${encodeURIComponent(library)}/batches/${encodeURIComponent(id)}/control`,
-      { method: "POST", body: JSON.stringify({ value }) },
+      { method: "POST", body: JSON.stringify({ value }), signal },
+      g,
     ),
-  original: (library: string, searchID: string, hash: string, g = generation) =>
+  original: (library: string, searchID: string, hash: string, g = generation, signal?: AbortSignal) =>
     requestBlob(
       `/api/libraries/${encodeURIComponent(library)}/originals/${encodeURIComponent(searchID)}/${encodeURIComponent(hash)}`,
-      {},
+      { signal },
       g,
     ),
   exportCsv: (
     library: string,
     selection: { runID?: string; batchID?: string },
     g = generation,
+    signal?: AbortSignal,
   ) =>
     requestBlob(
       `/api/libraries/${encodeURIComponent(library)}/exports`,
-      { method: "POST", body: JSON.stringify({ ...selection, format: "csv" }) },
+      { method: "POST", body: JSON.stringify({ ...selection, format: "csv" }), signal },
       g,
     ),
   exportXlsx: (
     library: string,
     selection: { runID?: string; batchID?: string },
     g = generation,
+    signal?: AbortSignal,
   ) =>
     requestBlob(
       `/api/libraries/${encodeURIComponent(library)}/exports`,
-      { method: "POST", body: JSON.stringify({ ...selection, format: "xlsx" }) },
+      { method: "POST", body: JSON.stringify({ ...selection, format: "xlsx" }), signal },
       g,
     ),
-  exportBundle: (library: string, batchID: string, g = generation) =>
+  exportBundle: (library: string, batchID: string, g = generation, signal?: AbortSignal) =>
     requestBlob(
       `/api/libraries/${encodeURIComponent(library)}/exports`,
-      { method: "POST", body: JSON.stringify({ batchID, format: "zip" }) },
+      { method: "POST", body: JSON.stringify({ batchID, format: "zip" }), signal },
       g,
     ),
 };
