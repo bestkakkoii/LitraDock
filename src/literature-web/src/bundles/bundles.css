@@ -1,0 +1,13 @@
+.bundle-workspace { min-width: 0; margin-block: 1.5rem; padding-block: 1rem; border-top: 1px solid #cbd5e1; }
+.bundle-workspace p, .bundle-workspace li, .bundle-identity { overflow-wrap: anywhere; line-height: 1.55; }
+.bundle-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem; margin-block: .65rem; }
+.bundle-actions button { white-space: normal; min-height: 2.6rem; }
+.bundle-catalog { display: grid; gap: .5rem; min-width: 0; margin-block: 1rem; }
+.bundle-catalog select { width: 100%; min-width: 0; }
+.bundle-parts, .bundle-reasons { list-style: none; padding: 0; display: grid; gap: .8rem; }
+.bundle-parts > li, .bundle-reasons > li { min-width: 0; padding: .9rem; background: #f5f8fc; border: 1px solid #d7e0eb; border-radius: .5rem; }
+.bundle-parts label { display: flex; gap: .6rem; align-items: center; font-weight: 600; }
+.bundle-parts input { width: 1.15rem; height: 1.15rem; }
+.bundle-parts progress { width: 100%; }
+.bundle-workspace summary { cursor: pointer; line-height: 1.6; padding-block: .4rem; }
+@media (max-width: 600px) { .bundle-actions button { flex: 1 1 12rem; } .bundle-parts > li { padding: .7rem; } }

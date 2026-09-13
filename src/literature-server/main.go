@@ -26,6 +26,7 @@ type config struct {
 	LocalTest                                                        bool
 	SearchEnabled                                                    bool
 	SearchContinuationEnabled                                        bool
+	BundleDeliveryEnabled                                            bool
 	AcquisitionEnabled                                               bool
 	PlanEnabled                                                      bool
 	SavedSetEnabled                                                  bool
@@ -36,6 +37,7 @@ type server struct {
 	bundleBusy   atomic.Bool
 	native       bool
 	continuation bool
+	bundles      bool
 	db           *pgxpool.Pool
 	cfg          config
 	provider     *http.Client
@@ -111,17 +113,18 @@ func run() error {
 	if strings.HasPrefix(pc.ConnConfig.Database, "litradock_native_") {
 		schemaQuery, want = "SELECT max(version) FROM native_schema", 3
 	}
-	if err = db.QueryRow(ctx, schemaQuery).Scan(&version); err != nil || (version != want && !(want == 3 && (version == 4 || version == 5))) {
+	if err = db.QueryRow(ctx, schemaQuery).Scan(&version); err != nil || (version != want && !(want == 3 && (version == 4 || version == 5 || version == 6))) {
 		return errors.New("Expected schema version required; use supported stopped-service migration.")
 	}
 	if want == 3 && version == 3 {
 		cfg.SavedSetEnabled = false
 	}
-	if version != 5 || want != 3 {
+	if version < 5 || want != 3 {
 		cfg.SearchContinuationEnabled = false
 	}
 	s := &server{native: strings.HasPrefix(pc.ConnConfig.Database, "litradock_native_"), db: db, cfg: cfg, provider: providerClient(), slots: make(chan struct{}, 2), loginGate: make(chan struct{}, 1)}
-	s.continuation = want == 3 && version == 5
+	s.continuation = want == 3 && version >= 5
+	s.bundles = want == 3 && version == 6
 	service := &http.Server{Addr: cfg.Listen, Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384}
 	go s.worker(ctx)
 	go func() {

@@ -14,6 +14,7 @@ import sys
 import time
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--bundles', action='store_true', help='Run isolated prepared bundle/byte-range browser workload')
 parser.add_argument('--plans', action='store_true', help='Run the focused processing-plan browser workload')
 parser.add_argument('--multirun', action='store_true', help='Run the focused multi-run saved-set browser workload')
 parser.add_argument('--continuation', action='store_true', help='Run the focused durable search continuation workload')
@@ -43,6 +44,8 @@ config_file, input_file = out/'config.json', out/'input.json'
 config_file.write_text(json.dumps(cfg), encoding='utf-8')
 config_file.chmod(0o600)
 env = dict(os.environ, LITRADOCK_BROWSER_TEST='yes', LITRADOCK_GO_CONFIG=str(config_file), NATIVE_BROWSER_INPUT=str(input_file), NATIVE_BROWSER_REVISION=args.revision, NATIVE_BROWSER_MANIFEST=str(args.manifest.resolve()))
+if args.bundles:
+    env['LITRADOCK_BUNDLE_BROWSER_TEST'] = 'yes'
 if args.plans:
     env['LITRADOCK_PLAN_BROWSER_TEST'] = 'yes'
 if args.multirun:
@@ -68,6 +71,8 @@ try:
         with (out/'browser.log').open('wb') as log:
             npm = 'npm.cmd' if os.name == 'nt' else 'npm'
             command = [npm, 'run', 'test:multirun'] if args.multirun else ([npm, 'run', 'test:plans'] if args.plans else [npm, 'test'])
+            if args.bundles:
+                command = [npm, 'run', 'test:bundles']
             if args.continuation:
                 command = [npm, 'run', 'test:continuation']
             subprocess.run(command, cwd=repo/'tests/native-browser', env=env, stdout=log, stderr=subprocess.STDOUT, timeout=480, check=True, **flags)
@@ -77,6 +82,7 @@ try:
         receipt = {'revision': args.revision, 'scope': 'Actual native PostgreSQL/compiled handlers/static frontend; exclusively synthetic source transport, no live coverage', 'test_binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'manifest_sha256': hashlib.sha256(args.manifest.read_bytes()).hexdigest(), 'browser_exit': 0, 'server_exit': 0, 'plans': args.plans}
         receipt['multirun'] = args.multirun
         receipt['continuation'] = args.continuation
+        receipt['bundles'] = args.bundles
         (out/'receipt.json').write_text(json.dumps(receipt, indent=2)+'\n', encoding='utf-8')
         print(json.dumps(receipt))
 finally:

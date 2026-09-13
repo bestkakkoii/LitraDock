@@ -82,7 +82,8 @@ func TestBrowserServer(t *testing.T) {
 	if _, err = db.Exec(ctx, nativeSchema); err != nil {
 		t.Fatal(err)
 	}
-	continuation := os.Getenv("LITRADOCK_CONTINUATION_BROWSER_TEST") == "yes"
+	bundles := os.Getenv("LITRADOCK_BUNDLE_BROWSER_TEST") == "yes"
+	continuation := os.Getenv("LITRADOCK_CONTINUATION_BROWSER_TEST") == "yes" || bundles
 	multirun := os.Getenv("LITRADOCK_MULTIRUN_BROWSER_TEST") == "yes" || continuation
 	if multirun {
 		tx, err := db.Begin(ctx)
@@ -95,6 +96,12 @@ func TestBrowserServer(t *testing.T) {
 		}
 		if continuation {
 			if err = migrateContinuation(ctx, tx, false); err != nil {
+				tx.Rollback(ctx)
+				t.Fatal(err)
+			}
+		}
+		if bundles {
+			if err = migrateBundles(ctx, tx, false); err != nil {
 				tx.Rollback(ctx)
 				t.Fatal(err)
 			}
@@ -127,6 +134,10 @@ func TestBrowserServer(t *testing.T) {
 	cfg.PlanEnabled = os.Getenv("LITRADOCK_PLAN_BROWSER_TEST") == "yes" || multirun
 	cfg.SavedSetEnabled = multirun
 	cfg.SearchContinuationEnabled = continuation
+	cfg.BundleDeliveryEnabled = bundles
+	if bundles {
+		cfg.PDFEnabled = true
+	}
 	if cfg.PlanEnabled {
 		for i := 3; i <= 100; i++ {
 			cfg.BlockedPMCIDs = append(cfg.BlockedPMCIDs, fmt.Sprintf("PMC990002%03d", i))
@@ -257,11 +268,15 @@ func TestBrowserServer(t *testing.T) {
 	})
 	s := &server{native: true, db: db, cfg: cfg, slots: make(chan struct{}, 2), loginGate: make(chan struct{}, 1), provider: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	s.continuation = continuation
+	s.bundles = bundles
 	service := &http.Server{Handler: s, ReadHeaderTimeout: 5 * time.Second}
 	defer service.Close()
 	go s.worker(ctx)
 	go service.Serve(listener)
 	input := map[string]any{"origin": cfg.Origin, "accounts": accounts, "source_revision": revision, "manifest": manifestPath, "originals": originals, "source_gate": os.Getenv("NATIVE_BROWSER_INPUT") + ".source-release", "scope": "SYNTHETIC ONLY; actual native handlers/PostgreSQL; no external transport"}
+	if bundles {
+		input["bundle_seed"] = seedBundleBrowser(t, ctx, db, accounts[0]["login"])
+	}
 	b, _ = json.MarshalIndent(input, "", "  ")
 	output := os.Getenv("NATIVE_BROWSER_INPUT")
 	f, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)

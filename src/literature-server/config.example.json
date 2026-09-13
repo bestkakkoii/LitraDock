@@ -15,5 +15,6 @@
   "PlanEnabled": false,
   "PDFEnabled": false,
   "SavedSetEnabled": false,
-  "SearchContinuationEnabled": false
+  "SearchContinuationEnabled": false,
+  "BundleDeliveryEnabled": false
 }

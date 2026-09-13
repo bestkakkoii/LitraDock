@@ -2,7 +2,7 @@ name: Native candidate
 on:
   workflow_dispatch:
   push:
-    branches: [native-demo-003, native-demo-004, native-demo-005, native-demo-006, native-demo-007, native-demo-008, native-demo-009, native-demo-010, native-demo-011]
+    branches: [native-demo-003, native-demo-004, native-demo-005, native-demo-006, native-demo-007, native-demo-008, native-demo-009, native-demo-010, native-demo-011, native-demo-012]
 permissions:
   contents: read
 jobs:
@@ -45,6 +45,7 @@ jobs:
         env:
           LITRADOCK_NATIVE_TEST: 'yes'
           LITRADOCK_GO_CONFIG: ${{ runner.temp }}/native-test.json
+          NATIVE_BUNDLE_TEST_OUTPUT: ${{ runner.temp }}/native-bundle
           NATIVE_WORKBOOK_TEST_OUTPUT: ${{ runner.temp }}/native-workbook
           NATIVE_MULTIRUN_TEST_OUTPUT: ${{ runner.temp }}/native-multirun
           NATIVE_PLAN_EXPORT_TEST_OUTPUT: ${{ runner.temp }}/native-plan-export
@@ -56,6 +57,8 @@ jobs:
         run: |
           python3 tests/native-browser/verify-structured.py "$RUNNER_TEMP/native-structured/synthetic.json" "$RUNNER_TEMP/native-structured/synthetic.jsonl" --synthetic --negative-controls
           python3 tests/native-browser/verify-structured.py "$RUNNER_TEMP/native-structured/postgres-synthetic.json" "$RUNNER_TEMP/native-structured/postgres-synthetic.jsonl" --negative-controls
+      - name: Independent partitioned originals reader
+        run: python3 tests/native-browser/verify-bundle.py "$RUNNER_TEMP/native-bundle/bundle.json" "$RUNNER_TEMP"/native-bundle/*.zip --synthetic --negative-controls
       - name: Independent whole-plan ZIP and typed metadata controls
         run: python3 tests/native-browser/verify-plan-export.py "$RUNNER_TEMP/native-plan-export/plan-synthetic.json" "$RUNNER_TEMP/native-plan-export/plan-synthetic.zip" --synthetic --negative-controls
       - name: Independent frozen multi-run saved-set reader
@@ -103,6 +106,9 @@ jobs:
       - name: Compiled continuation and saved-selection transport controls
         working-directory: src/literature-web
         run: node scripts/continuation-browser-check.mjs
+      - name: Compiled partitioned transfer and stale-body controls
+        working-directory: src/literature-web
+        run: node scripts/bundle-browser-check.mjs
       - name: Fresh native PostgreSQL browser database
         env:
           PGPASSWORD: synthetic-ci-only
@@ -153,11 +159,32 @@ jobs:
           target.chmod(0o600)
           PY
           python3 scripts/run-native-browser.py --continuation --revision "$GITHUB_SHA" --config "$RUNNER_TEMP/native-continuation-browser-config.json" --manifest "$RUNNER_TEMP/native-build/runtime-manifest.json" --frontend-directory "$RUNNER_TEMP/web-one" --output-directory "$RUNNER_TEMP/native-continuation-browser"
+      - name: Fresh bundle PostgreSQL and compiled browser
+        env:
+          PGPASSWORD: synthetic-ci-only
+        run: |
+          createdb -h 127.0.0.1 -U native_test litradock_native_test_browser_bundles
+          python3 - <<'PY'
+          import json,os,pathlib
+          target=pathlib.Path(os.environ['RUNNER_TEMP'])/'native-bundle-browser-config.json'
+          target.write_text(json.dumps({'Database':'host=127.0.0.1 user=native_test password=synthetic-ci-only dbname=litradock_native_test_browser_bundles sslmode=disable'}))
+          target.chmod(0o600)
+          PY
+          python3 scripts/run-native-browser.py --bundles --revision "$GITHUB_SHA" --config "$RUNNER_TEMP/native-bundle-browser-config.json" --manifest "$RUNNER_TEMP/native-build/runtime-manifest.json" --frontend-directory "$RUNNER_TEMP/web-one" --output-directory "$RUNNER_TEMP/native-bundle-browser"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: native-browser-synthetic-evidence
           path: |
+            src/literature-web/.litradock/runtime/frontend018/**/result.json
+            ${{ runner.temp }}/native-bundle-browser/receipt.json
+            ${{ runner.temp }}/native-bundle-browser/browser.log
+            ${{ runner.temp }}/native-bundle-browser/server.log
+            ${{ runner.temp }}/native-bundle-browser/bundle-reader.json
+            ${{ runner.temp }}/native-bundle-browser/bundle.download.json
+            ${{ runner.temp }}/native-bundle-browser/*.zip
+            ${{ runner.temp }}/native-bundle-browser/*.png
+            ${{ runner.temp }}/native-bundle/*.json
             src/literature-web/.litradock/runtime/frontend012/**/result.json
             src/literature-web/.litradock/runtime/frontend015/**/result.json
             src/literature-web/.litradock/runtime/frontend016/**/result.json

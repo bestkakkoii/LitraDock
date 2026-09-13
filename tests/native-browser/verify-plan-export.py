@@ -27,7 +27,7 @@ def decode(raw):
     return json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=structured.pairs)
 
 
-def validate(d, members=None):
+def validate(d, members=None, original_limit=32 * 1024 * 1024):
     assert set(d) == {"schema", "schemaVersion", "type", "generatedAt", "plan", "research", "items", "originalsRevalidated", "counts"}
     assert d["schema"] == "litradock.plan-export" and type(d["schemaVersion"]) is int and d["schemaVersion"] == 1
     assert d["type"] == "document" and type(d["originalsRevalidated"]) is bool
@@ -71,7 +71,7 @@ def validate(d, members=None):
         assert members is not None and d["counts"]["includedRecords"] == included
         assert d["counts"]["unresolvedRecords"] == len(items) - included
         assert d["counts"]["uniqueOriginals"] == len(files)
-        assert d["counts"]["originalBytes"] == sum(map(len, files.values())) <= 32 * 1024 * 1024
+        assert d["counts"]["originalBytes"] == sum(map(len, files.values())) <= original_limit
         assert set(members) == {"manifest.json", "records.json", *files}
         assert decode(members["records.json"]) == d["research"]
     else:

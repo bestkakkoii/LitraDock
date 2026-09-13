@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { sessionGeneration } from "../api";
 import { exportFailure, exportPlan, ExportIdentity, PlanExportFormat } from "./exports";
 import { TransferProgress, transferLabel } from "../transfer";
+import { BundleWorkspace } from "../bundles/BundleWorkspace";
 
 type Props = { library: string; runID: string; generation: number; plan: ExportIdentity;
   scopeSignal: AbortSignal; planSignal: AbortSignal };
@@ -46,7 +47,7 @@ export function PlanExports(props: Props) {
     } catch (failure) { if (current()) setError(exportFailure(failure)); }
     finally { if (current()) { inFlight.current = false; setBusy(null); } }
   };
-  return <section className="plan-exports" aria-label="Saved plan exports">
+  return <><section className="plan-exports" aria-label="Saved plan exports">
     <h4>Export the saved plan</h4>
     <p id="plan-export-scope">Both exports cover all {props.plan.selectedCount} saved plan members, independent of checkboxes and page. Opening or refreshing a plan does not export or acquire anything.</p>
     <div className="plan-actions">
@@ -62,5 +63,5 @@ export function PlanExports(props: Props) {
     <p className="muted">ZIP contains available requested-format originals, records.json and manifest.json with included/unresolved counts and reasons. Missing or restricted originals remain documented, not replaced. Metadata JSON preserves historical outcomes and source links without rechecking original availability.</p>
     <p className="muted">For smaller downloads or unavailable originals, use the child-batch buttons and source links below. Child batches retain individual Save, ZIP and CSV/XLSX exports. No publisher login or generated replacement PDF is provided.</p>
     </details>
-  </section>;
+  </section><BundleWorkspace {...props} /></>;
 }

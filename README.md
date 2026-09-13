@@ -94,3 +94,37 @@ Saved membership survives restart and does not rely on temporary provider Histor
 Run pages omit raw metadata/full-text XML from transport while preserving durable source data and export contracts. Pages over 8 MiB fail explicitly and can be requested at a smaller page size; a page that would exceed the run's 32 MiB stored metadata bound is rejected atomically. Original-file, acquisition, 100-member plan, 32 MiB unique-original and shared source budgets remain unchanged. Selecting a saved subset never selects unfetched provider matches or widens an existing plan.
 
 `rollback-empty-search-continuation` is allowed only while every continuation window is empty. Once used, retain schema 5 and a compatible binary with new continuation admission disabled. Never run an older binary against populated schema 5 or restore an old backup over later research. See [the API and lifecycle decision](docs/adr/0019-durable-search-continuation.md). Physical-device, full provider-window, archive-partition and formal-release qualification remain separate.
+
+
+## Prepared original bundles (schema 6)
+
+Explicit POST `/api/libraries/{library}/plans/{plan}/bundles` with a UUID
+`requestID` freezes all 1–100 saved plan members, unavailable reasons and actual
+search/run provenance. Same intent replays its receipt; another plan conflicts.
+GET list/detail/parts never acquires originals. `BundleDeliveryEnabled` gates new
+preparation only; retained receipts remain subject to authorization and rights.
+
+The `litradock.bundle` version 1 JSON contains typed research and ordered part
+lengths/SHA256/file associations. Unique originals are greedily assigned in member
+order, never splitting a file; every record alias is independently revalidated.
+Limits: 128 MiB originals per snapshot; 8 MiB originals/17 MiB ZIP per part;
+4 MiB raw metadata read budget/8 MiB saved document. Existing whole-plan limits
+remain. Preparation/parts share one archive slot. Capacity errors never truncate
+archives. Parts regenerate from exact originals, with no archive/temp storage.
+
+GET `/{snapshotID}/parts/{number}` accepts one inclusive `Range: bytes=start-end`
+with exact quoted SHA256 `If-Match`: 206/Content-Range on success, 416/412 on
+invalid range/validator, 409 on changed rights/originals, 410 after expiry.
+The UI checks complete length/SHA256 before browser handoff, shows actual bytes,
+and retains one partial part in this tab for explicit Retry. Scope changes or
+reopening discard tentative bytes. Browser handoff does not prove disk persistence;
+multiple downloads may require browser permission. No automatic source requests.
+
+Stop the application before `migrate-bundles` (schema 5 to 6) and take a verified
+paired database/configuration/source backup. `rollback-empty-bundles` refuses any
+receipt. On populated schema 6 retain a compatible binary and disable preparation;
+never run a schema-5-only binary over schema 6. `prune-bundle-snapshots` removes
+expired payloads but retains UUID tombstones to prevent accidental resubmission.
+Snapshots expire in 24 hours. Metadata quotas: 16 MiB/library, 64 MiB globally,
+20 active snapshots/plan, 4096 global receipts. Tombstone removal requires a
+separately qualified retention decision; exhaustion needs operator action.

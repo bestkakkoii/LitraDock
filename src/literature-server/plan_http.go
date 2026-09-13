@@ -33,6 +33,10 @@ func (s *server) planRoutes(w http.ResponseWriter, r *http.Request, ctx context.
 		reply(w, 404, nil)
 		return true
 	}
+	if len(parts) >= 6 && parts[5] == "bundles" {
+		s.bundleRoutes(w, r, ctx, library, parts[4], parts)
+		return true
+	}
 	if len(parts) == 6 && parts[5] == "exports" && r.Method == "POST" {
 		s.planExportHTTP(w, r, ctx, library, parts[4])
 		return true

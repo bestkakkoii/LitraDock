@@ -6,7 +6,8 @@
     "test": "node browser-regression.mjs",
     "test:plans": "node plan-browser-regression.mjs",
     "test:multirun": "node multirun-browser-regression.mjs",
-    "test:continuation": "node continuation-browser-regression.mjs"
+    "test:continuation": "node continuation-browser-regression.mjs",
+    "test:bundles": "node bundle-browser-regression.mjs"
   },
   "dependencies": {
     "fflate": "0.8.3",
