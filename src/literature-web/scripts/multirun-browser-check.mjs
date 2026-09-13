@@ -120,6 +120,9 @@ const server = http.createServer(async (req, res) => {
       } else res.end(data);
       return;
     }
+    // New read-only snapshot catalog is not a plan-detail request. This
+    // independent older workload has no prepared snapshots or bundle mutations.
+    if (route.endsWith("/bundles") && req.method === "GET") return reply({ items: [], total: 0 });
     if (route.includes("/plans/")) {
       if (failedDetail) return reply({ error: "SYNTHETIC known receipt, detail unavailable" }, 503);
       const id = route.split("/").at(-1); reads.push(id);
