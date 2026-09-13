@@ -162,6 +162,10 @@ func (s *server) nativeRoutes(w http.ResponseWriter, r *http.Request, ctx contex
 			return true
 		}
 		if input.Format == "zip" && input.BatchID != "" && input.RunID == "" {
+			if !s.admitBundle(w) {
+				return true
+			}
+			defer s.bundleBusy.Store(false)
 			b, e := s.exportBundle(ctx, library, input.BatchID)
 			if e != nil {
 				reply(w, 409, map[string]string{"error": e.Error()})

@@ -77,7 +77,7 @@ def negatives(d):
     x=copy.deepcopy(d); x["records"][1]=copy.deepcopy(x["records"][0]); mutations.append(x)
     x=copy.deepcopy(d); x["records"][0]["password"]="forbidden"; mutations.append(x)
     x=copy.deepcopy(d); x["records"][0]["publication"].pop("abstract"); mutations.append(x)
-    x=copy.deepcopy(d); x["queryContexts"][0]["retrievalComplete"]=True; mutations.append(x)
+    x=copy.deepcopy(d); x["queryContexts"][0]["retrievalComplete"]=not x["queryContexts"][0]["retrievalComplete"]; mutations.append(x)
     for x in mutations:
         try: validate(x)
         except (AssertionError, KeyError): continue

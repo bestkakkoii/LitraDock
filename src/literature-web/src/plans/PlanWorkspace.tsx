@@ -3,6 +3,7 @@ import { sessionGeneration } from "../api";
 import { SourceLinks } from "../components/ArticleCard";
 import { Phase, PlanAction, phases } from "./api";
 import { emptyPlanState, PlanController } from "./controller";
+import { PlanExports } from "./PlanExports";
 
 const labels: Record<Phase, string> = {
   waiting: "Waiting", queued: "Queued", running: "Running", completed: "Acquired on server",
@@ -20,17 +21,21 @@ export function PlanWorkspace(props: Props) {
   const controller = useRef<PlanController | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const cancelButton = useRef<HTMLButtonElement>(null);
+  const exportScope = useRef(new AbortController());
+  const retireExports = () => { exportScope.current.abort(); exportScope.current = new AbortController(); };
   useLayoutEffect(() => {
+    retireExports();
     const model = new PlanController(props.library, props.runID, props.generation, setState);
-    const stop = () => { model.dispose(); setState(emptyPlanState()); };
+    const stop = () => { exportScope.current.abort(); model.dispose(); setState(emptyPlanState()); };
     controller.current = model;
     props.scopeSignal.addEventListener("abort", stop);
     if (!props.scopeSignal.aborted) void model.catalog();
     else stop();
-    return () => { props.scopeSignal.removeEventListener("abort", stop); model.dispose(); controller.current = null; };
+    return () => { exportScope.current.abort(); props.scopeSignal.removeEventListener("abort", stop); model.dispose(); controller.current = null; };
   }, [props.library, props.runID, props.generation, props.scopeSignal]);
   useLayoutEffect(() => {
     const id = props.openRequest?.id;
+    if (id && id !== controller.current?.state.page?.plan.planID) retireExports();
     if (id && !props.scopeSignal.aborted) void controller.current?.read(id).then(confirmed => {
       if (confirmed && !props.scopeSignal.aborted && props.generation === sessionGeneration()) props.onOpened?.(id);
     });
@@ -47,6 +52,7 @@ export function PlanWorkspace(props: Props) {
   const open = (id: string) => {
     if (!id || !current()) return;
     props.onPlanChange();
+    if (id !== plan?.planID) retireExports();
     setConfirmCancel(false);
     void controller.current?.read(id);
   };
@@ -58,6 +64,7 @@ export function PlanWorkspace(props: Props) {
       onClick={() => {
         if (!current()) return;
         props.onPlanChange();
+        retireExports();
         setConfirmCancel(false);
         void controller.current?.create(props.selectedIDs);
       }}>Create processing plan ({props.selectedIDs.length}/100)</button>
@@ -92,6 +99,9 @@ export function PlanWorkspace(props: Props) {
       </dl>
       <p>{plan.retryEligibleCount} eligible for explicit retry. Each retry action processes only the next eligible child group, up to 10 items. {page.items.filter(item => item.downloadAvailable).length} of {page.items.length} items on this page currently available to save.</p>
       <p className="muted">Acquired means stored on the server. Current rights or integrity checks may prevent saving a previously acquired original.</p>
+      <PlanExports key={`${props.generation}:${props.library}:${props.runID}:${plan.planID}`}
+        library={props.library} runID={props.runID} generation={props.generation} plan={plan}
+        scopeSignal={props.scopeSignal} planSignal={exportScope.current.signal} />
       <div className="plan-actions">
         {(["pause", "resume", "retry", "cancel"] as const).map(action => <button key={action} className="secondary"
           disabled={state.busy || !!state.pending || !plan.allowedActions.includes(action) || (!props.enabled && (action === "resume" || action === "retry"))}
@@ -124,7 +134,6 @@ export function PlanWorkspace(props: Props) {
         <span>{page.total ? page.offset + 1 : 0}–{page.offset + page.items.length} of {page.total} selected records</span>
         <button className="secondary" disabled={state.busy || page.items.length === 0 || page.offset + page.items.length >= page.total} onClick={() => void controller.current?.read(plan.planID, page.offset + page.limit)}>Next plan items</button>
       </div>
-      <p className="muted">Plan-wide export is unavailable. Open a child batch to save its available PDF or XML originals and ZIP, or export XLSX/CSV. No publisher account login is provided.</p>
     </>}
   </section>;
 }

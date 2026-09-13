@@ -25,7 +25,7 @@ export type CreatePlan = { requestID: string; runID: string; searchIDs: string[]
 export type ControlPlan = { requestID: string; expectedRevision: number; value: PlanAction };
 export type Receipt = { planID: string; revision: number; state: string; selectedCount?: number; affectedCount?: number };
 
-function validateSummary(plan: PlanSummary) {
+export function validateSummary(plan: PlanSummary) {
   if (!plan || !plan.planID || !Number.isInteger(plan.revision) || plan.revision < 1 ||
     !Number.isInteger(plan.selectedCount) || plan.selectedCount < 1 || plan.selectedCount > 100 ||
     !Array.isArray(plan.allowedActions) || !plan.counts || !plan.admission ||

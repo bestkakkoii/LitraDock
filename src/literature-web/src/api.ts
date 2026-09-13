@@ -99,10 +99,19 @@ export const setSession = (value: Session) => {
   csrf = value.csrf;
 };
 export class ApiError extends Error {
-  constructor(public readonly status: number, message: string) {
+  constructor(public readonly status: number, message: string, public readonly retryAfter?: number) {
     super(message);
     this.name = "ApiError";
   }
+}
+// Bounded advisory, never a retry scheduler. Ignore malformed, past or excessive
+// Retry-After values rather than exposing arbitrary header text to the UI.
+function retryAfterSeconds(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = /^\d+$/.test(value) ? Number(value) :
+    /^[A-Za-z]{3}, \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(value)
+      ? Math.ceil((Date.parse(value) - Date.now()) / 1000) : NaN;
+  return Number.isFinite(seconds) && seconds >= 0 && seconds <= 86400 ? seconds : undefined;
 }
 function assertRequestCurrent(expected: number, signal?: AbortSignal | null) {
   if (expected !== generation || signal?.aborted)
@@ -186,7 +195,8 @@ export async function requestBlob(
       clearSession();
       throw new ApiError(401, "Your session has expired. Please sign in again.");
     }
-    throw new ApiError(response.status, `Download unavailable (HTTP ${response.status}).`);
+    throw new ApiError(response.status, `Download unavailable (HTTP ${response.status}).`,
+      response.status === 429 ? retryAfterSeconds(response.headers?.get("Retry-After") ?? null) : undefined);
   }
   const blob = await response.blob();
   assertRequestCurrent(expectedGeneration, init.signal);

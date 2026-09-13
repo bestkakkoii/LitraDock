@@ -188,6 +188,45 @@ try {
     }
     await page.setViewportSize({width:1280,height:900});
   });
+  await check('whole-plan-device-ZIP-JSON-all-37-members-across-four-children',async()=>{
+    const before=JSON.stringify({planPosts,controls,searchPosts,batchPosts});
+    const expected=await getPlan();
+    const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'native-plan-export-'));
+    try {
+      const saved=[];
+      for(const [label,format] of [['Export plan metadata JSON','json'],['Save plan originals ZIP','zip']]){
+        const pending=page.waitForEvent('download');
+        await plans.getByRole('button',{name:label,exact:true}).click();
+        const download=await pending;assert(download.suggestedFilename().endsWith('.'+format));
+        const file=path.join(temporary,'plan.'+format);await download.saveAs(file);saved.push(file);
+      }
+      const standalone=JSON.parse(fs.readFileSync(saved[0],'utf8'));
+      const zip=unzipSync(fs.readFileSync(saved[1]));const manifest=JSON.parse(Buffer.from(zip['manifest.json']).toString());
+      for(const d of [standalone,manifest]){
+        assert.equal(d.plan.planID,planID);assert.equal(d.counts.members,37);
+        assert.deepEqual(d.items.map(x=>x.searchId),selected);
+        assert.deepEqual(d.research.records.map(x=>x.searchId),selected);
+        assert.equal(d.research.queryContexts[0].providerMatches,25001);
+        assert.equal(d.research.queryContexts[0].retrievedRecords,100);
+        assert.equal(d.research.queryContexts[0].retrievalComplete,false);
+        for(let n=0;n<37;n++)assert.equal(d.items[n].phase,expected.items[n].phase);
+      }
+      assert.equal(standalone.originalsRevalidated,false);assert.equal(standalone.counts.includedRecords,null);
+      assert.equal(manifest.counts.includedRecords,2);assert.equal(manifest.counts.uniqueOriginals,2);assert.equal(manifest.counts.unresolvedRecords,35);
+      const seen=new Set();
+      for(const item of manifest.items.filter(x=>x.file)){
+        const record=manifest.research.records.find(x=>x.searchId===item.searchId),pmid=record.identifiers.pmid;
+        assert(!seen.has(pmid));seen.add(pmid);assert.equal(hash(zip[item.file]),expectedOriginals.get(pmid).sha256);
+        assert.equal(item.original.format,'XML');assert.equal(item.original.kind,'source_original');
+      }
+      assert.equal(seen.size,2);
+      assert(manifest.items.filter(x=>!x.file).every(x=>x.availabilityReason));
+      const result=execFileSync(process.env.NATIVE_WORKBOOK_PYTHON || 'python3',[fileURLToPath(new URL('./verify-plan-export.py',import.meta.url)),...saved,'--negative-controls'],{encoding:'utf8',windowsHide:true});
+      assert.equal(JSON.parse(result).pass,true);
+      assert.equal(JSON.stringify({planPosts,controls,searchPosts,batchPosts}),before,'export must not start/control processing');
+      for(const width of [390,1280]){await page.setViewportSize({width,height:900});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1));}
+    }finally{fs.rmSync(temporary,{recursive:true,force:true});}
+  });
   await check('child-ownership-controls-and-exact-downloads',async()=>{
     const p=await getPlan();const child=p.items.find(x=>x.downloadAvailable).childBatchID;
     await plans.getByRole('button',{name:'Open child batch '+child,exact:true}).first().click();

@@ -191,7 +191,7 @@ func planPhase(parent string, child *string, cancelled bool) (string, error) {
 	case "failed", "transient", "rate_wait":
 		return "retry", nil
 	}
-	return "", errors.New("Unknown persisted acquisition state.")
+	return "", exportInvalid("Unknown persisted acquisition state.")
 }
 func (s *server) loadPlan(ctx context.Context, tx pgx.Tx, library, id string) (planSummary, []planItem, error) {
 	p := planSummary{Counts: map[string]int{"waiting": 0, "queued": 0, "running": 0, "completed": 0, "held": 0, "retry": 0, "paused": 0, "cancelled": 0}, AllowedActions: []string{}}
@@ -223,12 +223,12 @@ func (s *server) loadPlan(ctx context.Context, tx pgx.Tx, library, id string) (p
 		return p, nil, err
 	}
 	if len(items) < 1 || len(items) > 100 {
-		return p, nil, errors.New("Invalid persisted plan membership.")
+		return p, nil, exportInvalid("Invalid persisted plan membership.")
 	}
 	for n := range items {
 		i := &items[n]
 		if i.ChildBatchID != nil && i.AcquisitionState == nil {
-			return p, nil, errors.New("Missing child item.")
+			return p, nil, exportInvalid("Missing child item.")
 		}
 		i.Phase, err = planPhase(p.State, i.AcquisitionState, i.cancelled)
 		if err != nil {

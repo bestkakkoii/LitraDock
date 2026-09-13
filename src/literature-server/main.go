@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -30,6 +31,7 @@ type config struct {
 	BlockedPMCIDs                                                    []string
 }
 type server struct {
+	bundleBusy atomic.Bool
 	native     bool
 	db         *pgxpool.Pool
 	cfg        config

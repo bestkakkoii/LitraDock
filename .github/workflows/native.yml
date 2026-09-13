@@ -2,7 +2,7 @@ name: Native candidate
 on:
   workflow_dispatch:
   push:
-    branches: [native-demo-003, native-demo-004, native-demo-005, native-demo-006, native-demo-007, native-demo-008]
+    branches: [native-demo-003, native-demo-004, native-demo-005, native-demo-006, native-demo-007, native-demo-008, native-demo-009]
 permissions:
   contents: read
 jobs:
@@ -46,6 +46,7 @@ jobs:
           LITRADOCK_NATIVE_TEST: 'yes'
           LITRADOCK_GO_CONFIG: ${{ runner.temp }}/native-test.json
           NATIVE_WORKBOOK_TEST_OUTPUT: ${{ runner.temp }}/native-workbook
+          NATIVE_PLAN_EXPORT_TEST_OUTPUT: ${{ runner.temp }}/native-plan-export
           NATIVE_STRUCTURED_TEST_OUTPUT: ${{ runner.temp }}/native-structured
         run: |
           go test -count=1 -v ./...
@@ -54,6 +55,8 @@ jobs:
         run: |
           python3 tests/native-browser/verify-structured.py "$RUNNER_TEMP/native-structured/synthetic.json" "$RUNNER_TEMP/native-structured/synthetic.jsonl" --synthetic --negative-controls
           python3 tests/native-browser/verify-structured.py "$RUNNER_TEMP/native-structured/postgres-synthetic.json" "$RUNNER_TEMP/native-structured/postgres-synthetic.jsonl" --negative-controls
+      - name: Independent whole-plan ZIP and typed metadata controls
+        run: python3 tests/native-browser/verify-plan-export.py "$RUNNER_TEMP/native-plan-export/plan-synthetic.json" "$RUNNER_TEMP/native-plan-export/plan-synthetic.zip" --synthetic --negative-controls
       - name: Independent workbook reader and mutation controls
         run: |
           python3 -m venv "$RUNNER_TEMP/workbook-reader"
@@ -88,6 +91,9 @@ jobs:
       - name: Compiled structured download transport controls
         working-directory: src/literature-web
         run: node scripts/structured-browser-check.mjs
+      - name: Compiled whole-plan export transport controls
+        working-directory: src/literature-web
+        run: node scripts/plan-export-browser-check.mjs
       - name: Fresh native PostgreSQL browser database
         env:
           PGPASSWORD: synthetic-ci-only

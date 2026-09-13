@@ -1,0 +1,15 @@
+# ADR 0017: consistent, bounded whole-plan original exports
+
+Status: implemented candidate; deployment requires scoped qualification.
+
+Processing plans contain up to 100 saved records spread across child batches. Requiring a separate export from every child obscures overall membership and unresolved outcomes. Add one explicit plan ZIP request and one metadata JSON request, retaining native schema 3 and all existing child export formats.
+
+The plan export uses one PostgreSQL read-only repeatable-read transaction for membership, phase counts, typed research metadata, source evidence and selected original bytes. The existing typed research serializer is shared through a transaction-aware helper; existing run/batch version 1 output is preserved. A versioned plan manifest associates every record with its historical state and either a validated archive entry or a specific unavailable/not-acquired outcome. Metadata-only exports explicitly do not revalidate originals.
+
+Only each item's selected original hash in the requested format is eligible for the ZIP. Retained other-version descriptors remain visible in metadata, but are not implicitly included. Validate every record's own identifiers and grant evidence before deduplicating by exact SHA256 and format; identical media cannot transfer a permission grant between records. Preserve source bytes, deposit version, source/rights URI and hash. Do not reconstruct PDFs or make provider requests.
+
+Keep 32 MiB unique original bytes, 37 MiB ZIP output, existing individual parser limits, 8 MiB metadata output and the bounded request deadline. Preflight stored byte lengths, load and validate one original association at a time, and use ZIP Store to avoid recompression work. A shared HTTP ZIP slot covers child and plan exports until response writing finishes. Bounded in-memory construction avoids temporary artifacts and permits failures before attachment headers; it does not establish a hard maximum process RSS for every parser input. Actual constrained-host measurements remain a qualification gate.
+
+A corrupt, missing or restricted original produces an explicit unresolved manifest entry while preserving historical acquisition. A size, consistency or deadline failure returns no claimed complete attachment. Membership capacity and byte capacity are separate: 100 selected records do not imply that 100 PDFs fit. Existing metadata, child ZIP and individual Save links remain available on overflow. Partitioned archives or bounded disk spooling/streaming are the next scale improvement; raising limits without measured memory, disk, concurrency and cleanup evidence is rejected.
+
+No database migration, source-policy expansion, dependency or export scheduler is introduced. A qualified code-only rollback can retain schema 3 and current research data. New export routes require the existing authenticated library ownership, CSRF, admission and client generation/download fences. Export, polling and reopening never admit or retry acquisition.
