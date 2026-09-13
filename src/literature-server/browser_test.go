@@ -82,7 +82,8 @@ func TestBrowserServer(t *testing.T) {
 	if _, err = db.Exec(ctx, nativeSchema); err != nil {
 		t.Fatal(err)
 	}
-	multirun := os.Getenv("LITRADOCK_MULTIRUN_BROWSER_TEST") == "yes"
+	continuation := os.Getenv("LITRADOCK_CONTINUATION_BROWSER_TEST") == "yes"
+	multirun := os.Getenv("LITRADOCK_MULTIRUN_BROWSER_TEST") == "yes" || continuation
 	if multirun {
 		tx, err := db.Begin(ctx)
 		if err != nil {
@@ -91,6 +92,12 @@ func TestBrowserServer(t *testing.T) {
 		if err = migrateMultirun(ctx, tx, false); err != nil {
 			tx.Rollback(ctx)
 			t.Fatal(err)
+		}
+		if continuation {
+			if err = migrateContinuation(ctx, tx, false); err != nil {
+				tx.Rollback(ctx)
+				t.Fatal(err)
+			}
 		}
 		if err = tx.Commit(ctx); err != nil {
 			t.Fatal(err)
@@ -119,6 +126,7 @@ func TestBrowserServer(t *testing.T) {
 	cfg.LocalTest, cfg.SearchEnabled, cfg.AcquisitionEnabled = true, true, true
 	cfg.PlanEnabled = os.Getenv("LITRADOCK_PLAN_BROWSER_TEST") == "yes" || multirun
 	cfg.SavedSetEnabled = multirun
+	cfg.SearchContinuationEnabled = continuation
 	if cfg.PlanEnabled {
 		for i := 3; i <= 100; i++ {
 			cfg.BlockedPMCIDs = append(cfg.BlockedPMCIDs, fmt.Sprintf("PMC990002%03d", i))
@@ -139,6 +147,36 @@ func TestBrowserServer(t *testing.T) {
 	}
 	planRateLimited := false
 	transport := nativeTransport(func(r *http.Request) (*http.Response, error) {
+		if continuation {
+			f, e := os.OpenFile(os.Getenv("NATIVE_BROWSER_INPUT")+".source-requests", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+			if e != nil {
+				return nil, e
+			}
+			entry, _ := json.Marshal(map[string]string{"path": r.URL.Path, "ids": r.URL.Query().Get("id"), "query": r.URL.Query().Get("term")})
+			_, e = f.Write(append(entry, '\n'))
+			f.Close()
+			if e != nil {
+				return nil, e
+			}
+		}
+		if continuation && strings.HasSuffix(r.URL.Path, "/efetch.fcgi") && r.URL.Query().Get("id") != "" && strings.Split(r.URL.Query().Get("id"), ",")[0] == "990000101" {
+			base := os.Getenv("NATIVE_BROWSER_INPUT")
+			if _, e := os.Stat(base + ".metadata-hold"); e == nil {
+				if e = os.WriteFile(base+".metadata-entered", []byte("synthetic response held"), 0600); e != nil {
+					return nil, e
+				}
+				for {
+					if _, e = os.Stat(base + ".metadata-release"); e == nil {
+						break
+					}
+					select {
+					case <-r.Context().Done():
+						return nil, r.Context().Err()
+					case <-time.After(50 * time.Millisecond):
+					}
+				}
+			}
+		}
 		if cfg.PlanEnabled && r.URL.Host == "pmc.ncbi.nlm.nih.gov" {
 			for {
 				if _, err := os.Stat(os.Getenv("NATIVE_BROWSER_INPUT") + ".source-release"); err == nil {
@@ -185,6 +223,13 @@ func TestBrowserServer(t *testing.T) {
 			if multirun && r.URL.Query().Get("term") == "SYNTHETIC_SECOND_RUN" {
 				body = `<eSearchResult><Count>10001</Count><IdList><Id>990000002</Id><Id>990000003</Id></IdList><QueryTranslation>SYNTHETIC second query</QueryTranslation></eSearchResult>`
 			}
+			if continuation && r.URL.Query().Get("term") == "SYNTHETIC_CONTINUATION_25000" {
+				body = `<eSearchResult><Count>25000</Count><IdList>`
+				for i := 1; i <= 1000; i++ {
+					body += fmt.Sprintf("<Id>990%06d</Id>", i)
+				}
+				body += `</IdList><QueryTranslation>SYNTHETIC frozen membership only</QueryTranslation></eSearchResult>`
+			}
 		case r.URL.Host == "eutils.ncbi.nlm.nih.gov" && strings.HasSuffix(r.URL.Path, "/efetch.fcgi"):
 			body = `<PubmedArticleSet>`
 			for _, id := range strings.Split(r.URL.Query().Get("id"), ",") {
@@ -211,6 +256,7 @@ func TestBrowserServer(t *testing.T) {
 		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/xml"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
 	s := &server{native: true, db: db, cfg: cfg, slots: make(chan struct{}, 2), loginGate: make(chan struct{}, 1), provider: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	s.continuation = continuation
 	service := &http.Server{Handler: s, ReadHeaderTimeout: 5 * time.Second}
 	defer service.Close()
 	go s.worker(ctx)

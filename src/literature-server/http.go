@@ -101,7 +101,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return 10
 			}
 			return 0
-		}(), "pdfEnabled": s.native && s.cfg.PDFEnabled && s.cfg.AcquisitionEnabled, "pdfPolicySummary": pdfPolicySummary, "planEnabled": s.native && s.cfg.PlanEnabled, "savedSetEnabled": s.native && s.cfg.PlanEnabled && s.cfg.SavedSetEnabled, "planSelectionLimit": 100, "planGroupLimit": 10, "acquisitionEnabled": s.cfg.AcquisitionEnabled, "source": s.cfg.Revision})
+		}(), "searchContinuationEnabled": s.continuation && s.cfg.SearchContinuationEnabled && s.cfg.SearchEnabled, "searchWindowLimit": searchWindowLimit, "pdfEnabled": s.native && s.cfg.PDFEnabled && s.cfg.AcquisitionEnabled, "pdfPolicySummary": pdfPolicySummary, "planEnabled": s.native && s.cfg.PlanEnabled, "savedSetEnabled": s.native && s.cfg.PlanEnabled && s.cfg.SavedSetEnabled, "planSelectionLimit": 100, "planGroupLimit": 10, "acquisitionEnabled": s.cfg.AcquisitionEnabled, "source": s.cfg.Revision})
 		return
 	}
 	if !strings.HasPrefix(r.URL.Path, "/api/") {
@@ -280,6 +280,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.native && s.nativeRoutes(w, r, ctx, library, parts) {
 		return
 	}
+	if s.native && s.continuationRoute(w, r, ctx, library, parts) {
+		return
+	}
 	if len(parts) == 3 && r.Method == "GET" {
 		v, e := s.catalog(ctx, library, offset)
 		if e != nil {
@@ -290,19 +293,24 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 4 && parts[3] == "search" && r.Method == "POST" {
-		if !s.cfg.SearchEnabled {
-			reply(w, 409, map[string]string{"error": "New searches are disabled by the operator; saved results remain available."})
-			return
-		}
 		var input struct {
-			Query string
-			Limit int
+			Query     string
+			Limit     int
+			RequestID string
 		}
 		if !decode(w, r, &input) {
 			return
 		}
-		id, e := s.queueSearch(ctx, library, input.Query, input.Limit)
+		if !s.cfg.SearchEnabled && !(s.continuation && input.RequestID != "") {
+			reply(w, 409, map[string]string{"error": "New searches are disabled; saved results remain available."})
+			return
+		}
+		id, e := s.queueSearch(ctx, library, input.Query, input.Limit, input.RequestID)
 		if e != nil {
+			if s.continuation && (s.cfg.SearchContinuationEnabled || input.RequestID != "") {
+				planReply(w, nil, e)
+				return
+			}
 			reply(w, 409, map[string]string{"error": "Search needs a query up to 2000 characters, limit 1–100, and available candidate capacity."})
 			return
 		}
@@ -318,35 +326,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		runs, e := s.rows(ctx, "SELECT run_id,input,total,fetched,state,reason FROM ld_runs WHERE library_id=$1 AND run_id=$2", library, parts[4])
-		if e != nil {
-			reply(w, 503, nil)
-			return
-		}
-		if len(runs) != 1 {
-			reply(w, 404, nil)
-			return
-		}
-		var total int
-		if s.db.QueryRow(ctx, "SELECT count(*) FROM ld_results WHERE library_id=$1 AND run_id=$2", library, parts[4]).Scan(&total) != nil {
-			reply(w, 503, nil)
-			return
-		}
-		rows, e := s.rows(ctx, "SELECT r.metadata FROM ld_records r JOIN ld_results x USING(library_id,search_id) WHERE x.library_id=$1 AND x.run_id=$2 ORDER BY x.rank LIMIT $4 OFFSET $3", library, parts[4], offset, pageLimit)
-		if e != nil {
-			reply(w, 503, nil)
-			return
-		}
-		articles := []any{}
-		for _, r := range rows {
-			var a any
-			if json.Unmarshal([]byte(r["metadata"].(string)), &a) != nil {
-				reply(w, 503, nil)
-				return
-			}
-			articles = append(articles, a)
-		}
-		reply(w, 200, map[string]any{"records": articles, "run": runs[0], "total": total, "offset": offset, "limit": pageLimit})
+		page, e := s.savedRunPage(ctx, library, parts[4], offset, pageLimit)
+		planReply(w, page, e)
 		return
 	}
 	reply(w, 501, map[string]string{"error": "This isolated Go migration slice supports login, libraries and search only; acquisition, original download, exports and recovery remain on the current pilot."})

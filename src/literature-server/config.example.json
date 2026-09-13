@@ -14,5 +14,6 @@
   "BlockedPMCIDs": [],
   "PlanEnabled": false,
   "PDFEnabled": false,
-  "SavedSetEnabled": false
+  "SavedSetEnabled": false,
+  "SearchContinuationEnabled": false
 }

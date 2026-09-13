@@ -118,7 +118,7 @@ func nativeOperator(ctx context.Context, verb string) error {
 			return e
 		}
 	}
-	if verb != "bootstrap" && verb != "provision" && verb != "transition-shared-trial" && verb != "migrate-plans" && verb != "rollback-empty-plans" && verb != "migrate-pdf" && verb != "rollback-empty-pdf" && verb != "migrate-multirun" && verb != "rollback-empty-multirun" {
+	if verb != "bootstrap" && verb != "provision" && verb != "transition-shared-trial" && verb != "migrate-plans" && verb != "rollback-empty-plans" && verb != "migrate-pdf" && verb != "rollback-empty-pdf" && verb != "migrate-multirun" && verb != "rollback-empty-multirun" && verb != "migrate-search-continuation" && verb != "rollback-empty-search-continuation" {
 		return errors.New("unsupported operator command")
 	}
 	tx, e := db.Begin(ctx)
@@ -140,6 +140,10 @@ func nativeOperator(ctx context.Context, verb string) error {
 		if _, e = tx.Exec(ctx, nativeSchema); e != nil {
 			return e
 		}
+	} else if verb == "migrate-search-continuation" || verb == "rollback-empty-search-continuation" {
+		if e = migrateContinuation(ctx, tx, verb == "rollback-empty-search-continuation"); e != nil {
+			return e
+		}
 	} else if verb == "migrate-multirun" || verb == "rollback-empty-multirun" {
 		if e = migrateMultirun(ctx, tx, verb == "rollback-empty-multirun"); e != nil {
 			return e
@@ -154,7 +158,7 @@ func nativeOperator(ctx context.Context, verb string) error {
 		}
 	} else {
 		var version int
-		if e = tx.QueryRow(ctx, "SELECT max(version) FROM native_schema").Scan(&version); e != nil || (version != 3 && version != 4 && !(verb == "transition-shared-trial" && (version == 1 || version == 2))) {
+		if e = tx.QueryRow(ctx, "SELECT max(version) FROM native_schema").Scan(&version); e != nil || (version != 3 && version != 4 && version != 5 && !(verb == "transition-shared-trial" && (version == 1 || version == 2))) {
 			return errors.New("native schema required")
 		}
 		if verb == "transition-shared-trial" {

@@ -1,4 +1,5 @@
 import { readTransfer, TransferOptions } from "./transfer";
+import { Continuation, validateContinuation } from "./continuation/api";
 export type Session = { csrf: string };
 export type Library = { library_id: string; name: string };
 export type Run = {
@@ -24,6 +25,7 @@ export type Article = Record<string, unknown> & {
   DoiUri?: string;
 };
 export type RunPage = {
+  continuation?: Continuation | null;
   records: Article[];
   run: Run;
   total: number;
@@ -39,6 +41,8 @@ export type LibraryPage = {
   limit: number;
 };
 export type ServiceInfo = {
+  searchContinuationEnabled?: boolean;
+  searchWindowLimit?: number;
   savedSetEnabled?: boolean;
   pdfEnabled?: boolean;
   pdfPolicySummary?: string;
@@ -249,12 +253,16 @@ export const api = {
       body: JSON.stringify({ query, limit }),
       signal,
     }, g),
-  run: (library: string, run: string, offset: number, g = generation, limit = 100, signal?: AbortSignal) =>
-    request<RunPage>(
+  run: async (library: string, run: string, offset: number, g = generation, limit = 100, signal?: AbortSignal) => {
+    const page = await request<RunPage>(
       `/api/libraries/${encodeURIComponent(library)}/runs/${encodeURIComponent(run)}?offset=${encodeURIComponent(offset)}&limit=${encodeURIComponent(limit)}`,
       { signal },
       g,
-    ),
+    );
+    if (page.run.run_id !== run || page.offset !== offset) throw new Error("Saved page did not match the requested run or offset.");
+    if (page.continuation != null) validateContinuation(page.continuation, run);
+    return page;
+  },
   createBatch: (library: string, requestID: string, searchIDs: string[], g = generation, signal?: AbortSignal, format?: "xml" | "pdf") =>
     request<{ id: string }>(
       `/api/libraries/${encodeURIComponent(library)}/batches`,

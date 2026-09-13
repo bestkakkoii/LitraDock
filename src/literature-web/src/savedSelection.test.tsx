@@ -83,3 +83,47 @@ it.each(["run", "library"])("a held old-%s enumeration cannot replace a newer co
   await act(async () => release(JSON.stringify(page(11))));
   expect(selection.selected.size).toBe(1); expect(selection.error).toBe(""); expect(selection.loading).toBe(false);
 });
+it("continuation preserves manual subset through running/ready and growth; >100 selects only an explicit visible page", async () => {
+  (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+  let count = 1;
+  const fetch = vi.fn(async () => new Response(JSON.stringify(page(count)))); vi.stubGlobal("fetch", fetch);
+  host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+  let selection!: ReturnType<typeof useSavedSelection>;
+  const scope = new AbortController();
+  function Harness({ state = "partial", offset = 0 }: { state?: string; offset?: number }) {
+    selection = useSavedSelection("L1", { ...run(count), state }, sessionGeneration(), scope.signal,
+      Array.from({ length: Math.min(count - offset, 25) }, (_, i) => record(offset + i)));
+    return <span>{selection.selected.size}</span>;
+  }
+  await act(async () => root!.render(<Harness />)); expect(selection.selected.size).toBe(1);
+  await act(async () => selection.deselectAll());
+  await act(async () => root!.render(<Harness state="running" />)); expect(selection.selected.size).toBe(0);
+  count = 100; await act(async () => root!.render(<Harness />)); expect(selection.selected.size).toBe(0);
+  await act(async () => selection.selectAll()); expect(selection.selected.size).toBe(100);
+  await act(async () => selection.toggle(record(0))); expect(selection.selected.size).toBe(99);
+  const reads = fetch.mock.calls.length;
+  count = 101; await act(async () => root!.render(<Harness />));
+  expect(selection.selected.size).toBe(99); expect(selection.pageOnly).toBe(true); expect(fetch).toHaveBeenCalledTimes(reads);
+  await act(async () => selection.selectAll()); expect([...selection.selected.keys()]).toEqual(Array.from({ length: 25 }, (_, i) => `SYNTHETIC-${i}`));
+  await act(async () => root!.render(<Harness offset={100} />)); expect(selection.selected.size).toBe(25);
+  await act(async () => selection.selectAll()); expect([...selection.selected.keys()]).toEqual(["SYNTHETIC-100"]);
+  count = 1000; await act(async () => root!.render(<Harness offset={975} />)); expect(selection.selected.size).toBe(1);
+  await act(async () => selection.deselectAll());
+  await act(async () => root!.render(<Harness />)); expect(selection.selected.size).toBe(0); expect(fetch).toHaveBeenCalledTimes(reads);
+});
+it("a held same-run enumeration cannot widen checks or publish old error after a newer membership revision", async () => {
+  (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+  let release!: (body: string) => void;
+  vi.stubGlobal("fetch", vi.fn(async () => count === 1 ? new Response(JSON.stringify(page(1))) : {
+    status: 200, ok: true, text: () => new Promise<string>(resolve => { release = resolve; }),
+  }));
+  let count = 1, selection!: ReturnType<typeof useSavedSelection>;
+  const scope = new AbortController();
+  function Harness() { selection = useSavedSelection("L1", run(count), sessionGeneration(), scope.signal, [record(0)]); return null; }
+  host = document.createElement("div"); document.body.append(host); root = createRoot(host);
+  await act(async () => root!.render(<Harness />)); expect(selection.selected.size).toBe(1);
+  count = 100; await act(async () => root!.render(<Harness />)); expect(selection.loading).toBe(true);
+  count = 101; await act(async () => root!.render(<Harness />)); expect(selection.ready).toBe(true);
+  await act(async () => release(JSON.stringify(page(100))));
+  expect([...selection.selected.keys()]).toEqual(["SYNTHETIC-0"]); expect(selection.error).toBe(""); expect(selection.loading).toBe(false);
+});

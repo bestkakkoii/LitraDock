@@ -1,10 +1,11 @@
-import React, { FormEvent, useEffect, useRef, useState } from "react";
+import React, { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   api,
   Article,
   Library,
   Run,
+  RunPage,
   BatchDetail,
   SavedBatch,
   ServiceInfo,
@@ -22,6 +23,9 @@ import { PlanWorkspace } from "./plans/PlanWorkspace";
 import { TransferOptions, transferLabel } from "./transfer";
 import { SearchHistory } from "./components/SearchHistory";
 import { PdfAvailability } from "./components/PdfAvailability";
+import { Continuation } from "./continuation/api";
+import { SearchController, emptySearchState } from "./continuation/controller";
+import { ContinuationPanel } from "./continuation/ContinuationPanel";
 import "./styles.css";
 
 function safeRightsLink(value: unknown): string | null {
@@ -102,7 +106,24 @@ function App() {
     setBatchBusy(false);
     setBatch(null);
   };
-  const selection = useSavedSelection(library, run, sessionGeneration(), planScope.current.signal);
+  const [continuation, setContinuation] = useState<Continuation | null>(null);
+  const [searchState, setSearchState] = useState(emptySearchState);
+  const applySearchPage = useRef<(page: RunPage) => void>(() => {});
+  const searchController = useMemo(() => new SearchController(library, sessionGeneration(), setSearchState,
+    page => applySearchPage.current(page), libraryPlanScope.current.signal), [library, sessionGeneration(), libraryPlanScope.current.signal]);
+  useLayoutEffect(() => {
+    setSearchState(emptySearchState()); setContinuation(null);
+    return () => searchController.dispose();
+  }, [searchController]);
+  applySearchPage.current = page => {
+    runGeneration.current++;
+    if (page.run.run_id !== run?.run_id) { retirePlanScope(); retireChildView(); }
+    setRun(page.run); setContinuation(page.continuation ?? null); setRecords(page.records);
+    setSnapshot(page.run.input); setPageTotal(page.total); setRecordOffset(page.offset); setPageSize(page.limit);
+    setMessage(stateLabel(page.run)); setBusy(false);
+    void refreshHistory();
+  };
+  const selection = useSavedSelection(library, run, sessionGeneration(), planScope.current.signal, records);
   const selected = selection.selected;
   const selectionMaximum = 100;
   const isCurrentBatchOperation = (
@@ -314,6 +335,13 @@ function App() {
       setError("Choose or create a library first.");
       return;
     }
+    if (searchState.pending || searchState.confirmed || searchState.busy) return;
+    if (serviceInfo?.searchContinuationEnabled === true) {
+      runGeneration.current++;
+      await searchController.search(query, limit);
+      return;
+    }
+    searchController.navigate(); setContinuation(null);
     const g = ++runGeneration.current;
     retirePlanScope();
     batchOperation.current += 1;
@@ -374,10 +402,12 @@ function App() {
   };
   const openSaved = async (id: string, offset = 0, size = pageSize) => {
     if (!id || !library) return;
+    searchController.navigate();
     const g = ++runGeneration.current;
     if (id !== run?.run_id) {
       retirePlanScope();
       selection.deselectAll(); setRecords([]); setRun(null); setBatch(null);
+      setContinuation(null);
       batchOperation.current += 1; setBatchBusy(false);
     }
     const expectedSession = sessionGeneration();
@@ -394,6 +424,7 @@ function App() {
       )
         return;
       setRun(page.run);
+      setContinuation(page.continuation ?? null);
       setSnapshot(page.run.input);
       setRecords(page.records);
       setPageTotal(page.total);
@@ -761,22 +792,25 @@ function App() {
                 </select>
               </label>
               <label>
-                Retrieved limit
+                Metadata page limit
                 <select
                   aria-label="Retrieved limit"
                   value={limit}
                   onChange={(e) => setLimit(Number(e.target.value))}
                 >
-                  {[10, 25, 50, 100].map((n) => (
+                  {[5, 10, 25, 50, 100].map((n) => (
                     <option key={n}>{n}</option>
                   ))}
                 </select>
               </label>
-              <button disabled={busy || !library || serviceInfo?.searchEnabled !== true}>
+              <button disabled={busy || searchState.busy || !!searchState.pending || !!searchState.confirmed || !library || serviceInfo?.searchEnabled !== true}>
                 {busy ? "Working…" : "Search PubMed"}
               </button>
             </form>
           </section>
+          {(run || searchState.pending || searchState.confirmed || searchState.busy || searchState.error) && <ContinuationPanel
+            key={`${library}:${sessionGeneration()}:${run?.run_id ?? ""}`} status={continuation} state={searchState} controller={searchController}
+            runID={run?.run_id} visible={records.length} checked={selected.size} />}
           <SearchHistory runs={history} total={historyTotal} offset={historyOffset}
             selectedID={run?.run_id ?? ""} busy={busy} onOpen={id => void openSaved(id)}
             onPage={offset => void refreshHistory(library, offset)} />
@@ -809,9 +843,11 @@ function App() {
           {serviceInfo?.searchEnabled === false && <p className="muted">New searches are temporarily disabled by the operator. Saved results remain available.</p>}
           <section className="selection-toolbar" aria-label="Saved record selection">
             <p aria-live="polite"><strong>{selected.size} selected of {run?.fetched ?? 0} retrieved records</strong> · Provider total: {run?.total ?? 0} matches</p>
-            <p className="muted small">Selection covers the saved search across pages, up to 100 records. All saved records are selected once when the search loads; your changes remain until you choose another run. Nothing is acquired until you click a download or batch action.</p>
+            <p className="muted small">{selection.pageOnly
+              ? "This run has more than 100 saved records. Select all on this page replaces the checked subset with this visible page only; individual checks may span pages, up to 100 records."
+              : "Select all covers the saved search across pages, up to 100 records. Initial saved records are selected once; continuation never automatically checks new rows."} Your changes remain until you choose another run. Nothing is acquired until you click a download or batch action.</p>
             <div className="result-actions">
-              <button className="secondary" disabled={!selection.ready} onClick={selection.selectAll}>Select all</button>
+              <button className="secondary" disabled={!selection.ready} onClick={selection.selectAll}>{selection.pageOnly ? `Select all on this page (${records.length})` : "Select all"}</button>
               <button className="secondary" disabled={!selection.ready || !selected.size} onClick={selection.deselectAll}>Deselect all</button>
             </div>
             {selection.loading && <p role="status">Loading the complete saved record selection… Admission is disabled until this finishes.</p>}
@@ -1054,7 +1090,7 @@ function App() {
           <section className="capability">
             <strong>Batch, download and export</strong>
             <span>
-              Search retrieves up to 100 results per run; each batch processes up to 10 saved records. PDF acquisition requires the current server policy and a permitted repository original; unavailable records retain reasons and source links. Create batch acquires XML, while Download PDFs explicitly requests PDF. Server acquisition is separate from Save XML, Save PDF or ZIP downloads to this device. Existing CSV/XLSX exports remain available. No publisher account login or plan-wide bundle is provided.
+              Search retrieves at most 100 identities per metadata page. New continuation-enabled runs capture an operational window of up to 1,000 identities; each next page requires an explicit request. Legacy runs keep their original saved scope. Each batch processes up to 10 checked saved records. PDF acquisition requires the current server policy and a permitted repository original; unavailable records retain reasons and source links. Create batch acquires XML, while Download PDFs explicitly requests PDF. Server acquisition is separate from downloads to this device. No publisher account login is provided.
             </span>
           </section>
         </section>

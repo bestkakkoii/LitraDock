@@ -364,6 +364,8 @@ func (n *node) directValue(name string) string {
 }
 
 type searchResult struct {
+	Window                      bool
+	Offset                      int
 	Total                       int
 	IDs                         []string
 	Articles                    []map[string]any

@@ -138,7 +138,7 @@ describe("same-origin API client", () => {
       "fetch",
       vi.fn(
         async (path) =>
-          new Response('{"records":[],"run":{"state":"complete"},"total":0}', {
+          new Response('{"records":[],"run":{"run_id":"run?unsafe","state":"complete"},"total":0,"offset":0}', {
             status: 200,
           }),
       ),
@@ -150,7 +150,7 @@ describe("same-origin API client", () => {
   });
   it("preserves the fourth generation argument while sending an optional run page size", async () => {
     setSession({ csrf: "x" });
-    vi.stubGlobal("fetch", vi.fn(async () => new Response('{"records":[],"run":{"state":"complete"},"total":0}', { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn(async () => new Response('{"records":[],"run":{"run_id":"run","state":"complete"},"total":0,"offset":25}', { status: 200 })));
     await api.run("lib", "run", 25, sessionGeneration(), 5);
     expect((fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]).toContain("offset=25&limit=5");
   });

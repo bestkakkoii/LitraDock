@@ -89,9 +89,16 @@ func (s *server) catalog(ctx context.Context, library string, offset int) (any, 
 	out["totals"] = totals
 	return out, nil
 }
-func (s *server) queueSearch(ctx context.Context, library, query string, limit int) (string, error) {
+func (s *server) queueSearch(ctx context.Context, library, query string, limit int, request ...string) (string, error) {
 	if strings.TrimSpace(query) == "" || len([]rune(query)) > 2000 || limit < 1 || limit > 100 {
-		return "", errors.New("invalid query")
+		return "", &planError{400, "A query up to 2000 characters and a metadata page size of 1–100 are required."}
+	}
+	if s.continuation && (s.cfg.SearchContinuationEnabled || len(request) > 0 && request[0] != "") {
+		id := ""
+		if len(request) > 0 {
+			id = request[0]
+		}
+		return s.queueContinuedSearch(ctx, library, query, limit, id)
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -177,7 +184,11 @@ func (s *server) workOne(parent context.Context) {
 	err = s.db.QueryRow(ctx, "SELECT input,requested_limit FROM ld_runs WHERE library_id=$1 AND run_id=$2", c.Library, c.Run).Scan(&c.Query, &c.Limit)
 	var result searchResult
 	if err == nil {
-		if !s.cfg.SearchEnabled {
+		var handled bool
+		handled, result, err = s.continuedSearch(ctx, c)
+		if handled {
+			// The durable window owns source admission, including interrupted attempts.
+		} else if !s.cfg.SearchEnabled {
 			err = &sourceError{"unavailable", "Provider access is disabled for this isolated candidate; no live result fabricated."}
 		} else {
 			result, err = s.search(ctx, c.Query, c.Limit)
@@ -192,6 +203,9 @@ func (s *server) workOne(parent context.Context) {
 		if errors.As(err, &se) {
 			state, reason = se.State, se.Reason
 		}
+		if s.continuation && result.Window {
+			state = continuationFailureState(state)
+		}
 		if parent.Err() != nil {
 			state, reason = "queued", "Service interrupted; unfinished search retained for restart."
 		}
@@ -205,6 +219,9 @@ func (s *server) workOne(parent context.Context) {
 		tag, e := tx.Exec(finish, "UPDATE ld_jobs SET state=$4,reason=$5,lease_token=NULL,lease_until=NULL WHERE library_id=$1 AND job_id=$2 AND lease_token=$3", c.Library, c.Job, c.Lease, state, reason)
 		if e == nil && tag.RowsAffected() == 1 {
 			_, e = tx.Exec(finish, "UPDATE ld_runs SET state=$3,reason=$4 WHERE library_id=$1 AND run_id=$2", c.Library, c.Run, state, reason)
+			if e == nil && s.continuation {
+				_, e = tx.Exec(finish, "UPDATE native_search_windows SET state=$3,revision=revision+1 WHERE library_id=$1 AND run_id=$2", c.Library, c.Run, state)
+			}
 		}
 		if e == nil {
 			_ = tx.Commit(finish)
@@ -225,7 +242,7 @@ func (s *server) saveSearch(ctx context.Context, c claim, result searchResult) e
 		return err
 	}
 	for _, a := range result.Articles {
-		rank := slices.Index(result.IDs, a["Pmid"].(string))
+		rank := result.Offset + slices.Index(result.IDs, a["Pmid"].(string))
 		ids := map[string]string{"pmid": a["Pmid"].(string), "pmcid": a["Pmcid"].(string), "doi": a["Doi"].(string)}
 		id := ""
 		for kind, value := range ids {
@@ -292,15 +309,21 @@ func (s *server) saveSearch(ctx context.Context, c claim, result searchResult) e
 			return err
 		}
 	}
-	state, reason := "complete", ""
-	if len(result.Articles) != result.Total {
-		state = "partial"
-		reason = fmt.Sprintf("Retrieved %d of %d; requested limit %d. Refine the query; remaining records were not retrieved.", len(result.Articles), result.Total, c.Limit)
-	}
-	snapshot, _ := json.Marshal(map[string]any{"SubmittedQuery": result.Query, "Translation": result.Translation, "StartedAt": result.Started, "SourceIds": result.IDs})
-	_, err = tx.Exec(ctx, "UPDATE ld_runs SET total=$3,fetched=$4,state=$5,reason=$6,snapshot=$7 WHERE library_id=$1 AND run_id=$2", c.Library, c.Run, result.Total, len(result.Articles), state, reason, string(snapshot))
-	if err != nil {
-		return err
+	if result.Window {
+		if err = s.finishSearchPage(ctx, tx, c, result); err != nil {
+			return err
+		}
+	} else {
+		state, reason := "complete", ""
+		if len(result.Articles) != result.Total {
+			state = "partial"
+			reason = fmt.Sprintf("Retrieved %d of %d; requested limit %d. Refine the query; remaining records were not retrieved.", len(result.Articles), result.Total, c.Limit)
+		}
+		snapshot, _ := json.Marshal(map[string]any{"SubmittedQuery": result.Query, "Translation": result.Translation, "StartedAt": result.Started, "SourceIds": result.IDs})
+		_, err = tx.Exec(ctx, "UPDATE ld_runs SET total=$3,fetched=$4,state=$5,reason=$6,snapshot=$7 WHERE library_id=$1 AND run_id=$2", c.Library, c.Run, result.Total, len(result.Articles), state, reason, string(snapshot))
+		if err != nil {
+			return err
+		}
 	}
 	_, err = tx.Exec(ctx, "UPDATE ld_jobs SET state='completed',reason='Search metadata saved; source totals and partial status retained.',lease_token=NULL,lease_until=NULL WHERE library_id=$1 AND job_id=$2", c.Library, c.Job)
 	if err != nil {
