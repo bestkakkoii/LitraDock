@@ -67,6 +67,13 @@ func (s *server) controlPlan(ctx context.Context, library, id, requestID, action
 			return receipt, planConflict(block.Reason)
 		}
 	}
+	children, err := tx.Query(ctx, "SELECT batch_id FROM native_batches WHERE library_id=$1 AND plan_id=$2 ORDER BY batch_id FOR UPDATE", library, id)
+	if err != nil {
+		return receipt, err
+	}
+	if _, err = pgx.CollectRows(children, pgx.RowTo[string]); err != nil {
+		return receipt, err
+	}
 	next := "active"
 	affected := 0
 	switch action {
@@ -250,10 +257,29 @@ func (s *server) recoverBatchLeases(ctx context.Context) error {
 	if err = capacityLock(ctx, tx); err != nil {
 		return err
 	}
+	// Recovery is also a lifecycle writer: lock parents and children before items.
+	for _, query := range []string{
+		`SELECT p.plan_id FROM native_plans p WHERE EXISTS(SELECT 1 FROM native_batches b WHERE b.library_id=p.library_id AND b.plan_id=p.plan_id AND b.state='active') ORDER BY p.library_id,p.plan_id FOR UPDATE`,
+		`SELECT batch_id FROM native_batches WHERE state='active' ORDER BY library_id,batch_id FOR UPDATE`,
+	} {
+		rows, e := tx.Query(ctx, query)
+		if e != nil {
+			return e
+		}
+		_, e = pgx.CollectRows(rows, pgx.RowTo[string])
+		if e != nil {
+			return e
+		}
+	}
 	_, err = tx.Exec(ctx, `WITH changed AS (UPDATE native_items SET state=CASE WHEN attempts>=3 THEN 'failed' ELSE 'queued' END,
  reason='Interrupted attempt recovered; prior originals preserved.',lease=NULL,lease_until=NULL
  WHERE state='running' AND lease_until<now() RETURNING library_id,batch_id)
  UPDATE native_plans p SET revision=revision+1,updated_at=now() WHERE EXISTS(SELECT 1 FROM changed c JOIN native_batches b USING(library_id,batch_id) WHERE b.library_id=p.library_id AND b.plan_id=p.plan_id)`)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `UPDATE native_batches b SET state=CASE WHEN EXISTS(SELECT 1 FROM native_items i WHERE i.library_id=b.library_id AND i.batch_id=b.batch_id AND i.state<>'acquired') THEN 'partial' ELSE 'complete' END
+ WHERE b.state='active' AND NOT EXISTS(SELECT 1 FROM native_items i WHERE i.library_id=b.library_id AND i.batch_id=b.batch_id AND i.state IN ('queued','running','paused'))`)
 	if err != nil {
 		return err
 	}

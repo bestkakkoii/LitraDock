@@ -187,10 +187,6 @@ func (s *server) batchOne(parent context.Context) {
 	if e = s.recoverBatchLeases(ctx); e != nil {
 		return
 	}
-	_, e = s.db.Exec(ctx, "UPDATE native_batches b SET state=CASE WHEN EXISTS(SELECT 1 FROM native_items i WHERE i.library_id=b.library_id AND i.batch_id=b.batch_id AND i.state<>'acquired') THEN 'partial' ELSE 'complete' END WHERE b.state='active' AND NOT EXISTS(SELECT 1 FROM native_items i WHERE i.library_id=b.library_id AND i.batch_id=b.batch_id AND i.state IN ('queued','running','paused'))")
-	if e != nil {
-		return
-	}
 	if e = s.admitPlan(ctx); e != nil {
 		return
 	}

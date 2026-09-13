@@ -406,6 +406,117 @@ func TestPlanActualPostgres(t *testing.T) {
 		}
 		cleanPlans()
 	})
+	t.Run("reservation-transfer-rollback-and-last-slot-race", func(t *testing.T) {
+		v := queue(ids[:37])
+		must("CREATE FUNCTION plan_link_fail() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RAISE EXCEPTION ''synthetic transfer interruption''; END'")
+		must("CREATE TRIGGER plan_link_fail BEFORE UPDATE ON native_plan_items FOR EACH ROW EXECUTE FUNCTION plan_link_fail()")
+		if e := s.admitPlan(ctx); e == nil {
+			t.Fatal("half transfer committed")
+		}
+		var children, items int
+		if db.QueryRow(ctx, "SELECT (SELECT count(*) FROM native_batches WHERE library_id=$1),(SELECT count(*) FROM native_items WHERE library_id=$1)", library).Scan(&children, &items) != nil || children != 0 || items != 0 || get(v.PlanID).Counts["waiting"] != 37 {
+			t.Fatal("partial transfer persisted")
+		}
+		must("DROP TRIGGER plan_link_fail ON native_plan_items; DROP FUNCTION plan_link_fail()")
+		cleanPlans()
+		for n := 0; n < 9; n++ {
+			queue(ids)
+		}
+		reserved := queue(ids[:99])
+		start := make(chan struct{})
+		results := make(chan error, 2)
+		go func() { <-start; _, e := s.queueBatch(ctx, library, newUUID(), ids[:1]); results <- e }()
+		go func() { <-start; _, e := s.queuePlan(ctx, library, newUUID(), run, ids[:1]); results <- e }()
+		close(start)
+		success := 0
+		for n := 0; n < 2; n++ {
+			if <-results == nil {
+				success++
+			}
+		}
+		if success != 1 {
+			t.Fatal("last slot admitted more than once", success)
+		}
+		control(reserved.PlanID, "cancel")
+		if _, e := s.queueBatch(ctx, library, newUUID(), ids[:1]); e == nil {
+			t.Fatal("cancelled reservations were discarded")
+		}
+		cleanPlans()
+	})
+	t.Run("replay-after-progress-disable-and-receipt-exhaustion", func(t *testing.T) {
+		request := newUUID()
+		first, e := s.queuePlan(ctx, library, request, run, ids[:12])
+		if e != nil {
+			t.Fatal(e)
+		}
+		command := newUUID()
+		paused, e := s.controlPlan(ctx, library, first.PlanID, command, "pause", first.Revision)
+		if e != nil {
+			t.Fatal(e)
+		}
+		control(first.PlanID, "resume")
+		s.cfg.PlanEnabled = false
+		reversed := append([]string{}, ids[:12]...)
+		for i, j := 0, len(reversed)-1; i < j; i, j = i+1, j-1 {
+			reversed[i], reversed[j] = reversed[j], reversed[i]
+		}
+		replayed, e := s.queuePlan(ctx, library, request, run, reversed)
+		if e != nil || replayed != first {
+			t.Fatal("disabled create replay changed", e)
+		}
+		again, e := s.controlPlan(ctx, library, first.PlanID, command, "pause", first.Revision)
+		if e != nil || again != paused {
+			t.Fatal("progress/disabled receipt replay changed", e)
+		}
+		if _, e = s.queuePlan(ctx, library, newUUID(), run, ids[:1]); e == nil {
+			t.Fatal("disabled fresh admission")
+		}
+		s.cfg.PlanEnabled = true
+		must(`INSERT INTO native_plan_commands(library_id,plan_id,request_id,action,expected_revision,receipt)
+ SELECT $1,$2,('00000000-0000-4000-8000-'||lpad(g::text,12,'0'))::uuid,'pause',1,'{}' FROM generate_series(1,1998) g`, library, first.PlanID)
+		before := get(first.PlanID)
+		if _, e = s.controlPlan(ctx, library, first.PlanID, newUUID(), "pause", before.Revision); e == nil {
+			t.Fatal("receipt bound ignored")
+		}
+		again, e = s.controlPlan(ctx, library, first.PlanID, command, "pause", first.Revision)
+		if e != nil || again != paused || get(first.PlanID).Revision != before.Revision {
+			t.Fatal("exhaustion evicted receipt or changed state", e)
+		}
+		cleanPlans()
+	})
+	t.Run("historical-retry-waits-for-current-child", func(t *testing.T) {
+		v := queue(ids[:21])
+		if e := s.admitPlan(ctx); e != nil {
+			t.Fatal(e)
+		}
+		var child string
+		if db.QueryRow(ctx, "SELECT batch_id FROM native_batches WHERE library_id=$1 AND plan_id=$2", library, v.PlanID).Scan(&child) != nil {
+			t.Fatal("first child")
+		}
+		must("UPDATE native_items SET state='transient',attempts=1 WHERE library_id=$1 AND batch_id=$2", library, child)
+		must("UPDATE native_batches SET state='partial' WHERE library_id=$1 AND batch_id=$2", library, child)
+		if e := s.admitPlan(ctx); e != nil {
+			t.Fatal(e)
+		}
+		p := get(v.PlanID)
+		if _, e := s.controlPlan(ctx, library, v.PlanID, newUUID(), "retry", p.Revision); e == nil {
+			t.Fatal("historical retry created two unfinished children")
+		}
+		if get(v.PlanID).Revision != p.Revision {
+			t.Fatal("refused retry changed revision")
+		}
+		must("UPDATE native_items SET state='transient',attempts=1 WHERE library_id=$1", library)
+		must("UPDATE native_batches SET state='partial' WHERE library_id=$1", library)
+		r := control(v.PlanID, "retry")
+		if r.AffectedCount != 10 {
+			t.Fatal("retry subset", r)
+		}
+		var pending int
+		if db.QueryRow(ctx, "SELECT count(DISTINCT batch_id) FROM native_items WHERE library_id=$1 AND state='queued'", library).Scan(&pending) != nil || pending != 1 {
+			t.Fatal("multiple retry groups", pending)
+		}
+		cleanPlans()
+	})
 	t.Run("cooldown-and-cancel-never-admitted", func(t *testing.T) {
 		v := queue(ids[:37])
 		must("UPDATE ld_source_budget SET next_at=now()+interval '1 hour' WHERE name='ncbi'")
@@ -493,6 +604,122 @@ func TestPlanActualPostgres(t *testing.T) {
 			t.Fatal("cancel lost")
 		}
 		must("UPDATE ld_source_budget SET next_at=now() WHERE name='ncbi'")
+		cleanPlans()
+	})
+	t.Run("completion-capacity-order-and-stale-lease", func(t *testing.T) {
+		for _, valid := range []bool{true, false} {
+			v := queue(ids[3:4])
+			a := syntheticArticle()
+			a["SearchId"] = ids[3]
+			raw, _ := json.Marshal(a)
+			must("UPDATE ld_records SET metadata=$3 WHERE library_id=$1 AND search_id=$2", library, ids[3], string(raw))
+			entered, release := make(chan struct{}), make(chan struct{})
+			s.provider = &http.Client{Transport: nativeTransport(func(*http.Request) (*http.Response, error) {
+				close(entered)
+				<-release
+				body := syntheticOAI()
+				if !valid {
+					body = "SYNTHETIC malformed"
+				}
+				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/xml"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}
+			done := make(chan struct{})
+			go func() { s.batchOne(ctx); close(done) }()
+			select {
+			case <-entered:
+			case <-time.After(10 * time.Second):
+				t.Fatal("transport barrier")
+			}
+			tx, e := db.Begin(ctx)
+			if e != nil {
+				t.Fatal(e)
+			}
+			if e = capacityLock(ctx, tx); e != nil {
+				t.Fatal(e)
+			}
+			var child string
+			if tx.QueryRow(ctx, "SELECT batch_id FROM native_batches WHERE library_id=$1 AND plan_id=$2", library, v.PlanID).Scan(&child) != nil {
+				t.Fatal("child")
+			}
+			close(release)
+			// The real completion must block at capacity BEFORE holding the child row.
+			deadline := time.Now().Add(3 * time.Second)
+			waiting := false
+			for time.Now().Before(deadline) {
+				var n int
+				if db.QueryRow(ctx, "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event='advisory' AND query LIKE '%pg_advisory_xact_lock(724913015)%'").Scan(&n) == nil && n > 0 {
+					waiting = true
+					break
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			if !waiting {
+				_ = tx.Rollback(ctx)
+				t.Fatal("completion did not reach capacity barrier")
+			}
+			lockctx, c := context.WithTimeout(ctx, time.Second)
+			var state string
+			e = tx.QueryRow(lockctx, "SELECT state FROM native_batches WHERE library_id=$1 AND batch_id=$2 FOR UPDATE", library, child).Scan(&state)
+			c()
+			if e != nil {
+				_ = tx.Rollback(ctx)
+				t.Fatal("completion took child before capacity", e)
+			}
+			if e = tx.Commit(ctx); e != nil {
+				t.Fatal(e)
+			}
+			<-done
+			// Completion-first cancellation retains every already committed byte.
+			p := get(v.PlanID)
+			_, e = s.controlPlan(ctx, library, v.PlanID, newUUID(), "cancel", p.Revision)
+			if valid && e == nil || !valid && e != nil {
+				t.Fatal("completion cancellation outcome", e)
+			}
+			var n int
+			if db.QueryRow(ctx, "SELECT count(*) FROM native_originals WHERE library_id=$1 AND search_id=$2", library, ids[3]).Scan(&n) != nil || n != map[bool]int{true: 1, false: 0}[valid] {
+				t.Fatal("completion-first original preservation")
+			}
+			cleanPlans()
+			must("DELETE FROM native_originals WHERE library_id=$1 AND search_id=$2", library, ids[3])
+			must("UPDATE ld_source_budget SET next_at=now() WHERE name='ncbi'")
+		}
+		v := queue(ids[4:5])
+		a := syntheticArticle()
+		a["SearchId"] = ids[4]
+		raw, _ := json.Marshal(a)
+		must("UPDATE ld_records SET metadata=$3 WHERE library_id=$1 AND search_id=$2", library, ids[4], string(raw))
+		entered, release := make(chan struct{}), make(chan struct{})
+		s.provider = &http.Client{Transport: nativeTransport(func(*http.Request) (*http.Response, error) {
+			close(entered)
+			<-release
+			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/xml"}}, Body: io.NopCloser(strings.NewReader(syntheticOAI()))}, nil
+		})}
+		done := make(chan struct{})
+		go func() { s.batchOne(ctx); close(done) }()
+		select {
+		case <-entered:
+		case <-time.After(10 * time.Second):
+			t.Fatal("stale lease transport")
+		}
+		control(v.PlanID, "pause")
+		must("UPDATE ld_source_budget SET next_at=now() WHERE name='ncbi'")
+		control(v.PlanID, "resume")
+		newLease := newUUID()
+		l, b, id, e := s.claimBatch(ctx, newLease)
+		if e != nil {
+			t.Fatal(e)
+		}
+		close(release)
+		<-done
+		var token string
+		var attempts, n int
+		if db.QueryRow(ctx, "SELECT lease::text,attempts FROM native_items WHERE library_id=$1 AND batch_id=$2 AND search_id=$3", l, b, id).Scan(&token, &attempts) != nil || token != newLease || attempts != 2 {
+			t.Fatal("old lease overwrote resumed attempt")
+		}
+		if db.QueryRow(ctx, "SELECT count(*) FROM native_originals WHERE library_id=$1 AND search_id=$2", library, id).Scan(&n) != nil || n != 0 {
+			t.Fatal("stale lease published")
+		}
+		control(v.PlanID, "cancel")
 		cleanPlans()
 	})
 	t.Run("actual-http-owner-csrf-and-get-only-reopen", func(t *testing.T) {
