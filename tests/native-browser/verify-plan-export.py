@@ -9,11 +9,17 @@ import importlib.util
 import io
 import json
 import pathlib
+import sys
 import zipfile
 
 spec = importlib.util.spec_from_file_location("structured_reader", pathlib.Path(__file__).with_name("verify-structured.py"))
 structured = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(structured)
+previous_bytecode = sys.dont_write_bytecode
+try:
+    sys.dont_write_bytecode = True
+    spec.loader.exec_module(structured)
+finally:
+    sys.dont_write_bytecode = previous_bytecode
 
 
 def decode(raw):
