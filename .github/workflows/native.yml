@@ -167,7 +167,7 @@ jobs:
             ${{ runner.temp }}/native-continuation-browser/server.log
             ${{ runner.temp }}/native-continuation-browser/initial-page.json
             ${{ runner.temp }}/native-continuation-browser/continued-page.json
-            ${{ runner.temp }}/native-continuation-browser/continued-selected.csv
+            ${{ runner.temp }}/native-continuation-browser/continued-run.csv
             ${{ runner.temp }}/native-continuation-browser/input.json.source-requests
             ${{ runner.temp }}/native-browser/receipt.json
             ${{ runner.temp }}/native-browser/compile.log

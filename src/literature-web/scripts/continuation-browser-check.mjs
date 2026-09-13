@@ -124,12 +124,19 @@ try {
   result.cases.push("All ten actual states, attempts3 denial, explicit retry and confirmed cancel; reads never admit pages");
   state = "ready"; count = 101; await refresh(); await button("Select all on this page (25)").click();
   await page.evaluate(() => { window.__ignoreAbort = true; });
-  for (const status of [200, 401, 503]) {
+  for (const order of ["published", "pending"]) for (const status of [200, 401, 503]) {
     count = 101; await refresh();
     holdRecordRead = { key: "old-page", offset: 25, limit: 25, status }; await button("Next records").click(); await expect.poll(() => held.has("old-page")).toBe(true);
-    await button("Retrieve next metadata page").click(); await expect(page.locator(".selection-toolbar")).toContainText("25 selected of 201");
+    if (order === "pending") {
+      count = 201; holdRecordRead = { key: "new-status", offset: 0, limit: 25 };
+      await button("Refresh saved search status").click(); await expect.poll(() => held.has("new-status")).toBe(true);
+    } else {
+      await button("Retrieve next metadata page").click(); await expect(page.locator(".selection-toolbar")).toContainText("25 selected of 201");
+    }
     held.get("old-page")(); held.delete("old-page");
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await expect(button("Sign out")).toBeVisible();
+    if (order === "pending") { held.get("new-status")(); held.delete("new-status"); }
     await expect(button("Sign out")).toBeVisible(); await expect(page.locator(".selection-toolbar")).toContainText("25 selected of 201");
   }
   holdRecordRead = { key: "old-enumeration", offset: 0, limit: 100 }; count = 100; await refresh(); await expect.poll(() => held.has("old-enumeration")).toBe(true);

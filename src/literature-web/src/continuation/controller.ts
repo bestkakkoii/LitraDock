@@ -16,7 +16,7 @@ export class SearchController {
   private reads = 0;
   private stop = () => this.navigate();
   constructor(readonly library: string, readonly generation: number, private publish: (value: SearchState) => void,
-    private page: (value: RunPage) => void, private scope: AbortSignal) { scope.addEventListener("abort", this.stop); }
+    private page: (value: RunPage) => void, private scope: AbortSignal, private retirePage: () => void = () => {}) { scope.addEventListener("abort", this.stop); }
   private live = () => !this.disposed && !this.scope.aborted && this.generation === sessionGeneration();
   private set(value: Partial<SearchState>) { if (this.live()) { this.state = { ...this.state, ...value }; this.publish(this.state); } }
   navigate() {
@@ -25,6 +25,7 @@ export class SearchController {
   }
   dispose() { this.navigate(); this.disposed = true; this.scope.removeEventListener("abort", this.stop); }
   private begin() {
+    this.retirePage();
     this.navigate(); this.abort = new AbortController();
     const operation = this.sequence, signal = this.abort.signal;
     this.set({ busy: true });

@@ -75,14 +75,15 @@ try{
   const source=sources();assert.equal(source.length,4);assert.equal(source.filter(s=>s.path.endsWith('/esearch.fcgi')).length,1);assert.equal(source[2].ids,source[3].ids);
   fs.writeFileSync(path.join(path.dirname(inputPath),'continued-page.json'),JSON.stringify(second));
  });
- await check('explicit-page-subset-cap-and-real-CSV-device-bytes',async()=>{
+ await check('explicit-page-selection-and-independent-whole-saved-run-CSV',async()=>{
   const visible=await page.locator('.result-card').count();await toolbar.getByRole('button',{name:`Select all on this page (${visible})`,exact:true}).click();
   await until(async()=>(await toolbar.innerText()).includes(`${visible} selected of 200`),'explicit page replacement');
   const sourceBefore=sources().length;
   const downloadEvent=page.waitForEvent('download');await page.getByRole('button',{name:'Export CSV',exact:true}).click();const download=await downloadEvent;
-  const file=path.join(path.dirname(inputPath),'continued-selected.csv');await download.saveAs(file);const raw=fs.readFileSync(file);const text=raw.toString('utf8');assert(text.includes('Search ID'));assert(text.includes('990000001'));assert(!text.includes('990000101'));
+  const file=path.join(path.dirname(inputPath),'continued-run.csv');await download.saveAs(file);const raw=fs.readFileSync(file);const text=raw.toString('utf8');assert(text.includes('Search ID'));assert(text.includes('990000001'));assert(text.includes('990000101'));
   const parsed=JSON.parse(execFileSync(process.platform==='win32'?'python':'python3',['-c',"import csv,json,sys; print(json.dumps(list(csv.DictReader(open(sys.argv[1],encoding='utf-8-sig',newline='')))))",file],{encoding:'utf8',windowsHide:true}));
-  assert.equal(parsed.length,visible);assert.equal(new Set(parsed.map(r=>r['Search ID'])).size,visible);assert(parsed.every(r=>r.Title.includes('中文')));assert.deepEqual(parsed.map(r=>r.PMID).sort(),Array.from({length:visible},(_,i)=>String(990000001+i)).sort());
+  assert.equal(parsed.length,200);assert.equal(new Set(parsed.map(r=>r['Search ID'])).size,200);assert(parsed.every(r=>r.Title.includes('中文')));assert.deepEqual(parsed.map(r=>r.PMID).sort(),Array.from({length:200},(_,i)=>String(990000001+i)).sort());
+  assert.deepEqual(posts.filter(p=>p.url.endsWith('/exports')).at(-1).body,{runID:run,format:'csv'});
   assert.equal(sources().length,sourceBefore);checks.push({name:'actual-CSV-device-file',bytes:raw.length,sha256:hash(raw),pass:true});
  });
  await check('reopen-relogin-foreign-scope-and390-layout',async()=>{

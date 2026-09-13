@@ -116,7 +116,8 @@ function App() {
   const [searchState, setSearchState] = useState(emptySearchState);
   const applySearchPage = useRef<(page: RunPage) => void>(() => {});
   const searchController = useMemo(() => new SearchController(library, sessionGeneration(), setSearchState,
-    page => applySearchPage.current(page), libraryPlanScope.current.signal), [library, sessionGeneration(), libraryPlanScope.current.signal]);
+    page => applySearchPage.current(page), libraryPlanScope.current.signal,
+    () => { runGeneration.current++; retireRecordPage(); setBusy(false); }), [library, sessionGeneration(), libraryPlanScope.current.signal]);
   useLayoutEffect(() => {
     setSearchState(emptySearchState()); setContinuation(null);
     return () => searchController.dispose();
@@ -918,7 +919,7 @@ function App() {
             <p role="status">{exportProgress.label}</p>
             <button className="secondary" onClick={() => { beginBatchRequest(); batchOperation.current++; setBatchBusy(false); setExportProgress(null); setMessage("Transfer cancelled. No file was saved."); }}>Cancel download</button>
           </div>}
-          <p id="run-structured-scope" className="muted small">JSON / JSONL exports include all saved records in the run, not just selected checkboxes or the current page. Provider matches that were not retrieved are not included. These are metadata files, not full-text downloads.</p>
+          <p id="run-structured-scope" className="muted small">CSV, XLSX, JSON / JSONL exports include all saved records in the run, not just selected checkboxes or the current page, up to the existing 1,000-record export limit. Provider matches that were not retrieved are not included. These are metadata files, not full-text downloads.</p>
           {records.length ? (
             records.map((a, i) => (
               <ArticleCard
