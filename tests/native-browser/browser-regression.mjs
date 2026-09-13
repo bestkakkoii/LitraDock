@@ -279,6 +279,14 @@ try {
     await until(async()=>(await page.locator('.batch-panel').innerText().catch(()=>'' )).includes('2 selected records'),'cross-page admitted batch');
     const heldId=(await page.getByRole('heading',{name:/^Batch BAT-/}).innerText()).split(/\s+/).at(-1);
     await until(async()=>(await page.locator('.batch-panel').innerText()).includes('clarification'),'cross-page held reasons');
+    // The independent workbook oracle compares a separate GET with a later export.
+    // Wait for BOTH source-restricted items to settle, not just the first reason:
+    // queued -> unavailable between those snapshots is valid worker progress.
+    await until(async()=>{
+      const response=await page.request.get(`${target}/api/libraries/${libraryId}/batches/${heldId}`);
+      assert.equal(response.status(),200);const value=await response.json();
+      return value.items.length===2&&value.items.every(item=>item.state==='unavailable'&&item.reason.includes('clarification'));
+    },'both held items stable before separate workbook oracle snapshot');
     await verifyXlsx('Export batch XLSX',heldId);
     await page.locator(".history-entry").filter({hasText: capturedRunId}).click();
     await until(async()=>await boxes.count()===3,'original saved run reopen');
