@@ -121,6 +121,19 @@ func TestBrowserServer(t *testing.T) {
 		originals = append(originals, map[string]any{"pmid": id, "sha256": hex.EncodeToString(sum[:]), "bytes": len([]byte(body))})
 	}
 	transport := nativeTransport(func(r *http.Request) (*http.Response, error) {
+		if cfg.PlanEnabled && r.URL.Host == "pmc.ncbi.nlm.nih.gov" {
+			for {
+				if _, err := os.Stat(os.Getenv("NATIVE_BROWSER_INPUT") + ".source-release"); err == nil {
+					break
+				}
+				select {
+				case <-r.Context().Done():
+					return nil, r.Context().Err()
+				case <-time.After(50 * time.Millisecond):
+				}
+			}
+		}
+
 		select {
 		case <-time.After(450 * time.Millisecond):
 		case <-r.Context().Done():
@@ -176,7 +189,7 @@ func TestBrowserServer(t *testing.T) {
 	defer service.Close()
 	go s.worker(ctx)
 	go service.Serve(listener)
-	input := map[string]any{"origin": cfg.Origin, "accounts": accounts, "source_revision": revision, "manifest": manifestPath, "originals": originals, "scope": "SYNTHETIC ONLY; actual native handlers/PostgreSQL; no external transport"}
+	input := map[string]any{"origin": cfg.Origin, "accounts": accounts, "source_revision": revision, "manifest": manifestPath, "originals": originals, "source_gate": os.Getenv("NATIVE_BROWSER_INPUT") + ".source-release", "scope": "SYNTHETIC ONLY; actual native handlers/PostgreSQL; no external transport"}
 	b, _ = json.MarshalIndent(input, "", "  ")
 	output := os.Getenv("NATIVE_BROWSER_INPUT")
 	f, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)

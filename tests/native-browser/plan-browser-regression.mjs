@@ -158,12 +158,16 @@ try {
     assert.equal(batchPosts,0,'browser must not create child batches');
   });
   await check('pause-resume-truthful-phases-and-completion',async()=>{
+    await until(async()=>(await getPlan()).plan.counts.running===1,'actual provider body gate reached');
+    await plans.getByRole('button',{name:'Refresh plan',exact:true}).click();
     await until(async()=>await plans.getByRole('button',{name:'Pause plan',exact:true}).isEnabled(),'pause available');
     await plans.getByRole('button',{name:'Pause plan',exact:true}).click();
     await until(async()=>(await getPlan()).plan.state==='paused','pause committed');
     await until(async()=>await plans.getByRole('button',{name:'Resume plan',exact:true}).isEnabled(),'resume after currentGET');
     let p=await getPlan();assert.equal(Object.values(p.plan.counts).reduce((a,b)=>a+b,0),37);assert(p.plan.counts.paused>0);
     await plans.getByRole('button',{name:'Resume plan',exact:true}).click();
+    assert(typeof input.source_gate==='string' && input.source_gate.endsWith('.source-release'));
+    fs.writeFileSync(input.source_gate,'SYNTHETIC transport gate release');
     const end=Date.now()+100000;
     while(Date.now()<end){p=await getPlan();if(p.plan.state==='partial')break;await new Promise(r=>setTimeout(r,700));}
     assert.equal(p.plan.state,'partial');assert.equal(p.plan.counts.completed,2);assert.equal(p.plan.counts.held,35);assert.equal(p.plan.counts.retry,0);
@@ -217,4 +221,4 @@ try {
   });
   assert.deepEqual(runtimeErrors,[]);
   console.log(JSON.stringify({scope:'Actual native Go/PostgreSQL/compiled React; isolated synthetic transport only',source_revision:input.source_revision,checks,selected:37,providerTotal:25001,retrieved:100,children:4,originals:2,held:35,planPostAttempts:planPosts.length,childPostAttempts:batchPosts}));
-} finally {await context.close();await browser.close();}
+} catch(error) {console.error(JSON.stringify({scope:'SYNTHETIC diagnostics only',checks,controls,body:await page.locator('body').innerText()}));throw error;} finally {await context.close();await browser.close();}
