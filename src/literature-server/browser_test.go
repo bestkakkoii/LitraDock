@@ -122,6 +122,7 @@ func TestBrowserServer(t *testing.T) {
 		sum := sha256.Sum256([]byte(body))
 		originals = append(originals, map[string]any{"pmid": id, "sha256": hex.EncodeToString(sum[:]), "bytes": len([]byte(body))})
 	}
+	planRateLimited := false
 	transport := nativeTransport(func(r *http.Request) (*http.Response, error) {
 		if cfg.PlanEnabled && r.URL.Host == "pmc.ncbi.nlm.nih.gov" {
 			for {
@@ -181,6 +182,11 @@ func TestBrowserServer(t *testing.T) {
 				return nil, fmt.Errorf("unexpected synthetic original target")
 			}
 			body = strings.ReplaceAll(strings.ReplaceAll(syntheticOAI(), "990000001", id), "10.0000/synthetic", "10.0000/synthetic"+id)
+			if cfg.PlanEnabled && id == "990000002" && !planRateLimited {
+				planRateLimited = true
+				return &http.Response{StatusCode: 429, Header: http.Header{"Content-Type": {"application/xml"}, "Retry-After": {"2"}}, Body: io.NopCloser(strings.NewReader("SYNTHETIC cooldown"))}, nil
+			}
+
 		default:
 			return nil, fmt.Errorf("closed synthetic transport: network forbidden")
 		}

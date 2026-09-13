@@ -165,11 +165,17 @@ try {
     await until(async()=>(await getPlan()).plan.state==='paused','pause committed');
     await until(async()=>await plans.getByRole('button',{name:'Resume plan',exact:true}).isEnabled(),'resume after currentGET');
     let p=await getPlan();assert.equal(Object.values(p.plan.counts).reduce((a,b)=>a+b,0),37);assert(p.plan.counts.paused>0);
+    await until(async()=>!(await getPlan()).plan.admission.blockedReasonCode,'source cooldown must expire before explicit resume');
     await plans.getByRole('button',{name:'Resume plan',exact:true}).click();
     assert(typeof input.source_gate==='string' && input.source_gate.endsWith('.source-release'));
     fs.writeFileSync(input.source_gate,'SYNTHETIC transport gate release');
     const end=Date.now()+100000;
     while(Date.now()<end){p=await getPlan();if(p.plan.state==='partial')break;await new Promise(r=>setTimeout(r,700));}
+    assert.equal(p.plan.state,'partial');assert.equal(p.plan.counts.completed,1);assert.equal(p.plan.counts.retry,1);assert.equal(p.plan.retryEligibleCount,1);
+    await plans.getByRole('button',{name:'Refresh plan',exact:true}).click();
+    await until(async()=>await plans.getByRole('button',{name:'Retry next eligible group',exact:true}).isEnabled(),'explicit retry group available');
+    await plans.getByRole('button',{name:'Retry next eligible group',exact:true}).click();
+    await until(async()=>{p=await getPlan();return p.plan.counts.completed===2;},'explicit retry acquires second original');
     assert.equal(p.plan.state,'partial');assert.equal(p.plan.counts.completed,2);assert.equal(p.plan.counts.held,35);assert.equal(p.plan.counts.retry,0);
     assert.equal(p.items.length,37);assert.deepEqual(p.items.map(x=>x.searchID),selected);
     assert.equal(new Set(p.items.map(x=>x.childBatchID)).size,4);assert.equal(p.plan.admission.admittedCount,37);
@@ -202,6 +208,25 @@ try {
     assert.equal(m.items.filter(x=>x.file).length,2);assert.equal(m.items.filter(x=>!x.file&&x.reason&&x.sourceLinks.length).length,8);
     for(const item of m.items.filter(x=>x.file)){assert.equal(hash(zip[item.file]),expectedOriginals.get(String(item.pmid)).sha256);}
     assert.equal(batchPosts,0);assert.equal(planPosts.length,2);
+  });
+  await check('cancel-confirmation-preserves-prior-completed-plan',async()=>{
+    const originalPlan=planID;
+    await plans.getByRole('button',{name:'Create processing plan (37/100)',exact:true}).click();
+    await until(async()=>{const text=await plans.getByRole('heading',{name:/^Plan PLN-/}).textContent();return text.trim()!=='Plan '+originalPlan;},'new distinct plan receipt');
+    planID=(await plans.getByRole('heading',{name:/^Plan PLN-/}).textContent()).trim().split(' ').at(-1);
+    for(let attempt=0;attempt<3;attempt++){
+      await plans.getByRole('button',{name:'Refresh plan',exact:true}).click();
+      await until(async()=>await plans.getByRole('button',{name:'Cancel plan',exact:true}).isEnabled(),'cancel current plan');
+      await plans.getByRole('button',{name:'Cancel plan',exact:true}).click();
+      const dialog=plans.getByRole('alertdialog',{name:'Confirm plan cancellation'});await dialog.waitFor();
+      assert.notEqual((await getPlan()).plan.state,'cancelled','opening confirmation must not mutate');
+      await dialog.getByRole('button',{name:'Confirm cancellation',exact:true}).click();
+      await until(async()=>!(await plans.getByRole('button',{name:'Refresh plan',exact:true}).isDisabled()),'control receipt or explicit conflict settled');
+      if((await getPlan()).plan.state==='cancelled')break;
+    }
+    const cancelled=await getPlan();assert.equal(cancelled.plan.state,'cancelled');assert.equal(Object.values(cancelled.plan.counts).reduce((a,b)=>a+b,0),37);assert(cancelled.plan.counts.cancelled>0);
+    planID=originalPlan;assert.equal((await getPlan()).plan.counts.completed,2);
+    await page.getByLabel('Saved plans',{exact:true}).selectOption(planID);
   });
   await check('relogin-reopen-get-only-and-tenant-denials',async()=>{
     const mutations=JSON.stringify({planPosts,controls,searchPosts,batchPosts});
