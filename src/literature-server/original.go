@@ -163,6 +163,11 @@ func validateArticleGrantNS(article *node, expected map[string]any, jatsNS strin
 	if permissionConflict.MatchString(permissions.Text) {
 		return fail("Article rights restricted or conflicting.")
 	}
+	// A separately reviewed complete cloud-JATS template, not a metadata-code
+	// shortcut. Identity checks above and version/checksum checks remain required.
+	if jatsNS == "" && reviewedMDPIArticleGrant(article, permissions) {
+		return "https://creativecommons.org/licenses/by/4.0/", nil
+	}
 	// Unreviewed scope attributes or structural variants cannot hide behind the text digest.
 	var reviewedStructure func(*node) bool
 	reviewedStructure = func(n *node) bool {

@@ -366,6 +366,16 @@ input, select, textarea { min-width: 0; max-width: 100%; }
 .saved-basket { padding: 1rem; border: 1px solid #bdcad8; border-radius: 10px; background: #f7f9fc; margin-bottom: 1rem; }
 .saved-basket .plan-actions { align-items: end; }
 .saved-basket label { flex: 0 1 180px; }
+.saved-basket .basket-row { border-top: 1px solid #d9e2ec; margin-top: 1rem; padding-top: 1rem; }
+.saved-basket .basket-row-heading { display: flex; flex-wrap: wrap; align-items: start; gap: .5rem 1rem; }
+.saved-basket .basket-row h4 { flex: 1 1 240px; margin: 0; min-width: 0; font-size: 1rem; line-height: 1.5; }
+.saved-basket .basket-remove { flex: 0 0 auto; white-space: nowrap; min-height: 44px; }
+.saved-basket .basket-bibliography { margin: .5rem 0; color: #46596c; }
+.saved-basket .basket-provenance { margin: .5rem 0 0; }
+.saved-basket .basket-provenance summary { min-height: 44px; padding: .5rem 0; }
+.saved-basket .basket-provenance dd { margin: .25rem 0 .75rem; overflow-wrap: anywhere; }
+.saved-basket .basket-provenance ul { margin: 0; padding-left: 1.25rem; }
+.saved-basket .basket-provenance li { margin: .25rem 0; }
 .plan-workspace details { margin: .75rem 0; }
 .plan-workspace summary { cursor: pointer; color: #1864ab; font-weight: 600; }
 .plan-workspace h4, .saved-basket p { white-space: pre-wrap; }

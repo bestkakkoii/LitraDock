@@ -5,6 +5,7 @@ import { SourceLinks } from "../components/ArticleCard";
 import { Phase, PlanAction, phases } from "./api";
 import { emptyPlanState, PlanController } from "./controller";
 import { PlanExports } from "./PlanExports";
+import { BasketRow } from "./BasketRow";
 
 const labels: Record<Phase, string> = {
   waiting: "Waiting", queued: "Queued", running: "Running", completed: "Acquired on server",
@@ -93,11 +94,8 @@ export function PlanWorkspace(props: Props) {
       {basketError && <p role="alert" className="error">{basketError}</p>}
       <details><summary>Basket records, search provenance and limits</summary>
         <p>Independent of checked records in the current search. Up to 100 unique saved records and 1,000 record/search associations; currently {associationCount(basket)} associations. Adding records does not acquire anything. Processing uses existing bounded groups and source budgets.</p>
-        {basket.map(item => <article key={item.searchID} className="plan-item">
-          <h4>{String(item.article.Title ?? item.searchID)}</h4><p>{item.searchID}</p>
-          <p>Saved searches: {item.runIDs.join(", ")}</p>
-          <button className="secondary" onClick={() => setBasket(previous => previous.filter(member => member.searchID !== item.searchID))}>Remove {item.searchID}</button>
-        </article>)}
+        {basket.map((item, index) => <BasketRow key={item.searchID} member={item} position={index + 1}
+          onRemove={searchID => setBasket(previous => previous.filter(member => member.searchID !== searchID))} />)}
       </details>
     </section>
     {props.enabled ? <button

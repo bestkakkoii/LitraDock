@@ -6,5 +6,6 @@ These files are isolated acceptance inputs, not user papers, provider fallback r
 - imported-unicode-credential.json: reviewer-supplied synthetic90-code-point password/hash compatibility vector, never a production account.
 - metadata-golden.json and synthetic-pubmed.xml: labelled synthetic parser/metadata contract examples, not evidence of genuine source coverage.
 - rights-template-001.xml: one reviewed CC BY4 grant template with a synthetic copyright year, used inside synthetic test envelopes. Boilerplate follows https://creativecommons.org/licenses/by/4.0/ ; no paper body or source-wide permission claim follows.
+- rights-template-mdpi.xml: the narrow article-level CC BY4 rights boilerplate observed in a versioned PMC JATS deposit, with a synthetic copyright year. No article body, author names, credentials or private research are included. See ADR0022 for its grammar, attribution and held-case boundaries; this test input is not an operational grant.
 
 The optional historical .NET generator is not a Go build/runtime dependency. Tests needing genuine captured metadata/originals explicitly skip without private inputs. No captured papers or replay manifests are distributed, and these fixture files are excluded from the runtime package.

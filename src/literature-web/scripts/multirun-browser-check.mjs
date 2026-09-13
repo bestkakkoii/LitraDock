@@ -150,6 +150,12 @@ try {
   const openRun = async id => { await page.locator(".history-entry").filter({ has: page.locator(".history-id", { hasText: new RegExp(`${id}$`) }) }).click(); await expect(button("Select all")).toBeEnabled(); await expect(page.locator(".selection-toolbar")).toContainText(`of ${runs[id].length}`); };
   const open = async id => { await page.getByLabel("Saved plans", { exact: true }).selectOption(id); await expect(page.getByRole("heading", { name: `Plan ${id}`, exact: true })).toBeVisible(); };
   const add = count => button(`Add checked records to basket (${count})`).click();
+  const removeBasket = async searchID => {
+    // Full saved identity remains in native details, even with concise labels.
+    const row = page.locator(".basket-row").filter({ has: page.locator("dd").filter({ hasText: new RegExp(`^${searchID}$`) }) });
+    await expect(row).toHaveCount(1);
+    await row.getByRole("button", { name: /^Remove record / }).click();
+  };
   const names = { json: "Export plan metadata JSON", zip: "Save plan originals ZIP" };
   const exportButton = format => button(names[format]);
   const verify = async (file, id, format) => {
@@ -170,8 +176,8 @@ try {
   const release = async gate => { const finish = holds.get(gate); assert(finish); finish(); await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))); };
   await page.goto(origin); await login("A"); await openRun("R1"); await add(2); await add(2); await openRun("R2"); await add(2);
   await expect(page.locator(".saved-basket")).toContainText("3 records in basket · 2 saved searches");
-  await page.locator(".saved-basket summary").click(); await expect(page.locator(".saved-basket")).toContainText("4 associations");
-  await button("Remove S2").click(); await expect(page.locator(".saved-basket")).toContainText("2 records in basket"); await add(2);
+  await page.locator(".saved-basket > details > summary").click(); await expect(page.locator(".saved-basket")).toContainText("4 associations");
+  await removeBasket("S2"); await expect(page.locator(".saved-basket")).toContainText("2 records in basket"); await add(2);
   await button("Clear basket").click(); await openRun("R4"); await page.getByLabel("Page size", { exact: true }).selectOption("5");
   await expect(button("Select all")).toBeEnabled(); await add(6); await button("Next records").click(); await expect(button("Previous records")).toBeEnabled(); await add(6);
   await expect(page.locator(".saved-basket")).toContainText("6 records in basket · 1 saved searches");
@@ -186,7 +192,7 @@ try {
   const creates = posts.filter(post => post.path.endsWith("/plans")); assert.equal(creates.length, admissionCalls); creates.forEach(post => assert.deepEqual(post.body, creates[0].body));
   failedDetail = false; await button("Reopen confirmed plan").click(); await expect(page.getByRole("heading", { name: "Plan PLN-00000000000000000000000000000001", exact: true })).toBeVisible();
   assert.equal(posts.filter(post => post.path.endsWith("/plans")).length, admissionCalls);
-  await button("Remove S3").click();
+  await removeBasket("S3");
   await button("Pause plan").click(); await expect(button("Retry same submission")).toBeVisible(); await button("Retry same submission").click(); await expect(button("Retry same submission")).toHaveCount(0);
   const controls = posts.filter(post => post.path.endsWith("/control")); assert.equal(controls.length, 2); assert.deepEqual(controls[0].body, controls[1].body);
   assert.deepEqual(creates[0].body.members, [{ searchID: "S0", runIDs: ["R1"] }, { searchID: "S1", runIDs: ["R1", "R2"] }, { searchID: "S2", runIDs: ["R2"] }]);
