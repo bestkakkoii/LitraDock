@@ -3,7 +3,7 @@ import { phases, PlanSummary, validateSummary } from "./api";
 import { TransferOptions } from "../transfer";
 
 export type PlanExportFormat = "json" | "zip";
-export type ExportIdentity = Pick<PlanSummary, "planID" | "runID" | "selectedCount" | "scopeKind" | "sourceRunIDs">;
+export type ExportIdentity = Pick<PlanSummary, "planID" | "runID" | "selectedCount" | "scopeKind" | "sourceRunIDs" | "requestedFormat">;
 const object = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const invalid = () => new Error("The server returned an invalid plan export. No file was saved.");

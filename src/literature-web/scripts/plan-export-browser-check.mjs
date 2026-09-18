@@ -91,7 +91,7 @@ try {
     return reply({ error: "Synthetic route absent" }, 404);
   });
   const button = name => page.getByRole("button", { name, exact: true });
-  const names = { json: "Export plan metadata JSON", zip: "Save plan originals ZIP" };
+  const names = { json: "Export plan metadata JSON", zip: "Download available originals ZIP" };
   const login = async who => { await page.getByLabel("Login", { exact: true }).fill(who); await page.getByLabel("Password", { exact: true }).fill("SYNTHETIC"); await button("Sign in").click(); await expect(page.getByLabel("Choose library", { exact: true })).toHaveValue(who === "B" ? "LB" : "L1"); };
   const openRun = async id => { await page.locator(".history-entry").filter({ has: page.locator(".history-id", { hasText: new RegExp(`${id}$`) }) }).click(); await expect(button("Select all")).toBeEnabled(); };
   const open = async id => { await page.getByLabel("Saved plans", { exact: true }).selectOption(id); await expect(page.getByRole("heading", { name: `Plan ${id}`, exact: true })).toBeVisible(); await expect(button(names.json)).toBeEnabled(); };

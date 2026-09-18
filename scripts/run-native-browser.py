@@ -13,6 +13,8 @@ import subprocess
 import sys
 import time
 
+flags = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--bundles', action='store_true', help='Run isolated prepared bundle/byte-range browser workload')
 parser.add_argument('--plans', action='store_true', help='Run the focused processing-plan browser workload')
@@ -27,10 +29,10 @@ args = parser.parse_args()
 repo = Path(__file__).resolve().parents[1]
 if not re.fullmatch(r'[0-9a-f]{40}', args.revision):
     sys.exit('Exact source revision required')
-if subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip() != args.revision:
+if subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True, **flags).strip() != args.revision:
     sys.exit('Checkout/source revision mismatch')
-subprocess.run(['git', 'diff', '--exit-code', args.revision, '--', 'src/literature-server', 'src/literature-web', 'tests/native-browser', 'scripts/run-native-browser.py'], cwd=repo, check=True)
-untracked = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', '--', 'src/literature-server', 'tests/native-browser'], cwd=repo, text=True).strip()
+subprocess.run(['git', 'diff', '--exit-code', args.revision, '--', 'src/literature-server', 'src/literature-web', 'tests/native-browser', 'scripts/run-native-browser.py'], cwd=repo, check=True, **flags)
+untracked = subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard', '--', 'src/literature-server', 'tests/native-browser'], cwd=repo, text=True, **flags).strip()
 if untracked:
     sys.exit('Untracked acceptance source is not allowed')
 manifest = json.loads(args.manifest.read_text(encoding='utf-8'))
@@ -53,7 +55,6 @@ if args.multirun:
 if args.continuation:
     env['LITRADOCK_CONTINUATION_BROWSER_TEST'] = 'yes'
 binary = out/('browser-server.exe' if os.name == 'nt' else 'browser-server')
-flags = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
 with (out/'compile.log').open('wb') as log:
     subprocess.run(['go', 'test', '-c', '-o', str(binary)], cwd=repo/'src/literature-server', env=env, stdout=log, stderr=subprocess.STDOUT, check=True, **flags)
 process = None

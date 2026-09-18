@@ -8,16 +8,15 @@ import (
 const mdpiGrantParagraph = "Licensee MDPI, Basel, Switzerland. This article is an open access article distributed under the terms and conditions of the Creative Commons Attribution (CC BY) license (http://creativecommons.org/licenses/by/4.0/)."
 
 var mdpiCopyright = regexp.MustCompile(`^© ([0-9]{4}) by the authors\.$`)
-var additionalRightsNotice = regexp.MustCompile(`(?i)licen[sc]e|copyright|permission|reproduced|adapted|third[- ]party|creative commons|excluded from|all rights reserved|no redistribution`)
+var additionalRightsNotice = regexp.MustCompile(`(?i)licen[sc]e|copyright|permission|reproduced|adapted|third[- ]party|creative commons|excluded from|all rights reserved|no redistribution|personal\s+use\s+only|may\s+not\s+be\s+shared`)
 
-// This profile recognizes one complete observed English article grant. It does
+// These profiles recognize two complete observed English article grants. They do
 // not interpret arbitrary legal prose. Unknown scope, attributes, namespaces,
-// extra text and component notices remain held for review. See ADR0022.
+// extra text and component notices remain held for review. See ADR0022/ADR0024.
 func reviewedMDPIArticleGrant(article, permissions *node) bool {
 	const ali = "http://www.niso.org/schemas/ali/1.0/"
 	const xlink = "http://www.w3.org/1999/xlink"
 	const ccby = "https://creativecommons.org/licenses/by/4.0/"
-	const displayed = "http://creativecommons.org/licenses/by/4.0/"
 	plain := func(s string) string { return strings.Join(strings.Fields(s), " ") }
 	compact := func(s string) string { return strings.Join(strings.Fields(s), "") }
 	type attribute struct{ value, namespace string }
@@ -65,7 +64,17 @@ func reviewedMDPIArticleGrant(article, permissions *node) bool {
 	}
 	statement, year, license := permissions.Children[0], permissions.Children[1], permissions.Children[2]
 	match := mdpiCopyright.FindStringSubmatch(plain(statement.Text))
-	if !shape(statement, "", nil) || !shape(year, "", nil) || len(match) != 2 || plain(year.Text) != match[1] || !shape(license, "", map[string]attribute{"license-type": {"open-access", ""}}, "license_ref", "license-p") {
+	if !shape(statement, "", nil) || !shape(year, "", nil) || len(match) != 2 || plain(year.Text) != match[1] {
+		return false
+	}
+	// Keep the two observed representations paired: the newer profile omits
+	// license-type and uses HTTPS in both the visible article grant and its link.
+	// An absent attribute alone, or any other attribute value, is not permission.
+	displayed, grantParagraph := "http://creativecommons.org/licenses/by/4.0/", mdpiGrantParagraph
+	if shape(license, "", nil, "license_ref", "license-p") {
+		displayed = ccby
+		grantParagraph = strings.Replace(mdpiGrantParagraph, "http://", "https://", 1)
+	} else if !shape(license, "", map[string]attribute{"license-type": {"open-access", ""}}, "license_ref", "license-p") {
 		return false
 	}
 	ref, paragraph := license.Children[0], license.Children[1]
@@ -73,11 +82,11 @@ func reviewedMDPIArticleGrant(article, permissions *node) bool {
 		return false
 	}
 	link := paragraph.Children[0]
-	if !shape(link, "", map[string]attribute{"ext-link-type": {"uri", ""}, "href": {displayed, xlink}}) || plain(link.Text) != displayed || plain(paragraph.Text) != mdpiGrantParagraph {
+	if !shape(link, "", map[string]attribute{"ext-link-type": {"uri", ""}, "href": {displayed, xlink}}) || plain(link.Text) != displayed || plain(paragraph.Text) != grantParagraph {
 		return false
 	}
 	// Comparing the complete text also rejects injected text between child nodes.
-	if compact(permissions.Text) != compact(statement.Text+year.Text+ccby+mdpiGrantParagraph) {
+	if compact(permissions.Text) != compact(statement.Text+year.Text+ccby+grantParagraph) {
 		return false
 	}
 	if len(article.all("permissions")) != 1 || len(article.all("license")) != 1 || len(article.all("license_ref")) != 1 {

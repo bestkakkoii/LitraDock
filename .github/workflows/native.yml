@@ -2,7 +2,7 @@ name: Native candidate
 on:
   workflow_dispatch:
   push:
-    branches: [native-demo-003, native-demo-004, native-demo-005, native-demo-006, native-demo-007, native-demo-008, native-demo-009, native-demo-010, native-demo-011, native-demo-012, native-demo-015, native-demo-016]
+    branches: [native-demo-003, native-demo-004, native-demo-005, native-demo-006, native-demo-007, native-demo-008, native-demo-009, native-demo-010, native-demo-011, native-demo-012, native-demo-015, native-demo-016, native-demo-018]
 permissions:
   contents: read
 jobs:

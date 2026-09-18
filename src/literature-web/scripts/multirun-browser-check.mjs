@@ -156,7 +156,7 @@ try {
     await expect(row).toHaveCount(1);
     await row.getByRole("button", { name: /^Remove record / }).click();
   };
-  const names = { json: "Export plan metadata JSON", zip: "Save plan originals ZIP" };
+  const names = { json: "Export plan metadata JSON", zip: "Download available PDFs ZIP" };
   const exportButton = format => button(names[format]);
   const verify = async (file, id, format) => {
     const data = fs.readFileSync(await file.path()); assert.deepEqual(data, bytes(id, format));

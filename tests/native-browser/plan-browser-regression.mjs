@@ -194,7 +194,7 @@ try {
     const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'native-plan-export-'));
     try {
       const saved=[];
-      for(const [label,format] of [['Export plan metadata JSON','json'],['Save plan originals ZIP','zip']]){
+      for(const [label,format] of [['Export plan metadata JSON','json'],['Download available originals ZIP','zip']]){
         const pending=page.waitForEvent('download');
         await plans.getByRole('button',{name:label,exact:true}).click();
         const download=await pending;assert(download.suggestedFilename().endsWith('.'+format));

@@ -1,6 +1,7 @@
 # Code-only candidate packaging. Assertions are deliberate verification gates: do not run with python -O.
 from pathlib import Path
-import subprocess,hashlib,json,tarfile,io,argparse,sys
+import subprocess,hashlib,json,tarfile,io,argparse,sys,os
+flags = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
 if sys.flags.optimize:
  raise SystemExit('Optimized Python disables verification gates and is unsupported.')
 parser=argparse.ArgumentParser(description='Build a code-only native runtime archive from an exact source revision and two equal offline builds.')
@@ -13,17 +14,17 @@ p=args.build_directory.resolve();repo=Path(__file__).resolve().parents[1];revisi
 assert len(revision)==40 and all(c in '0123456789abcdef' for c in revision), 'Full immutable source revision required'
 sha=lambda b:hashlib.sha256(b).hexdigest()
 source={}
-locked=subprocess.run(['git','-C',str(repo),'ls-tree','-r','--name-only',revision,'--','src/literature-server'],capture_output=True,text=True,check=True).stdout.splitlines()
+locked=subprocess.run(['git','-C',str(repo),'ls-tree','-r','--name-only',revision,'--','src/literature-server'],capture_output=True,text=True,check=True,**flags).stdout.splitlines()
 expected={x for x in locked if Path(x).name in ['go.mod','go.sum'] or x.endswith('.go') and not x.endswith('_test.go')}
 for f in sorted((repo/'src/literature-server').glob('*')):
  if f.name in ['go.mod','go.sum'] or f.suffix=='.go' and not f.name.endswith('_test.go'):
-  rel=f.relative_to(repo).as_posix();blob=subprocess.run(['git','-C',str(repo),'show',revision+':'+rel],capture_output=True,check=True).stdout;assert blob==f.read_bytes().replace(b'\r\n',b'\n');source[rel]=sha(blob)
+  rel=f.relative_to(repo).as_posix();blob=subprocess.run(['git','-C',str(repo),'show',revision+':'+rel],capture_output=True,check=True,**flags).stdout;assert blob==f.read_bytes().replace(b'\r\n',b'\n');source[rel]=sha(blob)
 assert set(source)==expected, 'Missing or unexpected production source member'
-server=(p/'server').read_bytes();assert server==(p/'server-repeat').read_bytes();notices=subprocess.run(['git','-C',str(repo),'show',revision+':src/literature-server/THIRD_PARTY_NOTICES.md'],capture_output=True,check=True).stdout
+server=(p/'server').read_bytes();assert server==(p/'server-repeat').read_bytes();notices=subprocess.run(['git','-C',str(repo),'show',revision+':src/literature-server/THIRD_PARTY_NOTICES.md'],capture_output=True,check=True,**flags).stdout
 manifest={'format':'litradock.go.runtime.v1','source_revision':revision,'source_sha256':source,'compiler':'go1.27.1','target':'linux/amd64 GOAMD64=v1 CGO_ENABLED=0','flags':['-buildvcs=false','-trimpath'],'files':{'server':sha(server),'THIRD_PARTY_NOTICES.md':sha(notices)},'scope':'isolated native candidate; no public cutover, signed release or full license/vulnerability clearance'}
 files={'server':server,'THIRD_PARTY_NOTICES.md':notices}
-license_path='LICENSE' if subprocess.run(['git','-C',str(repo),'ls-tree','--name-only',revision,'--','LICENSE'],capture_output=True,text=True,check=True).stdout.strip() else 'deployment/private-candidate/LICENSE'
-license_bytes=subprocess.run(['git','-C',str(repo),'show',revision+':'+license_path],capture_output=True,check=True).stdout
+license_path='LICENSE' if subprocess.run(['git','-C',str(repo),'ls-tree','--name-only',revision,'--','LICENSE'],capture_output=True,text=True,check=True,**flags).stdout.strip() else 'deployment/private-candidate/LICENSE'
+license_bytes=subprocess.run(['git','-C',str(repo),'show',revision+':'+license_path],capture_output=True,check=True,**flags).stdout
 assert b'GNU AFFERO GENERAL PUBLIC LICENSE' in license_bytes, 'Reviewed project license required'
 files['LICENSE']=license_bytes
 manifest['files']['LICENSE']=sha(license_bytes)
@@ -31,10 +32,10 @@ manifest['project_license_git_path']=license_path
 if args.frontend_directory:
  assert args.frontend_repeat_directory, 'Independent repeated frontend output required'
  web=repo/'src/literature-web';dist=args.frontend_directory.resolve();repeat=args.frontend_repeat_directory.resolve()
- paths=subprocess.run(['git','-C',str(repo),'ls-tree','-r','--name-only',revision,'--','src/literature-web'],capture_output=True,text=True,check=True).stdout.splitlines()
+ paths=subprocess.run(['git','-C',str(repo),'ls-tree','-r','--name-only',revision,'--','src/literature-web'],capture_output=True,text=True,check=True,**flags).stdout.splitlines()
  assert paths, 'Frontend source must be committed'
  for rel in paths:
-  blob=subprocess.run(['git','-C',str(repo),'show',revision+':'+rel],capture_output=True,check=True).stdout
+  blob=subprocess.run(['git','-C',str(repo),'show',revision+':'+rel],capture_output=True,check=True,**flags).stdout
   assert blob==(repo/rel).read_bytes().replace(b'\r\n',b'\n'), 'Frontend differs from revision'
   source[rel]=sha(blob)
  members={x.relative_to(dist).as_posix():x.read_bytes() for x in dist.rglob('*') if x.is_file()}

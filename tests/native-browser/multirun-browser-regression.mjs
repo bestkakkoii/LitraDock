@@ -103,7 +103,7 @@ try {
     await plans.getByRole('heading',{name:'Plan '+plan,exact:true}).waitFor();
     assert.equal(JSON.stringify(posts),before,'opening saved run must not acquire');
     const intentFile=inputPath+'.intent.json';fs.writeFileSync(intentFile,JSON.stringify(expected));
-    for(const [label,format] of [['Export plan metadata JSON','json'],['Save plan originals ZIP','zip']]){
+    for(const [label,format] of [['Export plan metadata JSON','json'],['Download available originals ZIP','zip']]){
       const started=Date.now(),wait=page.waitForEvent('download');
       await plans.getByRole('button',{name:label,exact:true}).click();
       const download=await wait;assert.equal(await download.failure(),null);

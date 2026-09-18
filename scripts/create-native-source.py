@@ -7,11 +7,14 @@ import argparse
 import hashlib
 import io
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import sys
 import tarfile
+
+flags = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
 
 if not __debug__:
     sys.exit("Verification requires normal Python, not -O")
@@ -24,7 +27,7 @@ if not re.fullmatch(r"[0-9a-f]{40}", options.revision):
 
 
 def blob(path):
-    return subprocess.check_output(["git", "show", options.revision + ":" + path])
+    return subprocess.check_output(["git", "show", options.revision + ":" + path], **flags)
 
 
 def digest(data):
@@ -38,7 +41,7 @@ for target, source in allowlist.items():
         p = PurePosixPath(name)
         if p.is_absolute() or ".." in p.parts or "\\" in name:
             sys.exit("Invalid allowlist path")
-    mode = subprocess.check_output(["git", "ls-tree", options.revision, "--", source]).split()[0]
+    mode = subprocess.check_output(["git", "ls-tree", options.revision, "--", source], **flags).split()[0]
     if mode not in (b"100644", b"100755"):
         sys.exit("Only regular tracked source files are allowed")
     files[target] = blob(source)
