@@ -1,5 +1,5 @@
 import { api, ApiError, RunPage, sessionGeneration } from "../api";
-import { Action, ActionIntent, Continuation, SearchIntent, submitAction, submitSearch } from "./api";
+import { Action, ActionIntent, Continuation, SearchIntent, submitAction, submitSearch, validateContinuation } from "./api";
 import { BrowserRouteController } from "../userRoute/controller";
 import { credentialMode } from "../userRoute/credentials";
 import { browserRouteSupport } from "../userRoute/scheduler";
@@ -20,7 +20,8 @@ export class SearchController {
   private stop = () => this.navigate();
   private browser: BrowserRouteController;
   constructor(readonly library: string, readonly generation: number, private publish: (value: SearchState) => void,
-    private page: (value: RunPage) => void, private scope: AbortSignal, private retirePage: () => void = () => {}, private browserEnabled: () => boolean = () => false) {
+    private page: (value: RunPage) => void, private scope: AbortSignal, private retirePage: () => void = () => {}, private browserEnabled: () => boolean = () => false,
+    private captureEnabled: () => boolean = () => false) {
     scope.addEventListener("abort", this.stop);
     this.browser = new BrowserRouteController(library, generation, (notice, browserPending) => this.set({ notice, browserPending }));
   }
@@ -42,16 +43,19 @@ export class SearchController {
     if (!this.live() || this.state.busy || this.state.pending || this.state.confirmed || this.state.browserPending) return;
     if (this.browserEnabled() && browserRouteSupport()) { this.set({ error: browserRouteSupport() }); return; }
     this.set({ pending: { kind: "search", body: { query, limit, requestID: crypto.randomUUID(), ...(this.browserEnabled() ? { credentialMode: credentialMode() } : {}) } } });
-    await this.retry();
+    await this.retry(true);
   }
   async action(status: Continuation, action: Action) {
     if (!this.live() || this.state.busy || this.state.pending || this.state.confirmed || this.state.browserPending ||
-      !(action === "continue" ? status.canContinue : action === "retry" ? status.canRetry : status.canCancel)) return;
+      !(action === "capture" ? this.captureEnabled() && this.browserEnabled() && status.execution === "user_browser" && status.capture?.canCapture :
+        action === "continue" ? status.canContinue : action === "retry" ? status.canRetry : status.canCancel)) return;
+    try { validateContinuation(status, status.runID); }
+    catch (error) { this.set({ error: (error as Error).message }); return; }
     this.set({ pending: { kind: "continuation", runID: status.runID, body: { requestID: crypto.randomUUID(), revision: status.revision, action,
       ...(this.browserEnabled() && action !== "cancel" ? { credentialMode: status.credentialMode ?? credentialMode() } : {}) } } });
-    await this.retry();
+    await this.retry(true);
   }
-  async retry() {
+  async retry(executeBrowser = false) {
     const pending = this.state.pending;
     if (!pending || this.state.busy || !this.live()) return;
     const task = this.begin();
@@ -62,12 +66,14 @@ export class SearchController {
       if (!task.current()) return;
       confirmed = true;
       this.set({ pending: null, confirmed: id, notice: "Request confirmed. Loading saved status." });
-      if (this.browserEnabled() && (pending.kind === "search" || pending.body.action !== "cancel")) {
+      if (executeBrowser && this.browserEnabled() && (pending.kind === "search" || pending.body.action !== "cancel") &&
+          (pending.kind === "search" || pending.body.action !== "capture" || this.captureEnabled())) {
         this.set({ confirmed: null });
-        await this.startBrowser(id);
+        await this.startBrowser(id, pending.kind === "search" ? "initial" : pending.body.action === "capture" ? "capture" : "metadata");
         return;
       }
-      await this.read(id); // read owns the next operation; its errors never become a POST retry.
+      await this.read(id, false, !executeBrowser && this.browserEnabled()
+        ? "Request reconciled. Review saved progress and resume explicitly; no provider request was repeated." : "");
     } catch (error) {
       if (!task.current()) return;
       if (error instanceof ApiError && error.status === 400) {
@@ -78,12 +84,12 @@ export class SearchController {
       } else this.set({ error: confirmed ? "Request confirmed; refresh saved status only." : "Response unconfirmed. Retry the same request; changing the draft does not replace it." });
     } finally { if (task.current()) this.set({ busy: false }); }
   }
-  async startBrowser(id: string) {
+  async startBrowser(id: string, purpose: "initial" | "capture" | "metadata" | "resume" = "resume") {
     if (!this.live() || !this.browserEnabled()) return;
     const task = this.begin();
     this.set({ browserRunID: id });
     let notice = "";
-    try { await this.browser.execute(id, task.signal); }
+    try { await this.browser.execute(id, task.signal, this.captureEnabled, purpose); }
     catch (error) { if (task.current()) notice = (error as Error).message; }
     if (task.current()) await this.read(id, false, notice || this.state.notice);
   }

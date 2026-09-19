@@ -2,6 +2,7 @@ import { CredentialMode, credentialsVersion, providerKey, subscribeCredentials }
 import { markSourceStarted, retainSourceCooldown } from "./scheduler";
 
 export type Descriptor = {
+  captureSegment?: number;
   runID: string; attemptID: string; revision: number; stage: "esearch" | "efetch";
   parameters: Record<string, string>; credentialMode: CredentialMode; maxBytes: number;
   expiresAt: string; fresh: boolean; state: "running" | "completed" | "failed" | "interrupted";
@@ -28,7 +29,8 @@ export function validateDescriptor(value: Descriptor, run: string): Descriptor {
     !["running", "completed", "failed", "interrupted"].includes(value.state) || !p ||
     Object.keys(p).some(key => !keys.includes(key)) || Object.values(p).some(v => typeof v !== "string" || v.length > 20000) ||
     p.db !== "pubmed" || p.retmode !== "xml" || p.tool !== "LitraDock" ||
-    (value.stage === "esearch" && (!p.term || p.retmax !== "1000" || p.retstart !== "0" || p.sort !== "relevance")) ||
+    (value.captureSegment !== undefined && (value.stage !== "esearch" || !Number.isSafeInteger(value.captureSegment) || value.captureSegment < 1 || value.captureSegment > 1024)) ||
+    (value.stage === "esearch" && (!p.term || p.retmax !== (value.captureSegment === undefined ? "1000" : "10000") || p.retstart !== "0" || p.sort !== "relevance")) ||
     (value.stage === "efetch" && (!/^\d{1,20}(,\d{1,20}){0,99}$/.test(p.id ?? "") || new Set(p.id.split(",")).size !== p.id.split(",").length)))
     throw new Error("The source request descriptor was invalid; no provider request was sent.");
   return value;

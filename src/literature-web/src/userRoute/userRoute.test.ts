@@ -6,6 +6,7 @@ import { browserRouteSupport, minimumGap, retainSourceCooldown, withSourceSlot }
 import { Descriptor, fetchPubMed, retryCooldown, validateDescriptor } from "./transport";
 import { BrowserRouteController } from "./controller";
 import { SearchController } from "../continuation/controller";
+import { continuation as stagedStatus } from "../stagedQuery/fixtures";
 
 const run = `RUN-${"1".repeat(32)}`;
 const xml = "<PubmedArticleSet>SYNTHETIC ONLY</PubmedArticleSet>";
@@ -162,4 +163,77 @@ it("queued browser work retains its recovery notice without a background polling
   await vi.advanceTimersByTimeAsync(10000);
   expect(fetch).toHaveBeenCalledTimes(1); expect(controller.state.notice).toContain("retry explicitly");
   expect(controller.state.browserRunID).toBeUndefined();controller.dispose();
+});
+
+function searchDescriptor(segment?: number): Descriptor {
+  return d({ stage: "esearch", ...(segment === undefined ? {} : { captureSegment: segment }), parameters: {
+    db: "pubmed", retmode: "xml", tool: "LitraDock", email: "synthetic@example.invalid", term: 'SYNTHETIC "治療"[Title]',
+    retmax: segment === undefined ? "1000" : "10000", retstart: "0", sort: "relevance" } });
+}
+it.each([1, 1024])("accepts the bounded capture segment %i while rejecting capacity or stage substitution", segment => {
+  expect(validateDescriptor(searchDescriptor(segment), run).captureSegment).toBe(segment);
+  for (const patch of [{ captureSegment: 0 }, { captureSegment: 1025 }, { captureSegment: 1.5 }, { captureSegment: null },
+    { stage: "efetch" }, { parameters: { ...searchDescriptor(segment).parameters, retmax: "1000" } }])
+    expect(() => validateDescriptor({ ...searchDescriptor(segment), ...patch } as Descriptor, run)).toThrow();
+  expect(() => validateDescriptor({ ...searchDescriptor(), parameters: searchDescriptor(segment).parameters }, run)).toThrow();
+});
+it.each(["initial", "capture", "unexpectedCapture", "disabledCapture"])("%s admits only its explicit source stages", async mode => {
+  vi.useFakeTimers();
+  const controller = new BrowserRouteController("L1", sessionGeneration(), vi.fn());
+  const sources: string[] = []; let claims = 0, uploads = 0;
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+    if (url.startsWith("https://eutils")) { sources.push(url); return new Response(xml, { headers: { "Content-Type": "text/xml" } }); }
+    if (url.endsWith("/claim")) {
+      claims++;
+      return json(mode.includes("Capture") || mode === "capture"
+        ? mode === "unexpectedCapture" && claims === 1 ? searchDescriptor() : searchDescriptor(1)
+        : claims === 1 ? searchDescriptor() : d());
+    }
+    if (url.endsWith("/upload")) { uploads++; return json({ runID: run, revision: 3, state: "ready" }); }
+    return json(page()); // Still canStart=true: completion must not cause another capture.
+  }));
+  const work = controller.execute(run, new AbortController().signal, () => mode !== "disabledCapture");
+  await vi.runAllTimersAsync(); await work;
+  expect(sources).toHaveLength(mode === "initial" ? 2 : mode === "disabledCapture" ? 0 : 1);
+  expect(uploads).toBe(sources.length);
+  if (mode === "initial") expect(sources[1]).toContain("efetch");
+  if (mode === "capture") expect(claims).toBe(1);
+});
+it("uncertain capture admission retains one UUID and reconciliation reads without a new provider call", async () => {
+  const posts: string[] = []; const source = vi.spyOn(BrowserRouteController.prototype, "execute").mockResolvedValue();
+  const controller = new SearchController("L1", sessionGeneration(), vi.fn(), vi.fn(), new AbortController().signal, () => {}, () => true, () => true);
+  vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+    if (init.method === "POST") { posts.push(String(init.body)); if (posts.length === 1) throw new TypeError("SYNTHETIC admission lost"); return json({ runID: run, revision: 8, state: "queued" }); }
+    return json({ ...page(), continuation: stagedStatus() });
+  }));
+  try {
+    await controller.action(stagedStatus(), "capture");
+    await controller.action(stagedStatus(), "continue"); expect(posts).toHaveLength(1);
+    await controller.retry(); expect(posts).toHaveLength(2); expect(posts[0]).toBe(posts[1]);
+    expect(JSON.parse(posts[0])).toMatchObject({ action: "capture", revision: 7, credentialMode: "unkeyed" });
+    expect(source).not.toHaveBeenCalled(); expect(controller.state.notice).toContain("reconciled");
+    await controller.action(stagedStatus(), "capture"); expect(source).toHaveBeenCalledOnce();
+  } finally { controller.dispose(); source.mockRestore(); }
+});
+it("disabled, malformed and stale capture actions admit no hidden source work", async () => {
+  let enabled = false;
+  const controller = new SearchController("L1", sessionGeneration(), vi.fn(), vi.fn(), new AbortController().signal, () => {}, () => true, () => enabled);
+  const fetch = vi.fn(async (_url: string, init: RequestInit) => init.method === "POST" ? json({}, 409) : json({ ...page(), continuation: stagedStatus() }));
+  vi.stubGlobal("fetch", fetch);
+  try {
+    await controller.action(stagedStatus(), "capture"); expect(fetch).not.toHaveBeenCalled();
+    enabled = true;
+    await controller.action(stagedStatus({ savedCount: 999999 }), "capture"); expect(fetch).not.toHaveBeenCalled();
+    await controller.action(stagedStatus(), "capture");
+    expect(controller.state.pending).toBeNull(); expect(controller.state.notice).toContain("not applied");
+    expect(fetch.mock.calls).toHaveLength(2); expect(fetch.mock.calls.every(([url]) => !url.startsWith("https://"))).toBe(true);
+  } finally { controller.dispose(); }
+});
+it("an explicit capture cannot be substituted with an initial search or metadata descriptor", async () => {
+  for (const descriptor of [searchDescriptor(), d()]) {
+    const controller = new BrowserRouteController("L1", sessionGeneration(), vi.fn());
+    const fetch = vi.fn(async (url: string) => url.endsWith("/claim") ? json(descriptor) : json(page())); vi.stubGlobal("fetch", fetch);
+    await controller.execute(run, new AbortController().signal, () => true, "capture");
+    expect(fetch.mock.calls).toHaveLength(2); expect(fetch.mock.calls.every(([url]) => !url.startsWith("https://"))).toBe(true);
+  }
 });

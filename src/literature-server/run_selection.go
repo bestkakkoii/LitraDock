@@ -12,6 +12,14 @@ import (
 )
 
 const runSelectionLimit = 1000
+
+func (s *server) savedSelectionLimit() int {
+	if s.stagedQuery {
+		return captureMembershipLimit
+	}
+	return runSelectionLimit
+}
+
 const runSelectionDetailLimit = 100
 const runSelectionMetadataLimit = 4 << 20
 
@@ -130,7 +138,7 @@ func selectionIntent(run string, action runSelectionAction) (string, error) {
 func (s *server) selectionStateFrom(ctx context.Context, tx pgx.Tx, library, run string) (runSelectionView, error) {
 	v := runSelectionView{RunID: run, SelectedIDs: []string{}, SelectedRecords: []map[string]any{},
 		RecordsComplete: true, CanEdit: s.cfg.SelectionWriteEnabled,
-		SelectionLimit: runSelectionLimit, DetailLimit: runSelectionDetailLimit}
+		SelectionLimit: s.savedSelectionLimit(), DetailLimit: runSelectionDetailLimit}
 	if !s.runSelection || !runIDPattern.MatchString(run) {
 		return v, &planError{404, "Durable selection is unavailable for this saved run."}
 	}
@@ -149,8 +157,8 @@ func (s *server) selectionStateFrom(ctx context.Context, tx pgx.Tx, library, run
 	if err = tx.QueryRow(ctx, "SELECT count(*) FROM ld_results WHERE library_id=$1 AND run_id=$2", library, run).Scan(&v.SavedCount); err != nil {
 		return v, err
 	}
-	if v.SavedCount > runSelectionLimit {
-		return v, &planError{413, "This saved run exceeds the 1,000-record selection limit. No partial selection was returned."}
+	if v.SavedCount > v.SelectionLimit {
+		return v, &planError{413, "This saved run exceeds its supported selection limit. No partial selection was returned."}
 	}
 	// Saved run membership is append-only. Include its size in the public revision
 	// so a newly committed page also invalidates an earlier selection/export view.
@@ -170,7 +178,7 @@ func (s *server) selectionStateFrom(ctx context.Context, tx pgx.Tx, library, run
 		v.SelectedIDs = []string{}
 	}
 	v.SelectedCount = len(v.SelectedIDs)
-	if v.SelectedCount > v.SavedCount || v.SelectedCount > runSelectionLimit {
+	if v.SelectedCount > v.SavedCount || v.SelectedCount > v.SelectionLimit {
 		return v, errors.New("inconsistent saved selection count")
 	}
 	return v, nil

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Continuation } from "./api";
 import { SearchController, SearchState } from "./controller";
+import { countLabel } from "../stagedQuery/capture";
 
 export function ContinuationPanel({ status, state, controller, runID, visible, checked }: {
   status: Continuation | null; state: SearchState; controller: SearchController;
@@ -8,31 +9,38 @@ export function ContinuationPanel({ status, state, controller, runID, visible, c
 }) {
   const [cancel, setCancel] = useState(false);
   const blocked = state.busy || !!state.pending || !!state.confirmed || !!state.browserPending;
+  const missingPMIDs = status?.missingPMIDs?.slice(0, 100) ?? [];
+  const requestLabel = status?.capture ? "source request" : "metadata page";
   return <section className="continuation" aria-label="Search continuation">
     <h3>Saved search progress</h3>
     {status ? <>
       <p role="status"><strong>{status.state.replaceAll("_", " ")}</strong>{status.reason && ` · ${status.reason}`}</p>
-      <p>{status.providerTotal.toLocaleString()} provider matches · {status.windowCount.toLocaleString()} captured identities (window limit {status.windowLimit.toLocaleString()})</p>
+      <p>{countLabel(status.providerTotal, "initial provider match", "initial provider matches")} · {countLabel(status.windowCount, "captured identity", "captured identities")} (limit {status.windowLimit.toLocaleString()})</p>
+      {status.capture && <p>{status.capture.latestProviderTotal === null ? "No later provider observation" : `${countLabel(status.capture.latestProviderTotal, "match", "matches")} in the latest full-query observation`} · ID coverage: {status.capture.state.replaceAll("_", " ")}</p>}
       <p>{status.processedCount} processed · {status.savedCount} saved · {status.missingCount} missing · {visible} visible · {checked} checked</p>
-      {status.execution === "user_browser" && <p>Source route: this browser · {status.credentialMode === "personal_key" ? "personal key required" : "without a key"}. Saved responses are client submitted; they are not independently source-attested.</p>}
       <div className="result-actions">
         {status.canStart && <button disabled={blocked} onClick={() => void controller.startBrowser(status.runID)}>Resume in this browser</button>}
         {status.canRecover && <button className="secondary" disabled={blocked} onClick={() => void controller.recoverBrowser(status)}>Check saved progress</button>}
         <button disabled={blocked || !status.canContinue} onClick={() => void controller.action(status, "continue")}>Retrieve next metadata page</button>
         <button className="secondary" disabled={blocked || !status.canRetry} onClick={() => void controller.action(status, "retry")}>Retry metadata page</button>
-        <button className="secondary" disabled={blocked || !status.canCancel} onClick={() => setCancel(true)}>Cancel metadata page</button>
+        <button className="secondary" disabled={blocked || !status.canCancel} onClick={() => setCancel(true)}>Cancel {requestLabel}</button>
       </div>
-      {cancel && status.canCancel && <div><p>Cancel this queued or running metadata page? Saved records remain available.</p>
-        <button disabled={blocked} onClick={() => { setCancel(false); void controller.action(status, "cancel"); }}>Confirm metadata cancellation</button>
-        <button className="secondary" onClick={() => setCancel(false)}>Keep metadata page</button></div>}
+      {cancel && status.canCancel && <div><p>Cancel this queued or running {requestLabel}? Saved records remain available.</p>
+        <button disabled={blocked} onClick={() => { setCancel(false); void controller.action(status, "cancel"); }}>Confirm cancellation</button>
+        <button className="secondary" onClick={() => setCancel(false)}>Keep {requestLabel}</button></div>}
       <details><summary>Membership and retrieval limits</summary>
-        <p>Each explicit request retrieves at most {status.pageSize} identities. Attempts for the current page: {status.attempts}/3. No next page or retry starts automatically.</p>
-        <p>Membership captured: {status.snapshotAt ?? "not yet captured"}. This preserves identities, not a frozen copy of source metadata. The 1,000-identity operational window is not the full provider result set. Refine the query and start a separate search for different coverage; totals across runs are not additive.</p>
+        <p>Each metadata request retrieves at most {status.pageSize} identities. Attempts for the current metadata page: {status.attempts}/3. No next page or retry starts automatically.</p>
+        <p>Initial membership captured: {status.snapshotAt ?? "not yet captured"}. This preserves identities, not a frozen copy of source metadata. {status.capture
+          ? "Additional captures preserve the original query and filters. Initial order stays first, followed by segment capture order; this is not a new global Best Match ranking. Provider observations can change between requests. Complete ID coverage describes the observed capture plan, not complete metadata or available PDFs."
+          : "The 1,000-identity operational window is not the full provider result set. Refine the query and start a separate search for different coverage; totals across runs are not additive."}</p>
+        {status.capture && <><p>Capture requests: {status.capture.requests}/{status.capture.requestLimit} · Completed segments: {status.capture.completedSegments} · Pending segments: {status.capture.pendingSegments}. Each Find more results action sends at most one source search; it may divide a large segment without adding IDs. Membership limit: {status.capture.membershipLimit.toLocaleString()}; per-segment provider boundary: {status.capture.providerBoundary.toLocaleString()}. These application limits do not establish live provider capacity.</p>
+          {status.capture.reason && <p>{status.capture.reason}</p>}</>}
+        {status.execution === "user_browser" && <p>Source route: this browser · {status.credentialMode === "personal_key" ? "personal key required" : "without a key"}. Saved responses are client submitted; they are not independently source-attested.</p>}
         <p>New saved records follow the saved all/none selection policy and individual exceptions. They do not change an existing basket or submitted download plan. Refreshing or reopening only reads saved status.</p>
       </details>
-      {!!status.missingPMIDs?.length && <details><summary>Missing metadata identities ({status.missingPMIDs.length})</summary>
+      {!!missingPMIDs.length && <details><summary>Missing metadata identities ({missingPMIDs.length} shown of {status.missingCount})</summary>
         <p>These identities were not saved as records. Check their source pages; a link does not guarantee available metadata or full text.</p>
-        <ul>{status.missingPMIDs.map(id => <li key={id}><a href={`https://pubmed.ncbi.nlm.nih.gov/${id}/`} target="_blank" rel="noopener noreferrer">PMID {id}</a></li>)}</ul>
+        <ul>{missingPMIDs.map(id => <li key={id}><a href={`https://pubmed.ncbi.nlm.nih.gov/${id}/`} target="_blank" rel="noopener noreferrer">PMID {id}</a></li>)}</ul>
       </details>}
     </> : runID && <p>This saved run has no continuation window. Existing records and downloads remain available; it will not be backfilled automatically.</p>}
     {state.busy && <p role="status">Loading search status…</p>}

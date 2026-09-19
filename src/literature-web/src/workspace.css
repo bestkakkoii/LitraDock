@@ -63,6 +63,14 @@ summary { cursor: pointer; }
 .saved-search-detail > summary, .export-options > summary { padding: .4rem 0; color: #275777; }
 .query-snapshot { display: grid; gap: .35rem; padding: .65rem; background: #e9f2fb; border-radius: 6px; overflow-wrap: anywhere; }
 .query-snapshot strong { font-size: .95rem; }
+.staged-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .6rem; margin: .35rem 0 .6rem; }
+.staged-actions button { padding: .35rem .6rem; min-height: 36px; font-size: .82rem; }
+.staged-actions p { flex-basis: 100%; margin: 0; font-size: .85rem; overflow-wrap: anywhere; }
+.staged-export { padding: .7rem; border: 1px solid #b9d1df; border-radius: 6px; background: #fff; }
+.staged-export-options { display: flex; flex-wrap: wrap; align-items: end; gap: .6rem; }
+.staged-export label { display: grid; gap: .25rem; min-width: 0; }
+.staged-export select { width: auto; max-width: 100%; }
+.staged-export p { margin: .5rem 0; overflow-wrap: anywhere; }
 .research-workspace .result-card { box-shadow: none; border-radius: 6px; padding: .85rem 1rem; }
 .result-card h3 { font-size: 1.06rem; line-height: 1.5; color: #154e79; }
 .article-heading { display: flex; align-items: flex-start; gap: .65rem; }
@@ -103,3 +111,14 @@ summary { cursor: pointer; }
   .selection-toolbar .result-actions { gap: .35rem; }
   .research-workspace .result-card { padding: .75rem; }
 }
+.research-workspace .compact-metadata-export { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; border: 0; padding: .35rem 0 0; background: transparent; }
+.compact-metadata-export > [role], .compact-metadata-export > div, .compact-metadata-export > p, .compact-metadata-export > details[open] { flex-basis: 100%; }
+.compact-metadata-export > button { max-width: 100%; white-space: normal; }
+.metadata-export-options > summary { padding: .35rem 0; font-size: .82rem; }
+.pdf-selection-details > summary { padding: .5rem .85rem; font-size: .82rem; }
+.selection-limit-detail { margin: .5rem .85rem; }
+.research-workspace .active-results > .pager { margin: .4rem 0; gap: .4rem; }
+.research-workspace .active-results > .pager button { min-height: 36px; padding: .35rem .65rem; font-size: .85rem; }
+.result-secondary-options { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 .65rem; }
+.result-secondary-options > details { flex: 1 1 160px; min-width: 0; margin: .25rem 0; }
+.result-secondary-options > details[open] { flex-basis: 100%; }

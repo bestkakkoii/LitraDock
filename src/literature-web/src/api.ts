@@ -49,6 +49,7 @@ export type LibraryPage = {
   limit: number;
 };
 export type ServiceInfo = {
+	stagedQueryEnabled?: boolean;
 	userRouteEnabled?: boolean;
   durableSelectionEnabled?: boolean;
   selectionWriteEnabled?: boolean;

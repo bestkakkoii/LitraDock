@@ -17,6 +17,7 @@
   "SavedSetEnabled": false,
   "SearchContinuationEnabled": false,
 	"UserRouteEnabled": false,
+	"StagedQueryEnabled": false,
 	"PubMedDeveloperEmail": "",
   "BundleDeliveryEnabled": false,
   "SelectionWriteEnabled": false

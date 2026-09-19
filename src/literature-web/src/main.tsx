@@ -32,6 +32,10 @@ import { Continuation } from "./continuation/api";
 import { SearchController, emptySearchState } from "./continuation/controller";
 import { UserRouteControls } from "./userRoute/Controls";
 import { ContinuationPanel } from "./continuation/ContinuationPanel";
+import { CaptureControls } from "./stagedQuery/CaptureControls";
+import { ExportPanel } from "./stagedQuery/ExportPanel";
+import { exportContext } from "./stagedQuery/api";
+import { countLabel } from "./stagedQuery/capture";
 import { FilterChips, SearchFilters } from "./components/SearchFilters";
 import { composeSearch, emptyFilters, filterCount, restoreSearch } from "./searchFilters";
 import { readWorkspaceRoute, writeWorkspaceRoute, WorkspaceView } from "./workspaceNavigation";
@@ -160,9 +164,12 @@ export function App() {
   const applySearchPage = useRef<(page: RunPage) => void>(() => {});
   const browserSourceEnabled = useRef(false);
   browserSourceEnabled.current = serviceInfo?.userRouteEnabled === true;
+  const stagedQueryEnabled = useRef(false);
+  stagedQueryEnabled.current = serviceInfo?.stagedQueryEnabled === true;
   const searchController = useMemo(() => new SearchController(library, sessionGeneration(), setSearchState,
     page => applySearchPage.current(page), libraryPlanScope.current.signal,
-    () => { runGeneration.current++; retireRecordPage(); setBusy(false); }, () => browserSourceEnabled.current), [library, sessionGeneration(), libraryPlanScope.current.signal]);
+    () => { runGeneration.current++; retireRecordPage(); setBusy(false); }, () => browserSourceEnabled.current,
+    () => stagedQueryEnabled.current), [library, sessionGeneration(), libraryPlanScope.current.signal]);
   useLayoutEffect(() => {
     setSearchState(emptySearchState()); setContinuation(null);
     return () => searchController.dispose();
@@ -185,7 +192,9 @@ export function App() {
   };
   const selection = useSavedSelection(library, run, sessionGeneration(), planScope.current.signal, records, serviceInfo, selectionReadVersion);
   const selected = selection.selected;
-  const selectionMaximum = 1000;
+  const selectionMaximum = selection.snapshot?.selectionLimit ?? (serviceInfo?.selectionRecordLimit === 20000 ? 20000 : 1000);
+  const stagedExportContext = useMemo(() => continuation && selection.snapshot
+    ? exportContext(continuation, selection.snapshot, snapshot) : null, [continuation, selection.snapshot, snapshot]);
   const isCurrentBatchOperation = (
     operation: number,
     expectedLibrary: string,
@@ -879,15 +888,17 @@ export function App() {
             </div>}
             {serviceInfo?.searchEnabled === false && <p className="muted">New searches are temporarily disabled. Saved results remain available.</p>}
             <div className="result-head compact-result-head">
-              <div><h2 id="results-heading" tabIndex={-1}>Results <span className="count">{run?.total.toLocaleString() ?? 0} matches</span></h2>
-                <p className="muted small">{run?.fetched ?? 0} loaded · {records.length ? recordOffset + 1 : 0}–{recordOffset + records.length} shown{run ? ` · ${run.state}` : ''}</p>
+              <div><h2 id="results-heading" tabIndex={-1}>Results <span className="count">{countLabel(run?.total ?? 0, continuation?.capture ? "initial match" : "match", continuation?.capture ? "initial matches" : "matches")}</span></h2>
+                <p className="muted small">{continuation?.capture ? `${countLabel(continuation.windowCount, "ID captured", "IDs captured")} · ${continuation.savedCount.toLocaleString()} saved` : `${run?.fetched ?? 0} loaded`} · {records.length ? recordOffset + 1 : 0}–{recordOffset + records.length} shown{run && !continuation?.capture ? ` · ${run.state}` : ''}</p>
               </div>
-              <div className="result-display"><span className="small">Sort: PubMed relevance</span>
+              <div className="result-display"><span className="small">{continuation?.capture && continuation.capture.state !== "not_started" ? "Order: initial, then captured" : "Sort: PubMed relevance"}</span>
                 <label>Per page <select aria-label="Page size" value={pageSize} disabled={busy} onChange={e => { const size = Number(e.target.value); setPageSize(size); if (run) void openSaved(run.run_id, 0, size); }}>
                   {[5, 25, 50, 100].map(n => <option key={n}>{n}</option>)}
                 </select></label>
               </div>
             </div>
+            {continuation?.capture && <CaptureControls status={continuation} state={searchState} controller={searchController}
+              enabled={serviceInfo?.stagedQueryEnabled === true && serviceInfo?.userRouteEnabled === true} blocked={busy || draftChanged} />}
             <div className="selection-and-pdfs">
               <section className="selection-toolbar" aria-label="Saved record selection">
                 <p aria-live="polite" style={{ lineHeight: 1.35, marginBottom: ".3rem" }}><strong>{selection.snapshot ? `${selection.count} selected of ${selection.total} saved ${selection.total === 1 ? 'record' : 'records'}` : run ? 'Selection not loaded' : 'No saved selection'}</strong></p>
@@ -899,7 +910,7 @@ export function App() {
                       <button className="secondary" disabled={!selection.canEdit || !records.length || draftChanged || busy} onClick={selection.selectPage}>Select page</button>
                       <button className="secondary" disabled={!selection.canEdit || !records.length || draftChanged || busy} onClick={selection.deselectPage}>Deselect page</button>
                     </div>
-                    <p>All saved covers this run across pages, up to 1,000 records. Page controls add or remove only this page. Choices are saved to your library and restored when you reopen the run. All / none also applies to newly retrieved records; individual exceptions remain. PubMed matches not yet saved are excluded.</p>{run && !selection.unavailable && !selection.pending && !selection.error && <button className="secondary" disabled={selection.loading || busy} onClick={() => void selection.reload()}>Reload saved selection</button>}
+                    <p>All saved covers this run across pages, up to {selectionMaximum.toLocaleString()} records. Page controls add or remove only this page. Choices are saved to your library and restored when you reopen the run. All / none also applies to newly retrieved records; individual exceptions remain. PubMed matches not yet saved are excluded.</p>{run && !selection.unavailable && !selection.pending && !selection.error && <button className="secondary" disabled={selection.loading || busy} onClick={() => void selection.reload()}>Reload saved selection</button>}
                   </details>
                 </div>
                 {selection.loading && <p role="status">Loading saved selection…</p>}
@@ -910,40 +921,54 @@ export function App() {
                 {selection.error && <p role="alert">{selection.error}</p>}
                 {(selection.pending || selection.error) && <button className="secondary" disabled={selection.saving || selection.loading || busy} onClick={() => void selection.reload()}>Reload saved selection</button>}
                 {selection.pending?.phase === 'uncertain' && !selection.saving && !selection.loading && <button onClick={() => void selection.retry()}>Retry same selection change</button>}
-                {selection.snapshot && !selection.snapshot.recordsComplete && <p className="small">{selection.snapshot.recordsReason} Metadata export includes the full selection. Choose up to 100 records for PDFs or a research snapshot.</p>}
+                {stagedExportContext && selection.count > 100 && <ExportPanel compact library={library} context={stagedExportContext} generation={sessionGeneration()}
+                  signal={planScope.current.signal} blocked={!selection.ready || busy || batchBusy || draftChanged || searchBlocked}
+                  onRefresh={() => { void selection.reload(); if (run) void searchController.read(run.run_id); }} />}
               </section>
+              <details className="pdf-selection-details" open={!(continuation?.capture && (selection.count === 0 || selection.count > 100) && !pdfNotice.message)}>
+                <summary hidden={!(continuation?.capture && (selection.count === 0 || selection.count > 100) && !pdfNotice.message)}>PDFs · 10 per batch / 100 per plan</summary>
+                {selection.snapshot && !selection.snapshot.recordsComplete && <p className="small selection-limit-detail">{selection.snapshot.recordsReason} All choices remain saved. Export the full selection as metadata, or choose up to 100 records for PDFs or a research snapshot.</p>}
               <PdfAvailability selectedCount={selected.size} ids={[...selection.ids]} ready={selection.detailsReady && !busy && !draftChanged}
                 enabled={serviceInfo?.pdfEnabled === true} plansEnabled={serviceInfo?.planEnabled === true}
                 library={library} runID={run?.run_id} generation={sessionGeneration()} scopeSignal={planScope.current.signal}
                 confirmedPlanID={confirmedPdfPlan} policy={serviceInfo?.pdfPolicySummary} onStart={retireChildView} onStatus={setPdfNotice}
                 onBatch={id => openBatch(id, true)} onPlan={id => { setPdfPlan(value => ({ id, sequence: (value?.sequence ?? 0) + 1 })); setView('plans'); }} />
+              </details>
             </div>
-            {(run || searchState.pending || searchState.confirmed || searchState.busy || searchState.error) && <details className="saved-search-detail" open={!!(searchState.pending || searchState.confirmed || searchState.busy || searchState.error || (run && ['queued', 'running', 'error'].includes(run.state)))}>
-              <summary>Search progress and query details{continuation?.canContinue ? ' · More records available' : ''}</summary>
+            <div className={continuation?.capture ? "result-secondary-options" : undefined}>
+            {(run || searchState.pending || searchState.confirmed || searchState.busy || searchState.error) && <details className="saved-search-detail" open={!continuation?.capture && !!(searchState.pending || searchState.confirmed || searchState.busy || searchState.error || (run && ['queued', 'running', 'error'].includes(run.state)))}>
+              <summary>Search progress and query details{!continuation?.capture && continuation?.canContinue ? ' · More records available' : ''}</summary>
               {run && <div className="query-snapshot"><span className="muted">Query snapshot</span><strong>{snapshot}</strong><span className="small">Search Run ID: {run.run_id}</span></div>}
               <ContinuationPanel key={`${library}:${sessionGeneration()}:${run?.run_id ?? ""}`} status={continuation} state={searchState} controller={searchController}
                 runID={run?.run_id} visible={records.length} checked={selected.size} />
             </details>}
             <details className="export-options"><summary>Export saved results and other actions</summary>
+            {stagedExportContext && selection.count <= 100 && <ExportPanel library={library} context={stagedExportContext} generation={sessionGeneration()}
+              signal={planScope.current.signal} blocked={!selection.ready || busy || batchBusy || draftChanged || searchBlocked}
+              onRefresh={() => { void selection.reload(); if (run) void searchController.read(run.run_id); }} />}
+            {continuation?.capture && !stagedExportContext && <p role="status">Refresh saved progress and selection to prepare a matching export scope.
+              <button className="secondary" disabled={busy || searchBlocked || selection.loading || selection.saving}
+                onClick={() => { void selection.reload(); if (run) void searchController.read(run.run_id); }}>Refresh progress and selection</button></p>}
+            <details open={!continuation?.capture}><summary>Single-file exports and XML batch</summary>
           <div className="result-head">
             <div className="result-actions">
               <span aria-live="polite">{selection.count} selected across saved record pages (maximum {selectionMaximum})</span>
               <button
                 className="secondary"
-                disabled={!run || batchBusy}
+                disabled={!run || batchBusy || pageTotal > 1000}
                 onClick={() => run && exportCsv({ runID: run.run_id })}
               >
                 Export saved CSV
               </button>
               <button
                 className="secondary"
-                disabled={!run || batchBusy}
+                disabled={!run || batchBusy || pageTotal > 1000}
                 onClick={() => run && exportXlsx({ runID: run.run_id })}
               >
                 Export saved XLSX
               </button>
               {(["json", "jsonl"] as const).map(format => (
-                <button className="secondary" key={format} disabled={!run || busy || batchBusy}
+                <button className="secondary" key={format} disabled={!run || busy || batchBusy || pageTotal > 1000}
                   aria-describedby="run-structured-scope"
                   onClick={() => run && void exportStructured({ runID: run.run_id }, format)}>
                   Export saved run {format.toUpperCase()}
@@ -951,7 +976,7 @@ export function App() {
               ))}
               {(["csv", "xlsx", "json", "jsonl"] as const).map(format => (
                 <button className="secondary" key={`selected-${format}`}
-                  disabled={!run || !selection.ready || !selection.count || busy || batchBusy || draftChanged}
+                  disabled={!run || !selection.ready || !selection.count || busy || batchBusy || draftChanged || selection.total > 1000}
                   onClick={() => {
                     if (!run || !selection.ready || !selection.revision || !selection.count) return;
                     const scope = { runID: run.run_id, selection: "selected" as const, selectionRevision: selection.revision,
@@ -982,9 +1007,10 @@ export function App() {
               </button>
             </div>
           </div>
-          <p id="run-structured-scope" className="muted small">Saved exports include all saved records in this run. Selected exports include exactly the confirmed checked records across pages, at the saved selection revision. Both support up to 1,000 records; neither includes unretrieved provider matches. These are metadata files, not full-text downloads.</p>
-
+          <p id="run-structured-scope" className="muted small">Single-file saved exports include all saved records in this run. Single-file selected exports include exactly the confirmed checked records across pages, at the saved selection revision. Both support runs of up to 1,000 saved records; larger runs use metadata ZIP or explicit parts above. Unsaved provider matches are excluded. These are metadata files, not full-text downloads.</p>
             </details>
+            </details>
+            </div>
           {run &&
             (recordOffset > 0 ||
               canAdvanceRecords(pageTotal, recordOffset, records.length)) && (
@@ -1212,7 +1238,7 @@ export function App() {
           <section className="capability">
             <strong>Batch, download and export</strong>
             <span>
-              Search retrieves at most 100 identities per metadata page. New continuation-enabled runs capture an operational window of up to 1,000 identities; each next page requires an explicit request. Legacy runs keep their original saved scope. Each batch processes up to 10 checked saved records. PDF acquisition requires the current server policy and a permitted repository original; unavailable records retain reasons and source links. Create batch acquires XML, while Download PDFs explicitly requests PDF. Server acquisition is separate from downloads to this device. No publisher account login is provided.
+              Search retrieves at most 100 identities per metadata page. Initial searches capture up to 1,000 identities; supported staged queries can explicitly capture more, up to the displayed limit. Each additional capture and metadata page requires an explicit request. Legacy runs keep their saved scope. Each batch processes up to 10 checked saved records, and a PDF plan contains at most 100. PDF acquisition requires the current server policy and a permitted repository original; unavailable records retain reasons and source links. Create batch acquires XML, while Download PDFs explicitly requests PDF. Server acquisition is separate from downloads to this device. No publisher account login is provided.
             </span>
           </section>
 

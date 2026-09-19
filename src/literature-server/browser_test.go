@@ -37,6 +37,9 @@ func TestBrowserServer(t *testing.T) {
 	}
 	// Match production pool capacity: two HTTP admission connections plus worker and transaction connections.
 	pc.MaxConns = 8
+	if os.Getenv("LITRADOCK_STAGED_QUERY_BROWSER_TEST") == "yes" {
+		pc.ConnConfig.RuntimeParams["statement_timeout"] = "60000"
+	}
 	revision := os.Getenv("NATIVE_BROWSER_REVISION")
 	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(revision) {
 		t.Fatal("exact source revision required")
@@ -83,7 +86,8 @@ func TestBrowserServer(t *testing.T) {
 	if _, err = db.Exec(ctx, nativeSchema); err != nil {
 		t.Fatal(err)
 	}
-	userRoute := os.Getenv("LITRADOCK_USER_ROUTE_BROWSER_TEST") == "yes"
+	stagedQuery := os.Getenv("LITRADOCK_STAGED_QUERY_BROWSER_TEST") == "yes"
+	userRoute := os.Getenv("LITRADOCK_USER_ROUTE_BROWSER_TEST") == "yes" || stagedQuery
 	bundles := os.Getenv("LITRADOCK_BUNDLE_BROWSER_TEST") == "yes"
 	continuation := os.Getenv("LITRADOCK_CONTINUATION_BROWSER_TEST") == "yes" || bundles || userRoute
 	multirun := os.Getenv("LITRADOCK_MULTIRUN_BROWSER_TEST") == "yes" || continuation
@@ -100,6 +104,12 @@ func TestBrowserServer(t *testing.T) {
 		}
 		for _, migrate := range []func(context.Context, pgx.Tx, bool) error{migrateContinuation, migrateBundles, migrateSavedSnapshots, migrateRunSelection, migrateUserRoute} {
 			if err = migrate(ctx, tx, false); err != nil {
+				tx.Rollback(ctx)
+				t.Fatal(err)
+			}
+		}
+		if stagedQuery {
+			if err = migrateQueryCapture(ctx, tx, false); err != nil {
 				tx.Rollback(ctx)
 				t.Fatal(err)
 			}
@@ -133,6 +143,7 @@ func TestBrowserServer(t *testing.T) {
 	cfg.SavedSetEnabled = multirun
 	cfg.SearchContinuationEnabled = continuation
 	cfg.UserRouteEnabled = userRoute
+	cfg.StagedQueryEnabled = stagedQuery
 	cfg.BundleDeliveryEnabled = bundles
 	cfg.SelectionWriteEnabled = true
 	if bundles {
@@ -276,6 +287,7 @@ func TestBrowserServer(t *testing.T) {
 	s.savedSnapshots = true
 	s.runSelection = true
 	s.userRoute = true
+	s.stagedQuery = stagedQuery
 	service := &http.Server{Handler: s, ReadHeaderTimeout: 5 * time.Second}
 	defer service.Close()
 	go s.worker(ctx)
@@ -283,6 +295,11 @@ func TestBrowserServer(t *testing.T) {
 	input := map[string]any{"origin": cfg.Origin, "accounts": accounts, "source_revision": revision, "manifest": manifestPath, "originals": originals, "source_gate": os.Getenv("NATIVE_BROWSER_INPUT") + ".source-release", "scope": "SYNTHETIC ONLY; actual native handlers/PostgreSQL; no external transport"}
 	if bundles {
 		input["bundle_seed"] = seedBundleBrowser(t, ctx, db, accounts[0]["login"])
+	}
+	if stagedQuery {
+		t.Log("Preparing SYNTHETIC staged-query browser metadata; no provider transport")
+		input["capture_seed"] = seedQueryCaptureBrowser(t, ctx, s, accounts[0]["login"])
+		t.Log("SYNTHETIC staged-query metadata ready")
 	}
 	b, _ = json.MarshalIndent(input, "", "  ")
 	output := os.Getenv("NATIVE_BROWSER_INPUT")

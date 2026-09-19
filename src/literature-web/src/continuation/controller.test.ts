@@ -32,6 +32,10 @@ it("accepts absent legacy and pre-snapshot queued status; rejects impossible cou
   expect(validateContinuation(status({ processedCount: 2, missingCount: 1, missingPMIDs: ["123"] }), id)?.missingPMIDs).toEqual(["123"]);
   expect(() => validateContinuation(status({ processedCount: 2, missingCount: 1, missingPMIDs: ["123/evil"] }), id)).toThrow();
 });
+it("keeps a schema10 missing-ID response readable even when it predates the 100-link display bound", () => {
+  const missingPMIDs = Array.from({ length: 300 }, (_, i) => String(i + 1));
+  expect(validateContinuation(status({ processedCount: 301, savedCount: 1, missingCount: 300, missingPMIDs }), id)?.missingCount).toBe(300);
+});
 it.each([{}, { runID: id }, { runID: id, revision: 0, state: "ready" }, { runID: other, revision: 1, state: "ready" },
   { runID: "RUN-malformed", revision: 1, state: "ready" }, { runID: id, revision: 1, state: "fictional" }].map(receipt => ({ receipt })))
   ("malformed200 $receipt retains exact continuation payload after navigation and changed action", async ({ receipt }) => {

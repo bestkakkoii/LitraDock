@@ -1,9 +1,11 @@
 import { request } from "../api";
 import { CredentialMode } from "../userRoute/credentials";
+import { Capture, validateCapture } from "../stagedQuery/capture";
 
 export const states = ["queued", "running", "ready", "exhausted", "window_limited", "cancelled", "failed", "rate_wait", "expired", "unavailable"] as const;
 export type ContinuationState = typeof states[number];
 export type Continuation = {
+  capture?: Capture;
   execution?: "user_browser"; credentialMode?: CredentialMode; canStart?: boolean; canRecover?: boolean;
   attemptID?: string; attemptExpiresAt?: string | null;
   runID: string; revision: number; state: ContinuationState; windowLimit: number;
@@ -12,7 +14,7 @@ export type Continuation = {
   canRetry: boolean; canCancel: boolean; reason: string; snapshotAt: string | null;
   missingPMIDs?: string[] | null;
 };
-export type Action = "continue" | "retry" | "cancel";
+export type Action = "continue" | "retry" | "cancel" | "capture";
 export const validRunID = (id: unknown): id is string => typeof id === "string" && /^RUN-[0-9a-f]{32}$/.test(id);
 export function validateReceipt(value: unknown, expected: string) {
   const receipt = value as { runID?: unknown; revision?: number; state?: ContinuationState } | null;
@@ -23,18 +25,20 @@ export function validateReceipt(value: unknown, expected: string) {
 export function validateContinuation(value: Continuation | null | undefined, runID: string): Continuation | null {
   if (value == null) return null;
   validateReceipt(value, runID);
+  const capture = value.capture === undefined ? undefined : validateCapture(value.capture);
   if (value.execution !== undefined && (value.execution !== "user_browser" || !["unkeyed", "personal_key"].includes(value.credentialMode ?? "") ||
     (value.canStart !== undefined && typeof value.canStart !== "boolean") || (value.canRecover !== undefined && typeof value.canRecover !== "boolean") ||
     (value.attemptID !== undefined && !/^[0-9a-f-]{36}$/.test(value.attemptID)) ||
     (value.attemptExpiresAt != null && !Number.isFinite(Date.parse(value.attemptExpiresAt)))))
     throw new Error("Browser source status is invalid; no request was admitted.");
   if (![value.windowCount, value.processedCount, value.savedCount, value.missingCount, value.providerTotal, value.attempts].every(n => Number.isSafeInteger(n) && n >= 0) ||
-    value.windowLimit !== 1000 || value.windowCount > value.windowLimit || value.windowCount > value.providerTotal ||
+    (value.windowLimit !== 1000 && !(capture && value.windowLimit === 20000)) || value.windowCount > value.windowLimit ||
+    (!capture && value.windowCount > value.providerTotal) ||
     value.processedCount > value.windowCount || value.savedCount + value.missingCount !== value.processedCount ||
     !Number.isInteger(value.pageSize) || value.pageSize < 1 || value.pageSize > 100 || value.attempts > 3 ||
     [value.canContinue, value.canRetry, value.canCancel].some(v => typeof v !== "boolean") || typeof value.reason !== "string" ||
     (value.snapshotAt !== null && (typeof value.snapshotAt !== "string" || !Number.isFinite(Date.parse(value.snapshotAt)))) ||
-    (value.missingPMIDs != null && (!Array.isArray(value.missingPMIDs) || value.missingPMIDs.length > value.missingCount ||
+    (value.missingPMIDs != null && (!Array.isArray(value.missingPMIDs) || value.missingPMIDs.length > (capture ? Math.min(100, value.missingCount) : value.missingCount) ||
       new Set(value.missingPMIDs).size !== value.missingPMIDs.length || value.missingPMIDs.some(id => typeof id !== "string" || !/^[0-9]+$/.test(id)))))
     throw new Error("Search continuation status is invalid. Refresh saved status; no work was admitted.");
   return value;

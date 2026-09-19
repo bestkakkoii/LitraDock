@@ -87,7 +87,7 @@ func (s *server) queueUserSearch(ctx context.Context, library, query string, lim
 	if e = capacityLock(ctx, tx); e != nil {
 		return "", e
 	}
-	if e = retireExpiredUserRouteWork(ctx, tx); e != nil {
+	if e = retireExpiredUserRouteWork(ctx, tx, s.stagedQuery); e != nil {
 		return "", e
 	}
 	var prior, input, previousMode string
@@ -129,6 +129,7 @@ func (s *server) queueUserSearch(ctx context.Context, library, query string, lim
 }
 
 type userRouteDescriptor struct {
+	CaptureSegment int               `json:"captureSegment,omitempty"`
 	RunID          string            `json:"runID"`
 	AttemptID      string            `json:"attemptID"`
 	Revision       int               `json:"revision"`
@@ -188,7 +189,7 @@ func (s *server) claimUserRoute(ctx context.Context, library, run string, a user
 	if e = capacityLock(ctx, tx); e != nil {
 		return d, e
 	}
-	if e = retireExpiredUserRouteWork(ctx, tx); e != nil {
+	if e = retireExpiredUserRouteWork(ctx, tx, s.stagedQuery); e != nil {
 		return d, e
 	}
 	if prior, exists, err := readUserRouteAttempt(ctx, tx, library, run, a.RequestID, sess); err != nil || exists {
@@ -218,11 +219,22 @@ WHERE j.library_id=$1 AND j.run_id=$2 AND j.kind='browser_search' FOR UPDATE OF 
 	if state != "queued" || revision != a.Revision || attempts >= 3 || !frozen && started {
 		return d, &planError{409, "Saved source state changed or is interrupted; reconcile it before requesting another attempt."}
 	}
+	var capture *queryCapturePlan
+	if s.stagedQuery {
+		capture, e = readCapturePlan(ctx, tx, library, run)
+		if e != nil {
+			return d, e
+		}
+	}
+	captureActive := capture != nil && capture.Active
+	if captureActive && (!s.cfg.StagedQueryEnabled || capture.State != "ready" || len(capture.Frontier) == 0 || capture.Requests >= captureRequestLimit) {
+		return d, &planError{409, "Staged capture admission is disabled or exhausted; no provider request was started."}
+	}
 	var ids []string
 	if json.Unmarshal([]byte(rawIDs), &ids) != nil || !validWindowIDs(ids) || offset < 0 || offset > len(ids) || size < 1 || size > 100 {
 		return d, errors.New("invalid browser window")
 	}
-	if frozen && offset >= len(ids) {
+	if frozen && offset >= len(ids) && !captureActive {
 		return d, &planError{409, "The saved identity window is exhausted."}
 	}
 	var count int
@@ -245,7 +257,18 @@ WHERE j.library_id=$1 AND j.run_id=$2 AND j.kind='browser_search' FOR UPDATE OF 
 		return d, &planError{429, "This session is waiting for its source cooldown; no provider request was started."}
 	}
 	d = userRouteDescriptor{RunID: run, AttemptID: a.RequestID, Revision: revision + 1, Stage: "esearch", Parameters: map[string]string{"db": "pubmed", "retmode": "xml", "term": normalizedPubMedQuery(query), "retmax": fmt.Sprint(searchWindowLimit), "retstart": "0", "sort": "relevance", "tool": "LitraDock"}, CredentialMode: mode, MaxBytes: userRouteBodyLimit, ExpiresAt: databaseNow.UTC().Add(120 * time.Second), State: "running"}
-	if frozen {
+	if captureActive {
+		query, err := segmentQuery(normalizedPubMedQuery(query), capture.Frontier[0])
+		if err != nil {
+			return d, err
+		}
+		d.CaptureSegment = capture.Frontier[0].ID
+		d.Parameters["term"], d.Parameters["retmax"] = query, fmt.Sprint(captureProviderBoundary)
+		capture.Requests++
+		if e = saveCapturePlan(ctx, tx, library, run, capture); e != nil {
+			return d, e
+		}
+	} else if frozen {
 		d.Stage = "efetch"
 		d.Parameters = map[string]string{"db": "pubmed", "retmode": "xml", "id": strings.Join(ids[offset:min(offset+size, len(ids))], ","), "tool": "LitraDock"}
 	}
@@ -363,7 +386,7 @@ func (s *server) submitUserRoute(ctx context.Context, library, run string, a use
 	}
 	c := claim{Library: library, Job: job, Run: run, Lease: a.AttemptID}
 	if a.Failure != "" {
-		if d.Stage == "esearch" {
+		if d.Stage == "esearch" && d.CaptureSegment == 0 {
 			reason += " Initial membership was not saved; submit a separate new search."
 			if state != "cancelled" {
 				state = "expired"
@@ -383,6 +406,24 @@ func (s *server) submitUserRoute(ctx context.Context, library, run string, a use
 			return out, e
 		}
 		attemptState = "failed"
+		if d.CaptureSegment > 0 {
+			settled, err := settleCaptureCeiling(ctx, tx, s.stagedQuery, library, run)
+			if err != nil {
+				return out, err
+			}
+			if settled != "" {
+				out.State = settled
+			}
+		}
+	} else if d.Stage == "esearch" && d.CaptureSegment > 0 {
+		if !s.stagedQuery || !frozen {
+			return out, &planError{409, "Staged capture is unavailable for this run."}
+		}
+		out, e = s.finishQueryCapture(ctx, tx, library, run, job, d, a.Body)
+		if e != nil {
+			return out, e
+		}
+		attemptState = "completed"
 	} else if d.Stage == "esearch" {
 		if frozen {
 			return out, &planError{409, "Search membership is already frozen."}
@@ -493,7 +534,7 @@ func parseUserRouteMetadata(body []byte, ids []string, hash, attempt string) ([]
 // 過期只結束本機保留容量，不可重送 PubMed。每次最多處理既有上限的
 // 20 個工作，並使用資料庫共同時鐘；有效租約與所有已儲存研究資料不變。
 // 呼叫者必須先持有 capacityLock，並在同一交易內提交狀態與容量變更。
-func retireExpiredUserRouteWork(ctx context.Context, tx pgx.Tx) error {
+func retireExpiredUserRouteWork(ctx context.Context, tx pgx.Tx, staged ...bool) error {
 	rows, e := tx.Query(ctx, `SELECT j.library_id::text,j.job_id,j.run_id,w.frozen
 FROM ld_jobs j JOIN native_search_windows w USING(library_id,run_id)
 WHERE j.kind='browser_search' AND j.state IN ('queued','running')
@@ -535,6 +576,11 @@ ORDER BY j.library_id,j.job_id LIMIT 20 FOR UPDATE OF j,w`)
 		if _, e = tx.Exec(ctx, "UPDATE ld_runs SET state=$3,reason=$4 WHERE library_id=$1 AND run_id=$2", work.library, work.run, state, reason); e != nil {
 			return e
 		}
+		if len(staged) > 0 && staged[0] {
+			if _, e = settleCaptureCeiling(ctx, tx, true, work.library, work.run); e != nil {
+				return e
+			}
+		}
 	}
 	return nil
 }
@@ -548,7 +594,7 @@ func (s *server) retireUserRouteWork(ctx context.Context) error {
 	if e = capacityLock(ctx, tx); e != nil {
 		return e
 	}
-	if e = retireExpiredUserRouteWork(ctx, tx); e != nil {
+	if e = retireExpiredUserRouteWork(ctx, tx, s.stagedQuery); e != nil {
 		return e
 	}
 	return tx.Commit(ctx)
@@ -607,6 +653,13 @@ func (s *server) recoverUserRoute(ctx context.Context, library, run, attempt str
 	}
 	if _, e = tx.Exec(ctx, "UPDATE ld_runs SET state=$3,reason=$4 WHERE library_id=$1 AND run_id=$2", library, run, state, reason); e != nil {
 		return out, e
+	}
+	settled, err := settleCaptureCeiling(ctx, tx, s.stagedQuery, library, run)
+	if err != nil {
+		return out, err
+	}
+	if settled != "" {
+		out.State = settled
 	}
 	return out, tx.Commit(ctx)
 }

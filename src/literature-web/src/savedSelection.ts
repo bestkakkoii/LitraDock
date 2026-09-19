@@ -10,7 +10,8 @@ export function useSavedSelection(library: string, run: Run | null, generation: 
   // new account never inherits these requests. Reload reads durable server state.
   const journal = useRef({ generation, entries: new Map<string, PendingSelection>() });
   if (journal.current.generation !== generation) journal.current = { generation, entries: new Map() };
-  const enabled = capabilities?.durableSelectionEnabled === true && capabilities.selectionRecordLimit === 1000;
+  const enabled = capabilities?.durableSelectionEnabled === true &&
+    [1000, 20000].includes(capabilities.selectionRecordLimit ?? 0);
   const controller = useRef<RunSelectionController | null>(null);
   useLayoutEffect(() => {
     const key = JSON.stringify([library, run?.run_id]), entries = journal.current.entries;

@@ -16,6 +16,7 @@ import time
 flags = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--staged-query', action='store_true', help='Run isolated large staged-query capture and export workflow')
 parser.add_argument('--user-route', action='store_true', help='Run isolated browser-origin PubMed workflow')
 parser.add_argument('--bundles', action='store_true', help='Run isolated prepared bundle/byte-range browser workload')
 parser.add_argument('--plans', action='store_true', help='Run the focused processing-plan browser workload')
@@ -57,6 +58,8 @@ if args.continuation:
     env['LITRADOCK_CONTINUATION_BROWSER_TEST'] = 'yes'
 if args.user_route:
     env['LITRADOCK_USER_ROUTE_BROWSER_TEST'] = 'yes'
+if args.staged_query:
+    env['LITRADOCK_STAGED_QUERY_BROWSER_TEST'] = 'yes'
 binary = out/('browser-server.exe' if os.name == 'nt' else 'browser-server')
 with (out/'compile.log').open('wb') as log:
     subprocess.run(['go', 'test', '-c', '-o', str(binary)], cwd=repo/'src/literature-server', env=env, stdout=log, stderr=subprocess.STDOUT, check=True, **flags)
@@ -64,7 +67,7 @@ process = None
 try:
     with (out/'server.log').open('wb') as server_log:
         process = subprocess.Popen([str(binary), '-test.run=^TestBrowserServer$', '-test.v', '-test.timeout=13m'], cwd=repo/'src/literature-server', env=env, stdout=server_log, stderr=subprocess.STDOUT, **flags)
-        deadline = time.monotonic()+40
+        deadline = time.monotonic()+(180 if args.staged_query else 40)
         while not input_file.exists():
             if process.poll() is not None or time.monotonic() > deadline:
                 raise RuntimeError('Guarded test server did not become ready; inspect synthetic server log')
@@ -81,6 +84,8 @@ try:
                 command = [npm, 'run', 'test:continuation']
             if args.user_route:
                 command = ['node', 'user-route-browser-regression.mjs']
+            if args.staged_query:
+                command = ['node', 'staged-query-browser-regression.mjs']
             subprocess.run(command, cwd=repo/'tests/native-browser', env=env, stdout=log, stderr=subprocess.STDOUT, timeout=480, check=True, **flags)
         Path(str(input_file)+'.stop').touch()
         if process.wait(timeout=20) != 0:
@@ -90,6 +95,7 @@ try:
         receipt['continuation'] = args.continuation
         receipt['bundles'] = args.bundles
         receipt['user_route'] = args.user_route
+        receipt['staged_query'] = args.staged_query
         (out/'receipt.json').write_text(json.dumps(receipt, indent=2)+'\n', encoding='utf-8')
         print(json.dumps(receipt))
 finally:

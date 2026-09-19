@@ -16,6 +16,32 @@ function model(pending: PendingSelection | null = null) {
 beforeEach(() => setSession({ csrf: "SYNTHETIC" }));
 afterEach(() => { models.splice(0).forEach(m => m.dispose()); vi.unstubAllGlobals(); clearSession(); });
 
+it("keeps all 20000 saved selections exact without expanding the 100-record PDF detail boundary", () => {
+  const selectedIDs = Array.from({ length: 20000 }, (_, i) => `SYNTHETIC-${i}`);
+  const value = { ...snapshot(), savedCount: 20000, selectedCount: 20000, selectedIDs, selectionLimit: 20000,
+    selectedRecords: [], recordsComplete: false, recordsReason: "Choose up to 100 saved records for PDF details." };
+  expect(validateSelection(value, "R1").selectedIDs).toEqual(selectedIDs);
+  expect(() => validateSelection({ ...value, selectionLimit: 1000 }, "R1")).toThrow();
+  expect(() => validateSelection({ ...value, savedCount: 20001 }, "R1")).toThrow();
+  expect(() => validateSelection({ ...value, recordsComplete: true, selectedRecords: selectedIDs.map(SearchId => ({ SearchId })) }, "R1")).toThrow();
+  const subset = selectedIDs.slice(0, 100);
+  expect(validateSelection({ ...value, selectedIDs: subset, selectedCount: 100, recordsComplete: true,
+    selectedRecords: subset.map(SearchId => ({ SearchId })) }, "R1").recordsComplete).toBe(true);
+});
+it.each([true, false])("new saved metadata preserves confirmed defaultSelected=%s and exact exceptions", async defaultSelected => {
+  const { controller } = model(); let count = 1000;
+  vi.stubGlobal("fetch", vi.fn(async () => {
+    const selectedIDs = defaultSelected ? Array.from({ length: count - 1 }, (_, i) => `S${i + 2}`) : ["S2"];
+    return response({ ...snapshot(count), defaultSelected, savedCount: count, selectedCount: selectedIDs.length, selectedIDs,
+      selectedRecords: defaultSelected ? [] : [{ SearchId: "S2" }], recordsComplete: !defaultSelected,
+      recordsReason: defaultSelected ? "SYNTHETIC bounded details" : "", selectionLimit: 20000 });
+  }));
+  await controller.load(); count = 1200; await controller.load();
+  expect(controller.state.snapshot?.defaultSelected).toBe(defaultSelected);
+  expect(controller.state.snapshot?.selectedIDs).not.toContain("S1");
+  expect(controller.state.snapshot?.selectedCount).toBe(defaultSelected ? 1199 : 1);
+});
+
 it.each([
   { selectedCount: 1 }, { selectedIDs: ["S1", "S1"] }, { savedCount: 1001 }, { runID: "FOREIGN" },
   { selectedRecords: [{ SearchId: "FOREIGN" }, { SearchId: "S2" }] }, { revision: 0 },

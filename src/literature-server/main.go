@@ -27,6 +27,7 @@ type config struct {
 	SearchEnabled                                                    bool
 	SearchContinuationEnabled                                        bool
 	UserRouteEnabled                                                 bool
+	StagedQueryEnabled                                               bool
 	PubMedDeveloperEmail                                             string
 	SelectionWriteEnabled                                            bool
 	BundleDeliveryEnabled                                            bool
@@ -44,6 +45,7 @@ type server struct {
 	savedSnapshots bool
 	runSelection   bool
 	userRoute      bool
+	stagedQuery    bool
 	db             *pgxpool.Pool
 	cfg            config
 	provider       *http.Client
@@ -119,7 +121,7 @@ func run() error {
 	if strings.HasPrefix(pc.ConnConfig.Database, "litradock_native_") {
 		schemaQuery, want = "SELECT max(version) FROM native_schema", 3
 	}
-	if err = db.QueryRow(ctx, schemaQuery).Scan(&version); err != nil || (version != want && !(want == 3 && (version == 4 || version == 5 || version == 6 || version == 8 || version == 9 || version == 10))) {
+	if err = db.QueryRow(ctx, schemaQuery).Scan(&version); err != nil || (version != want && !(want == 3 && (version == 4 || version == 5 || version == 6 || version == 8 || version == 9 || version == 10 || version == 11))) {
 		return errors.New("Expected schema version required; use supported stopped-service migration.")
 	}
 	if want == 3 && version == 3 {
@@ -128,16 +130,20 @@ func run() error {
 	if version < 5 || want != 3 {
 		cfg.SearchContinuationEnabled = false
 	}
-	if cfg.UserRouteEnabled && (want != 3 || version != 10 || !cfg.SearchContinuationEnabled) {
+	if cfg.UserRouteEnabled && (want != 3 || (version != 10 && version != 11) || !cfg.SearchContinuationEnabled) {
 		return errors.New("browser-origin admission requires schema 10 and continuation; no server fallback")
+	}
+	if cfg.StagedQueryEnabled && (want != 3 || version != 11 || !cfg.UserRouteEnabled || !cfg.SearchContinuationEnabled) {
+		return errors.New("staged query admission requires schema 11 and browser-origin continuation")
 	}
 	s := &server{native: strings.HasPrefix(pc.ConnConfig.Database, "litradock_native_"), db: db, cfg: cfg, provider: providerClient(), slots: make(chan struct{}, 2), loginGate: make(chan struct{}, 1)}
 	s.continuation = want == 3 && version >= 5
-	s.bundles = want == 3 && (version == 6 || version == 8 || version == 9 || version == 10)
-	s.savedSnapshots = want == 3 && (version == 8 || version == 9 || version == 10)
-	s.runSelection = want == 3 && (version == 9 || version == 10)
-	s.userRoute = want == 3 && version == 10
-	service := &http.Server{Addr: cfg.Listen, Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384}
+	s.bundles = want == 3 && (version == 6 || version == 8 || version == 9 || version == 10 || version == 11)
+	s.savedSnapshots = want == 3 && (version == 8 || version == 9 || version == 10 || version == 11)
+	s.runSelection = want == 3 && (version == 9 || version == 10 || version == 11)
+	s.userRoute = want == 3 && (version == 10 || version == 11)
+	s.stagedQuery = want == 3 && version == 11
+	service := &http.Server{Addr: cfg.Listen, Handler: s, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 65 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16384}
 	go s.worker(ctx)
 	go func() {
 		<-ctx.Done()

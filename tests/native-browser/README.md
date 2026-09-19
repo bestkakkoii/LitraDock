@@ -1,5 +1,15 @@
 # Native browser regression
 
+Pass `--staged-query` with a fresh database/output to exercise schema-11 saved
+query capture. The closed browser transport tests the original Boolean/fielded
+query, a 10,001-match source fixture through complete date/complement segments,
+cancelled and lost-reply recovery, no automatic source continuation, missing
+metadata and exact durable choices. A separate, explicitly seeded 20,000-record
+fixture measures bounded rendering and one-click whole selected metadata ZIPs.
+Every file hash, exported membership, no-source reopen/export, foreign-account
+denial and 1280/390px layout is checked. Seeded metadata is not evidence of live
+PubMed capacity. The shipped server contains no fixture entry point.
+
 This test suite uses pinned Playwright and fflate only for isolated acceptance, not product runtime dependencies. It runs actual native Go handlers/workers, compiled React assets and a fresh PostgreSQL database. The provider transport is closed and returns explicitly synthetic XML; no external source or public demo is contacted. Browser evidence is separate from genuine-source qualification.
 
 Use the exact public source commit and its generated runtime manifest. Install test dependencies with `npm ci` and `npx playwright install --with-deps chromium`. Create an empty database whose name starts `litradock_native_test_browser_` and provide a private JSON config containing its `Database` connection string. Do not supply a production database. From repository root:

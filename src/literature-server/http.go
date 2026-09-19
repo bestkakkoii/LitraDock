@@ -107,7 +107,8 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return 0
 		}(), "searchContinuationEnabled": s.continuation && s.cfg.SearchContinuationEnabled && s.cfg.SearchEnabled, "searchWindowLimit": searchWindowLimit,
 			"userRouteEnabled":        s.userRoute && s.cfg.UserRouteEnabled && s.cfg.SearchEnabled && s.cfg.SearchContinuationEnabled,
-			"durableSelectionEnabled": s.runSelection, "selectionWriteEnabled": s.runSelection && s.cfg.SelectionWriteEnabled, "selectionRecordLimit": runSelectionLimit,
+			"stagedQueryEnabled":      s.stagedQuery && s.cfg.StagedQueryEnabled && s.cfg.UserRouteEnabled && s.cfg.SearchEnabled && s.cfg.SearchContinuationEnabled,
+			"durableSelectionEnabled": s.runSelection, "selectionWriteEnabled": s.runSelection && s.cfg.SelectionWriteEnabled, "selectionRecordLimit": s.savedSelectionLimit(),
 			"bundleDeliveryEnabled": s.bundles && s.cfg.BundleDeliveryEnabled, "bundleOriginalLimitBytes": bundleOriginalLimit, "bundlePartOriginalLimitBytes": bundlePartOriginalLimit, "pdfEnabled": s.native && s.cfg.PDFEnabled && s.cfg.AcquisitionEnabled, "pdfPolicySummary": pdfPolicySummary, "planEnabled": s.native && s.cfg.PlanEnabled, "savedSnapshotEnabled": s.native && s.savedSnapshots && s.cfg.SavedSetEnabled, "savedSetEnabled": s.native && s.cfg.PlanEnabled && s.cfg.SavedSetEnabled, "planSelectionLimit": 100, "planGroupLimit": 10, "acquisitionEnabled": s.cfg.AcquisitionEnabled, "source": s.cfg.Revision})
 		return
 	}
@@ -131,7 +132,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, 429, map[string]string{"code": "admission_not_started"})
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	requestLimit := 8 * time.Second
+	if s.stagedQuery && r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/capture-export") && strings.HasPrefix(r.URL.Query().Get("format"), "zip-") {
+		requestLimit = 60 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), requestLimit)
 	defer cancel()
 	conn, err := s.db.Acquire(ctx)
 	if err != nil {
@@ -286,6 +291,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.native && s.userRouteRoutes(w, r, ctx, library, parts, sess) {
+		return
+	}
+	if s.native && s.queryCaptureExportRoute(w, r, ctx, library, parts) {
 		return
 	}
 	if s.native && s.runSelectionRoute(w, r, ctx, library, parts) {

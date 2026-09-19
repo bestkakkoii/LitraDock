@@ -78,29 +78,30 @@ func migrateContinuation(ctx context.Context, tx pgx.Tx, rollback bool) error {
 }
 
 type continuationView struct {
-	Execution        string     `json:"execution,omitempty"`
-	CredentialMode   string     `json:"credentialMode,omitempty"`
-	CanStart         bool       `json:"canStart,omitempty"`
-	CanRecover       bool       `json:"canRecover,omitempty"`
-	AttemptID        string     `json:"attemptID,omitempty"`
-	AttemptExpiresAt *time.Time `json:"attemptExpiresAt,omitempty"`
-	RunID            string     `json:"runID"`
-	Revision         int        `json:"revision"`
-	State            string     `json:"state"`
-	WindowLimit      int        `json:"windowLimit"`
-	WindowCount      int        `json:"windowCount"`
-	Processed        int        `json:"processedCount"`
-	Saved            int        `json:"savedCount"`
-	Missing          int        `json:"missingCount"`
-	MissingPMIDs     []string   `json:"missingPMIDs"`
-	Provider         int        `json:"providerTotal"`
-	PageSize         int        `json:"pageSize"`
-	Attempts         int        `json:"attempts"`
-	CanContinue      bool       `json:"canContinue"`
-	CanRetry         bool       `json:"canRetry"`
-	CanCancel        bool       `json:"canCancel"`
-	Reason           string     `json:"reason"`
-	SnapshotAt       *time.Time `json:"snapshotAt"`
+	Capture          *queryCaptureView `json:"capture,omitempty"`
+	Execution        string            `json:"execution,omitempty"`
+	CredentialMode   string            `json:"credentialMode,omitempty"`
+	CanStart         bool              `json:"canStart,omitempty"`
+	CanRecover       bool              `json:"canRecover,omitempty"`
+	AttemptID        string            `json:"attemptID,omitempty"`
+	AttemptExpiresAt *time.Time        `json:"attemptExpiresAt,omitempty"`
+	RunID            string            `json:"runID"`
+	Revision         int               `json:"revision"`
+	State            string            `json:"state"`
+	WindowLimit      int               `json:"windowLimit"`
+	WindowCount      int               `json:"windowCount"`
+	Processed        int               `json:"processedCount"`
+	Saved            int               `json:"savedCount"`
+	Missing          int               `json:"missingCount"`
+	MissingPMIDs     []string          `json:"missingPMIDs"`
+	Provider         int               `json:"providerTotal"`
+	PageSize         int               `json:"pageSize"`
+	Attempts         int               `json:"attempts"`
+	CanContinue      bool              `json:"canContinue"`
+	CanRetry         bool              `json:"canRetry"`
+	CanCancel        bool              `json:"canCancel"`
+	Reason           string            `json:"reason"`
+	SnapshotAt       *time.Time        `json:"snapshotAt"`
 }
 type continuationReceipt struct {
 	RunID    string `json:"runID"`
@@ -192,6 +193,9 @@ func (s *server) continuationStatusFrom(ctx context.Context, reader continuation
 	}
 	v.WindowCount, v.Missing = len(ii), len(mm)
 	v.MissingPMIDs = mm
+	if s.stagedQuery && len(v.MissingPMIDs) > 100 {
+		v.MissingPMIDs = v.MissingPMIDs[:100]
+	}
 	enabled := s.cfg.SearchEnabled && s.cfg.SearchContinuationEnabled
 	v.CanContinue = enabled && frozen && v.Processed < len(ii) && (v.State == "ready" || v.State == "cancelled") && v.Attempts < 3
 	v.CanRetry = enabled && frozen && v.Processed < len(ii) && (v.State == "failed" || v.State == "rate_wait" || v.State == "unavailable") && v.Attempts < 3
@@ -214,10 +218,20 @@ func (s *server) continuationStatusFrom(ctx context.Context, reader continuation
 			}
 		}
 	}
+	if s.stagedQuery {
+		var err error
+		v.Capture, err = s.captureView(ctx, reader, library, run, v, frozen)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return v, nil
 }
 
 func (s *server) controlContinuation(ctx context.Context, library, run string, a continuationAction) (continuationReceipt, error) {
+	if a.Action == "capture" {
+		return s.controlQueryCapture(ctx, library, run, a)
+	}
 	out := continuationReceipt{}
 	if !runIDPattern.MatchString(run) || !uuidPattern.MatchString(a.RequestID) || a.Revision < 1 || (a.Action != "continue" && a.Action != "retry" && a.Action != "cancel") {
 		return out, &planError{400, "A run, request UUID, revision and supported action are required."}
@@ -238,7 +252,7 @@ func (s *server) controlContinuation(ctx context.Context, library, run string, a
 		return out, e
 	}
 	if s.userRoute {
-		if e = retireExpiredUserRouteWork(ctx, tx); e != nil {
+		if e = retireExpiredUserRouteWork(ctx, tx, s.stagedQuery); e != nil {
 			return out, e
 		}
 	}
@@ -282,6 +296,15 @@ func (s *server) controlContinuation(ctx context.Context, library, run string, a
 	}
 	if revision != a.Revision {
 		return out, &planError{409, "Run changed; reopen its current state before acting."}
+	}
+	if a.Action != "cancel" {
+		active, err := capturePlanActive(ctx, tx, s.stagedQuery, library, run)
+		if err != nil {
+			return out, err
+		}
+		if active {
+			return out, &planError{409, "The current ID capture stage is unfinished. Reconcile or retry that capture before retrieving metadata."}
+		}
 	}
 	var ids []string
 	if json.Unmarshal([]byte(raw), &ids) != nil {
@@ -347,6 +370,15 @@ func (s *server) controlContinuation(ctx context.Context, library, run string, a
 	}
 	if _, e = tx.Exec(ctx, "UPDATE ld_runs SET state=$3,reason=$4 WHERE library_id=$1 AND run_id=$2", library, run, next, "Saved records retained; only the requested page action was admitted."); e != nil {
 		return out, e
+	}
+	if a.Action == "cancel" {
+		settled, err := settleCaptureCeiling(ctx, tx, s.stagedQuery, library, run)
+		if err != nil {
+			return out, err
+		}
+		if settled != "" {
+			out.State = settled
+		}
 	}
 	encoded, _ := json.Marshal(out)
 	if _, e = tx.Exec(ctx, "INSERT INTO native_search_actions VALUES($1,$2,$3,$4,$5)", library, a.RequestID, run, intent, string(encoded)); e != nil {
@@ -444,7 +476,7 @@ func (s *server) continuedSearch(ctx context.Context, c claim) (bool, searchResu
 }
 
 func validWindowIDs(ids []string) bool {
-	if len(ids) > searchWindowLimit {
+	if len(ids) > captureMembershipLimit {
 		return false
 	}
 	seen := map[string]bool{}
@@ -509,7 +541,7 @@ func (s *server) finishSearchPage(ctx context.Context, tx pgx.Tx, c claim, r sea
 		return e
 	}
 	if size > 32*1024*1024 {
-		return &sourceError{"failed", "The saved run would exceed its 32 MiB metadata budget; this entire page was not saved. Refine a separate query."}
+		return &sourceError{"failed", "The saved run would exceed its 32 MiB metadata budget; this entire page was not saved. Captured IDs and saved records remain available for bounded export; further metadata remains unresolved."}
 	}
 	if e := tx.QueryRow(ctx, "SELECT total FROM ld_runs WHERE library_id=$1 AND run_id=$2", c.Library, c.Run).Scan(&total); e != nil {
 		return e
@@ -523,6 +555,23 @@ func (s *server) finishSearchPage(ctx context.Context, tx pgx.Tx, c claim, r sea
 		}
 	}
 	reason := fmt.Sprintf("Saved %d unique records; processed %d of %d frozen PMIDs; %d metadata records unavailable; provider reported %d matches.", saved, next, len(ids), len(missing), total)
+	var capture *queryCapturePlan
+	if s.stagedQuery {
+		var err error
+		capture, err = readCapturePlan(ctx, tx, c.Library, c.Run)
+		if err != nil {
+			return err
+		}
+		if capture != nil {
+			reason = captureMetadataReason(saved, next, len(ids), len(missing), capture)
+			if next == len(ids) {
+				state = "window_limited"
+				if capture.State == "complete" {
+					state = "exhausted"
+				}
+			}
+		}
+	}
 	mm, _ := json.Marshal(missing)
 	pm, _ := json.Marshal(pageMissing)
 	ii, _ := json.Marshal(r.IDs)
@@ -535,6 +584,12 @@ func (s *server) finishSearchPage(ctx context.Context, tx pgx.Tx, c claim, r sea
 	runState := "partial"
 	if saved == total {
 		runState = "complete"
+	}
+	if capture != nil {
+		runState = "partial"
+		if capture.State == "complete" && next == len(ids) && len(missing) == 0 {
+			runState = "complete"
+		}
 	}
 	_, e := tx.Exec(ctx, "UPDATE ld_runs SET fetched=$3,state=$4,reason=$5 WHERE library_id=$1 AND run_id=$2", c.Library, c.Run, saved, runState, reason)
 	return e

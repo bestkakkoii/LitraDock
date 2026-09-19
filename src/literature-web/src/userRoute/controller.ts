@@ -36,11 +36,12 @@ export class BrowserRouteController {
     this.set(null, "Source admission reconciled. Refresh saved progress; no provider request was repeated.");
     return pending.run;
   }
-  async execute(run: string, signal: AbortSignal) {
+  async execute(run: string, signal: AbortSignal, captureEnabled: () => boolean = () => false,
+    purpose: "initial" | "capture" | "metadata" | "resume" = "resume") {
     if (this.pending) throw new Error("Retry saving the previous browser results before starting another source request.");
     // One explicit page action: at most initial ESearch plus its first EFetch.
     // Existing frozen windows issue only that one metadata page.
-    for (let stage = 0; stage < 2; stage++) {
+    for (let stage = 0; stage < (purpose === "capture" || purpose === "metadata" ? 1 : 2); stage++) {
       this.current(signal);
       const page = await api.run(this.library, run, 0, this.generation, 25, signal);
       const status = page.continuation;
@@ -61,6 +62,12 @@ export class BrowserRouteController {
         }
         const d = validateDescriptor(value, run); this.current(signal);
         if (!d.fresh) { this.set(null, "Existing attempt found; no source request was repeated. Refresh saved progress."); return; }
+        if ((stage > 0 && d.stage !== "efetch") || (d.captureSegment !== undefined && !captureEnabled()) ||
+            (purpose === "capture" && d.captureSegment === undefined) || (purpose === "metadata" && d.stage !== "efetch") ||
+            (purpose === "initial" && d.captureSegment !== undefined)) {
+          this.set(null, "This source stage needs a new explicit action or enabled capture. Refresh saved progress; no provider request was sent.");
+          return;
+        }
         this.set(null, d.stage === "esearch" ? "Searching PubMed from this browser…" : "Retrieving PubMed metadata from this browser…");
         let body: Uint8Array;
         try { body = await fetchPubMed(d, signal); }
@@ -80,7 +87,7 @@ export class BrowserRouteController {
           }
           throw error;
         }
-        continueInitial = d.stage === "esearch";
+        continueInitial = d.stage === "esearch" && d.captureSegment === undefined;
       });
       if (!continueInitial) return;
     }

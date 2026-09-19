@@ -24,8 +24,8 @@ const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v ===
 export function validateSelection(value: unknown, runID: string): RunSelection {
   if (!object(value) || value.runID !== runID || !integer(value.revision, 1, Number.MAX_SAFE_INTEGER) ||
       typeof value.defaultSelected !== "boolean" || typeof value.canEdit !== "boolean" ||
-      value.selectionLimit !== 1000 || value.detailLimit !== 100 ||
-      !integer(value.savedCount, 0, 1000) || !integer(value.selectedCount, 0, value.savedCount) ||
+      (value.selectionLimit !== 1000 && value.selectionLimit !== 20000) || value.detailLimit !== 100 ||
+      !integer(value.savedCount, 0, value.selectionLimit) || !integer(value.selectedCount, 0, value.savedCount) ||
       !Array.isArray(value.selectedIDs) || value.selectedIDs.length !== value.selectedCount ||
       !value.selectedIDs.every(id => typeof id === "string" && id.length > 0 && id.length <= 256) ||
       new Set(value.selectedIDs).size !== value.selectedCount ||

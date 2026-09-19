@@ -201,12 +201,29 @@ jobs:
           target.chmod(0o600)
           PY
           python3 scripts/run-native-browser.py --user-route --revision "$GITHUB_SHA" --config "$RUNNER_TEMP/native-user-route-browser-config.json" --manifest "$RUNNER_TEMP/native-build/runtime-manifest.json" --frontend-directory "$RUNNER_TEMP/web-one" --output-directory "$RUNNER_TEMP/native-user-route-browser"
+      - name: Fresh staged-query PostgreSQL and compiled browser
+        env:
+          PGPASSWORD: synthetic-ci-only
+        run: |
+          createdb -h 127.0.0.1 -U native_test litradock_native_test_browser_capture
+          python3 - <<'PY'
+          import json,os,pathlib
+          target=pathlib.Path(os.environ['RUNNER_TEMP'])/'native-capture-browser-config.json'
+          target.write_text(json.dumps({'Database':'host=127.0.0.1 user=native_test password=synthetic-ci-only dbname=litradock_native_test_browser_capture sslmode=disable'}))
+          target.chmod(0o600)
+          PY
+          python3 scripts/run-native-browser.py --staged-query --revision "$GITHUB_SHA" --config "$RUNNER_TEMP/native-capture-browser-config.json" --manifest "$RUNNER_TEMP/native-build/runtime-manifest.json" --frontend-directory "$RUNNER_TEMP/web-one" --output-directory "$RUNNER_TEMP/native-capture-browser"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: native-browser-synthetic-evidence
           include-hidden-files: true
           path: |
+            ${{ runner.temp }}/native-capture-browser/receipt.json
+            ${{ runner.temp }}/native-capture-browser/browser.log
+            ${{ runner.temp }}/native-capture-browser/server.log
+            ${{ runner.temp }}/native-capture-browser/staged-query-*.png
+            ${{ runner.temp }}/native-capture-browser/staged-query-evidence.json
             ${{ runner.temp }}/native-user-route-browser/receipt.json
             ${{ runner.temp }}/native-user-route-browser/browser.log
             ${{ runner.temp }}/native-user-route-browser/server.log
