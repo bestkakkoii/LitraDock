@@ -1,3 +1,4 @@
+import {selectionReady, selectionControl, setSavedCheckbox, readNativeJson} from "./selection-controls.mjs";
 // Actual native PostgreSQL/handlers and pinned compiled React; synthetic source only.
 import { showWorkspace, openDisclosure } from "../../src/literature-web/scripts/workspace-navigation.mjs";
 import assert from 'node:assert/strict';
@@ -23,7 +24,9 @@ const checks=[],posts=[],errors=[];
 page.on('pageerror',e=>errors.push(e.message));
 page.on('request',r=>{if(r.method()==='POST')posts.push({url:r.url(),body:r.postDataJSON()});});
 const check=async(name,fn)=>{await fn();checks.push({name,pass:true});};
-const until=async(fn,message)=>{const end=Date.now()+30000;while(Date.now()<end){if(await fn())return;await new Promise(r=>setTimeout(r,120));}throw Error(message);};
+const waitMs=Number(process.env.NATIVE_BROWSER_WAIT_MS||30000);
+assert(Number.isInteger(waitMs)&&waitMs>=30000&&waitMs<=120000);
+const until=async(fn,message)=>{const end=Date.now()+waitMs;while(Date.now()<end){if(await fn())return;await new Promise(r=>setTimeout(r,120));}throw Error(message);};
 const panel=page.getByRole('region',{name:'Search continuation',exact:true});
 const toolbar=page.getByRole('region',{name:'Saved record selection',exact:true});
 let library='',run='',lastLogin=0;
@@ -32,12 +35,12 @@ const login=async(account=input.accounts[0])=>{
  await page.getByLabel('Login',{exact:true}).fill(account.login);await page.getByLabel('Password',{exact:true}).fill(account.password);
  await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.getByLabel('Choose library',{exact:true}).waitFor();lastLogin=Date.now();
 };
-const detail=async()=>{const r=await page.request.get(`${target}/api/libraries/${library}/runs/${run}?limit=100`);assert.equal(r.status(),200);return r.json();};
+const detail=()=>readNativeJson(page, `${target}/api/libraries/${library}/runs/${run}?limit=100`);
 const sources=()=>fs.existsSync(inputPath+'.source-requests')?fs.readFileSync(inputPath+'.source-requests','utf8').trim().split('\n').filter(Boolean).map(s=>JSON.parse(s)):[];
 try{
  await page.goto(target);
  await check('pinned-assets-and-schema5-capability',async()=>{
-  const info=await(await page.request.get(target+'/service-info')).json();assert.equal(info.searchContinuationEnabled,true);assert.equal(info.searchWindowLimit,1000);
+  const info=await(await page.request.get(target+'/service-info')).json();assert.equal(info.searchContinuationEnabled,true);assert.equal(info.durableSelectionEnabled,true);assert.equal(info.selectionWriteEnabled,true);assert.equal(info.searchWindowLimit,1000);
   for(const[name,want]of Object.entries(manifest.files).filter(([n])=>n.startsWith('web/'))){const r=await page.request.get(target+'/'+(name==='web/index.html'?'':name.slice(4)));assert.equal(hash(await r.body()),want);}
  });
  await login();await showWorkspace(page, "Libraries"); await page.getByLabel('New library name',{exact:true}).fill('SYNTHETIC continuation browser');await page.getByRole('button',{name:'Create',exact:true}).click();
@@ -49,15 +52,15 @@ try{
   await page.getByRole('button',{name:'Search PubMed',exact:true}).click();await panel.getByRole('button',{name:'Retry same search request',exact:true}).waitFor();
   await panel.getByRole('button',{name:'Retry same search request',exact:true}).click();
   await until(async()=>(await detail()).continuation?.savedCount===100,'first100 persisted');
-  await until(async()=>(await toolbar.innerText()).includes('100 selected of 100 loaded'),'initial bounded all');
+  await until(async()=>(await toolbar.innerText()).includes('100 selected of 100 saved'),'initial saved default all');
   const sent=posts.filter(p=>p.url.endsWith('/search'));assert.equal(sent.length,2);assert.deepEqual(sent[0].body,sent[1].body);assert.match(sent[0].body.requestID,/^[a-f0-9-]{36}$/);
   const d=await detail();assert.equal(d.run.run_id,run);assert.equal(d.run.total,25000);assert.equal(d.total,100);assert.equal(d.continuation.windowCount,1000);
   assert.equal(d.continuation.processedCount,100);assert(!('RawXml'in d.records[0]));assert.equal(sources().length,2);
   fs.writeFileSync(path.join(path.dirname(inputPath),'initial-page.json'),JSON.stringify(d));
  });
- await check('cancel-held-response-and-resume-same-page-without-selection-growth',async()=>{
+ await check('cancel-held-response-and-resume-same-page-preserves-explicit-deselection',async()=>{
   await openDisclosure(page, /^Search progress and query details/);
-  await page.locator('.result-card input[type=checkbox]').first().uncheck();await until(async()=>(await toolbar.innerText()).includes('99 selected'),'intentional deselection');
+  await setSavedCheckbox(page, page.locator('.result-card input[type=checkbox]').first(), false);await until(async()=>(await toolbar.innerText()).includes('99 selected'),'intentional deselection');
   fs.writeFileSync(inputPath+'.metadata-hold','synthetic schedule');
   await panel.getByRole('button',{name:'Retrieve next metadata page',exact:true}).click();
   await until(()=>fs.existsSync(inputPath+'.metadata-entered'),'held actual native source attempt');
@@ -71,7 +74,7 @@ try{
   await until(async()=>await panel.getByRole('button',{name:'Retrieve next metadata page',exact:true}).isEnabled(),'resume ready');
   await panel.getByRole('button',{name:'Retrieve next metadata page',exact:true}).click();
   await until(async()=>(await detail()).continuation.savedCount===200,'second100 saved');
-  await until(async()=>(await toolbar.innerText()).includes('99 selected of 200 loaded'),'no implicit widening');
+  await until(async()=>(await toolbar.innerText()).includes('199 selected of 200 saved'),'new saved members follow all default while explicit deselection survives');
   d=await detail();assert.equal(d.run.total,25000);assert.equal(d.continuation.windowCount,1000);assert.equal(d.continuation.processedCount,200);
   const second=await(await page.request.get(`${target}/api/libraries/${library}/runs/${run}?limit=100&offset=100`)).json();assert.equal(second.records.length,100);
   assert.equal(new Set([...d.records,...second.records].map(a=>a.SearchId)).size,200);assert.equal(second.records[0].Pmid,'990000101');
@@ -79,11 +82,11 @@ try{
   fs.writeFileSync(path.join(path.dirname(inputPath),'continued-page.json'),JSON.stringify(second));
  });
  await check('explicit-page-selection-and-independent-whole-saved-run-CSV',async()=>{
-  const visible=await page.locator('.result-card').count();await toolbar.getByRole('button',{name:`Select all on this page (${visible})`,exact:true}).click();
-  await until(async()=>(await toolbar.innerText()).includes(`${visible} selected of 200`),'explicit page replacement');
+  const visible=await page.locator('.result-card').count();await selectionControl(page, 'Select page');
+  await until(async()=>(await toolbar.innerText()).includes('200 selected of 200 saved'),'page addition restores only that page exception');
   const sourceBefore=sources().length;
   await openDisclosure(page, "Export saved results and other actions");
-  const downloadEvent=page.waitForEvent('download');await page.getByRole('button',{name:'Export CSV',exact:true}).click();const download=await downloadEvent;
+  const downloadEvent=page.waitForEvent('download');await page.getByRole('button',{name:'Export saved CSV',exact:true}).click();const download=await downloadEvent;
   const file=path.join(path.dirname(inputPath),'continued-run.csv');await download.saveAs(file);const raw=fs.readFileSync(file);const text=raw.toString('utf8');assert(text.includes('Search ID'));assert(text.includes('990000001'));assert(text.includes('990000101'));
   const parsed=JSON.parse(execFileSync(process.platform==='win32'?'python':'python3',['-c',"import csv,json,sys; print(json.dumps(list(csv.DictReader(open(sys.argv[1],encoding='utf-8-sig',newline='')))))",file],{encoding:'utf8',windowsHide:true}));
   assert.equal(parsed.length,200);assert.equal(new Set(parsed.map(r=>r['Search ID'])).size,200);assert(parsed.every(r=>r.Title.includes('中文')));assert.deepEqual(parsed.map(r=>r.PMID).sort(),Array.from({length:200},(_,i)=>String(990000001+i)).sort());
@@ -95,13 +98,13 @@ try{
   await page.setViewportSize({width:390,height:844});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   await page.reload();await page.getByLabel('Choose library',{exact:true}).selectOption(library);
   await showWorkspace(page, "Saved searches"); await page.getByRole('list',{name:'Saved searches',exact:true}).getByRole('button').filter({hasText:'SYNTHETIC_CONTINUATION_25000'}).click(); await page.getByLabel("Search PubMed", { exact: true }).waitFor({ state: "visible" });
-  await until(async()=>(await toolbar.innerText()).includes('200 loaded'),'saved run reopen');
+  await until(async()=>(await toolbar.innerText()).includes('200 selected of 200 saved'),'saved run reopen');
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   await page.getByRole('button',{name:'Sign out',exact:true}).click();await login(input.accounts[1]);
   assert.equal((await page.request.get(`${target}/api/libraries/${library}/runs/${run}`)).status(),404);assert(!(await page.locator('body').innerText()).includes(run));
   await page.getByRole('button',{name:'Sign out',exact:true}).click();await login();await page.getByLabel('Choose library',{exact:true}).selectOption(library);
   await showWorkspace(page, "Saved searches"); await page.getByRole('list',{name:'Saved searches',exact:true}).getByRole('button').filter({hasText:'SYNTHETIC_CONTINUATION_25000'}).click(); await page.getByLabel("Search PubMed", { exact: true }).waitFor({ state: "visible" });
-  await until(async()=>(await toolbar.innerText()).includes('200 loaded'),'relogin reopen');
+  await until(async()=>(await toolbar.innerText()).includes('200 selected of 200 saved'),'relogin reopen');
   assert.equal(posts.filter(p=>/\/(search|continuation|plans|batches)$/.test(p.url)).length,before);assert.equal(sources().length,sourceBefore);
  });
  assert.deepEqual(errors,[]);console.log(JSON.stringify({scope:'SYNTHETIC provider transport; actual native PostgreSQL and compiled React; no genuine-source claim',revision:input.source_revision,checks,providerTotal:25000,window:1000,saved:200,sourceCalls:sources().length}));

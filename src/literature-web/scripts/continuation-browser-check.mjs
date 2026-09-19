@@ -1,11 +1,12 @@
 // SYNTHETIC isolated HTTP schedules and metadata; no native/source qualification.
-import { showWorkspace, openDisclosure } from "./workspace-navigation.mjs";
+import { setSavedCheck, createSelectionFixture, showWorkspace, openDisclosure } from "./workspace-navigation.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import crypto from "node:crypto";
 import { chromium, expect } from "@playwright/test";
+const selectionFixture = createSelectionFixture();
 const root = process.cwd(), out = path.join(root, ".litradock/runtime/frontend017", new Date().toISOString().replaceAll(/[:.]/g, "-"));
 fs.mkdirSync(out, { recursive: true });
 const hash = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
@@ -40,7 +41,7 @@ const server = http.createServer(async (req, res) => {
     if (route === "/api/logout") { account = ""; return reply({}); }
     if (!account) return reply({ error: "SYNTHETIC anonymous" }, 401);
     if (route === "/api/session") return reply({ csrf: "SYNTHETIC" });
-    if (route === "/service-info") return reply({ searchEnabled: true, searchContinuationEnabled: true, searchWindowLimit: 1000, savedSetEnabled: false, planEnabled: true, pdfEnabled: false, acquisitionEnabled: false });
+    if (route === "/service-info") return reply({ durableSelectionEnabled: true, selectionWriteEnabled: true, selectionRecordLimit: 1000, searchEnabled: true, searchContinuationEnabled: true, searchWindowLimit: 1000, savedSetEnabled: false, planEnabled: true, pdfEnabled: false, acquisitionEnabled: false });
     if (route === "/api/libraries") return reply({ items: account === "B" ? [{ library_id: "LB", name: "SYNTHETIC B" }] : [{ library_id: "L1", name: "SYNTHETIC A" }, { library_id: "L2", name: "SYNTHETIC second" }], total: account === "B" ? 1 : 2 });
     if (/^\/api\/libraries\/[^/]+$/.test(route)) return reply({ runs: route.endsWith("L1") ? [run(id), run(legacy)] : [], batches: [], totals: { runs: route.endsWith("L1") ? 2 : 0, batches: 0 }, offset: 0, limit: 25 });
     if (route.endsWith("/plans")) return reply({ plans: [], total: 0, offset: 0, limit: 25 });
@@ -63,6 +64,17 @@ const server = http.createServer(async (req, res) => {
       return reply({ runID: id, revision, state });
     }
     if (route.endsWith("/exports")) { assert.deepEqual(body, { runID: id, format: "csv" }); res.writeHead(200, { "Content-Type": "text/csv", "Content-Length": csv.length }); return res.end(csv); }
+    if (route.endsWith("/selection")) {
+      const selectionRun = route.split("/").at(-2);
+      return selectionFixture(account + route, selectionRun, Array.from({ length: selectionRun === legacy ? 0 : count }, (_, i) => article(i)), req.method, req.method === "POST" ? body : null, (payload, status = 200) => {
+        if (holdRecordRead?.key === "old-enumeration") {
+          const key = holdRecordRead.key; holdRecordRead = null;
+          res.writeHead(status, { "Content-Type": "application/json" }); res.flushHeaders();
+          held.set(key, () => res.end(JSON.stringify(payload))); return;
+        }
+        return reply(payload, status);
+      });
+    }
     if (route.includes("/runs/")) {
       if (failGet) return reply({ error: "SYNTHETIC detail unavailable" }, 503);
       const runID = route.split("/").at(-1), offset = Number(url.searchParams.get("offset")), limit = Number(url.searchParams.get("limit"));
@@ -111,10 +123,10 @@ try {
   failGet = false; await button(`Reopen confirmed search ${id}`).click();
   await expect(page.locator('.draft-notice')).toBeVisible();
   await expect(page.getByLabel('Search PubMed', { exact: true })).toHaveValue('SYNTHETIC changed query');
-  await expect(button('Select all')).toBeDisabled();
+  await expect(button('Select all saved')).toBeDisabled();
   await button('Restore active search').click();
   await expect(page.getByLabel('Search PubMed', { exact: true })).toHaveValue(query);
-  await expect(button("Select all")).toBeEnabled();
+  await expect(button("Select all saved")).toBeEnabled();
   const searches = posts.filter(p => p.route.endsWith("/search")); assert.equal(searches.length, 3); searches.forEach(post => assert.deepEqual(post.body, searches[0].body)); assert.equal(searches[0].body.limit, 100);
   await openDisclosure(page, /^Search progress and query details/);
   await panel().getByText("Missing metadata identities (1)", { exact: true }).click(); await expect(panel().getByRole("link", { name: "PMID 99999999" })).toHaveAttribute("href", "https://pubmed.ncbi.nlm.nih.gov/99999999/");
@@ -125,11 +137,11 @@ try {
   await expect(page.locator(".selection-toolbar")).toContainText("0 selected of 101");
   const actions = posts.filter(p => p.route.endsWith("/continuation")); assert.equal(actions.length, 2); assert.deepEqual(actions[0].body, actions[1].body);
   // A real run change resets selection; reopening a >100 set never defaults to an unseen subset.
-  await showWorkspace(page, "Research plans"); await expect(page.locator(".saved-basket")).toContainText("1 records in basket"); await showWorkspace(page, "Search & PDFs"); await expect(button("Select all on this page (25)")).toBeEnabled();
-  await button("Select all on this page (25)").click(); await button("Next records").click(); await expect(page.locator(".selection-toolbar")).toContainText("25 selected of 101");
+  await showWorkspace(page, "Research plans"); await expect(page.locator(".saved-basket")).toContainText("1 records in basket"); await showWorkspace(page, "Search & PDFs"); await expect(button("Select page")).toBeEnabled();
+  await button("Select page").click(); await button("Next records").click(); await expect(page.locator(".selection-toolbar")).toContainText("25 selected of 101");
   await button("Deselect all").click(); await refresh(); await expect(page.locator(".selection-toolbar")).toContainText("0 selected of 101");
   assert.equal(posts.filter(p => p.route.endsWith("/search")).length, 3);
-  result.cases.push("Explicit next-page malformed receipt replay; no navigation admission; >100 visible-only selection and independent frozen basket");
+  result.cases.push("Explicit next-page malformed receipt replay; no navigation admission; >100 explicit additive page selection and independent frozen basket");
   for (const value of ["queued", "running", "rate_wait", "failed", "expired", "unavailable", "window_limited", "exhausted", "cancelled", "ready"]) {
     state = value; count = ["window_limited", "exhausted"].includes(value) ? 1000 : 101; provider = value === "exhausted" ? 1000 : 25001;
     await refresh();
@@ -141,7 +153,7 @@ try {
   attempts = 2; state = "failed"; await refresh(); await button("Retry metadata page").click(); await revealSettledProgress(); await expect(panel().getByRole("status").first()).toContainText("ready");
   state = "running"; await refresh(); await button("Cancel metadata page").click(); await button("Confirm metadata cancellation").click(); await revealSettledProgress(); await expect(panel().getByRole("status").first()).toContainText("cancelled");
   result.cases.push("All ten actual states, attempts3 denial, explicit retry and confirmed cancel; reads never admit pages");
-  state = "ready"; count = 101; await refresh(); await button("Select all on this page (25)").click();
+  state = "ready"; count = 101; await refresh(); await button("Select page").click();
   await page.evaluate(() => { window.__ignoreAbort = true; });
   for (const order of ["published", "pending"]) for (const status of [200, 401, 503]) {
     count = 101; await refresh();
@@ -160,9 +172,9 @@ try {
   }
   holdRecordRead = { key: "old-enumeration", offset: 0, limit: 100 }; count = 100; await refresh(); await expect.poll(() => held.has("old-enumeration")).toBe(true);
   count = 101; await refresh(); held.get("old-enumeration")(); held.delete("old-enumeration");
-  await expect(page.locator(".selection-toolbar")).toContainText("25 selected of 101"); await expect(button("Select all on this page (25)")).toBeEnabled();
+  await expect(page.locator(".selection-toolbar")).toContainText("25 selected of 101"); await expect(button("Select page")).toBeEnabled();
   await page.evaluate(() => { window.__ignoreAbort = false; });
-  result.cases.push("Actual same-run delayed page and selection-enumeration bodies cannot regress newer saved membership or widen the established checked subset");
+  result.cases.push("Actual same-run delayed page and selection snapshot bodies cannot regress newer saved membership or widen the established checked subset");
   for (const n of [0, 1, 100, 101, 1000]) { count = n; provider = n === 100 ? 10000 : 25001; state = n === 1000 ? "window_limited" : "ready"; await refresh(); await expect(panel()).toContainText(`${n} saved`); await expect(panel()).toContainText(`${provider.toLocaleString()} provider matches`); }
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 1000 }); assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
@@ -172,7 +184,7 @@ try {
     await panel().screenshot({ path: path.join(out, `continuation-panel-${width}.png`) });
   }
   await openDisclosure(page, "Export saved results and other actions");
-  const fileEvent = page.waitForEvent("download"); await button("Export CSV").click(); const file = await fileEvent, bytes = fs.readFileSync(await file.path());
+  const fileEvent = page.waitForEvent("download"); await button("Export saved CSV").click(); const file = await fileEvent, bytes = fs.readFileSync(await file.path());
   assert.deepEqual(bytes, csv); const filename = file.suggestedFilename(); fs.writeFileSync(path.join(out, filename), bytes); result.downloads.push({ filename, bytes: bytes.length, sha256: hash(bytes) });
   result.cases.push("0/1/100/101/1000 saved versus10000/25001 provider totals; populated390/1280 keyboard/readability/overflow; exact UTF8 CSV device bytes");
   count = 1; state = "ready"; await refresh();

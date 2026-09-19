@@ -1,79 +1,52 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { api, Article, Run, sessionGeneration } from "./api";
-import { searchId, toggleArticle } from "./selection";
+import { type Article, type Run, type ServiceInfo, sessionGeneration } from "./api";
+import { searchId } from "./selection";
+import { type PendingSelection, RunSelectionController, type SelectionState } from "./runSelection";
 
-export async function enumerateSaved(library: string, run: Run, generation: number, signal: AbortSignal) {
-  const records = new Map<string, Article>();
-  const current = () => {
-    if (signal.aborted || generation !== sessionGeneration()) throw new Error("Selection scope changed.");
-  };
-  let offset = 0;
-  for (let reads = 0; reads < 100; reads++) {
-    current();
-    const page = await api.run(library, run.run_id, offset, generation, 100, signal);
-    current();
-    if (page.run.run_id !== run.run_id || page.offset !== offset ||
-      !Number.isInteger(page.total) || page.total < 0 || page.total > 100 || page.total !== run.fetched ||
-      !["complete", "partial", "error", "cancelled"].includes(page.run.state))
-      throw new Error("Saved record set is not complete or exceeds the 100-record selection limit. Reopen the search to check its status.");
-    for (const article of page.records) {
-      const id = searchId(article);
-      if (!id || records.has(id)) throw new Error("Saved record identifiers are missing or duplicated. No selection was applied.");
-      records.set(id, article);
-    }
-    if (records.size > page.total) throw new Error("Saved record count changed. Reopen the search.");
-    if (records.size === page.total) return records;
-    if (!page.records.length) throw new Error("The saved record list is incomplete. Retry loading the selection.");
-    offset += page.records.length;
-  }
-  throw new Error("Selection read limit reached. No incomplete selection was applied.");
-}
-
-export function useSavedSelection(library: string, run: Run | null, generation: number, scopeSignal: AbortSignal, visible: Article[] = []) {
-  const [selected, setSelected] = useState(new Map<string, Article>());
-  const [all, setAll] = useState(new Map<string, Article>());
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [attempt, setAttempt] = useState(0);
-  const initialized = useRef(false);
-  const pageOnly = (run?.fetched ?? 0) > 100;
-  const terminal = !!run && ["complete", "partial", "error", "cancelled"].includes(run.state);
+export function useSavedSelection(library: string, run: Run | null, generation: number, scopeSignal: AbortSignal,
+  visible: Article[] = [], capabilities: ServiceInfo | null = null, refreshVersion = 0) {
+  const [state, setState] = useState<SelectionState>({ snapshot: null, pending: null, phase: "loading", error: "" });
+  // Retain uncertain payloads across run/library navigation in this session. A
+  // new account never inherits these requests. Reload reads durable server state.
+  const journal = useRef({ generation, entries: new Map<string, PendingSelection>() });
+  if (journal.current.generation !== generation) journal.current = { generation, entries: new Map() };
+  const enabled = capabilities?.durableSelectionEnabled === true && capabilities.selectionRecordLimit === 1000;
+  const controller = useRef<RunSelectionController | null>(null);
   useLayoutEffect(() => {
-    initialized.current = false;
-    setSelected(new Map()); setAll(new Map()); setError("");
-  }, [library, run?.run_id, generation, scopeSignal]);
-  useLayoutEffect(() => {
-    const abort = new AbortController();
-    const stop = () => { abort.abort(); setSelected(new Map()); setAll(new Map()); setLoading(false); setError(""); };
+    const key = JSON.stringify([library, run?.run_id]), entries = journal.current.entries;
+    const model = library && run && enabled ? new RunSelectionController(library, run.run_id, generation, scopeSignal, setState,
+      pending => { if (pending) entries.set(key, pending); else entries.delete(key); }, entries.get(key) ?? null) : null;
+    controller.current = model;
+    setState(model?.state ?? { snapshot: null, pending: null, phase: "error", error: "" });
+    const stop = () => setState({ snapshot: null, pending: null, phase: "error", error: "" });
     scopeSignal.addEventListener("abort", stop);
-    setError("");
-    const current = () => !abort.signal.aborted && generation === sessionGeneration();
-    setLoading(!!run);
-    if (pageOnly) { setAll(new Map()); setLoading(false); initialized.current = true; }
-    else if (!scopeSignal.aborted && library && run && terminal) {
-      void enumerateSaved(library, run, generation, abort.signal).then(records => {
-        if (current()) {
-          setAll(records);
-          if (!initialized.current) { setSelected(new Map(records)); initialized.current = true; }
-        }
-      }).catch(error => { if (current()) setError((error as Error).message); })
-        .finally(() => { if (current()) setLoading(false); });
-    }
-    if (scopeSignal.aborted) stop();
-    return () => { abort.abort(); scopeSignal.removeEventListener("abort", stop); };
-    // Page offsets and polling object identity must never reapply default selection.
-  }, [library, run?.run_id, run?.fetched, terminal, generation, scopeSignal, attempt, pageOnly]);
-  const ready = !!run && terminal && !loading && !error && !scopeSignal.aborted;
-  return { selected, loading, error, ready, total: all.size, pageOnly,
-    retry: () => setAttempt(value => value + 1),
-    selectAll: () => {
-      if (!ready) return;
-      initialized.current = true;
-      setSelected(pageOnly ? new Map(visible.slice(0, 100).map(article => [searchId(article), article]).filter(([id]) => !!id) as [string, Article][]) : new Map(all));
+    return () => { model?.dispose(); scopeSignal.removeEventListener("abort", stop); };
+  }, [library, run?.run_id, generation, scopeSignal, enabled]);
+  useLayoutEffect(() => { void controller.current?.load(); }, [library, run?.run_id, generation, scopeSignal, enabled, run?.fetched, run?.state, refreshVersion]);
+  const current = !scopeSignal.aborted && generation === sessionGeneration();
+  const snapshot = current ? state.snapshot : null;
+  const ready = !!snapshot && current && state.phase === "ready";
+  const canEdit = ready && snapshot.canEdit && capabilities?.selectionWriteEnabled === true;
+  const ids = snapshot?.selectedIDs ?? [];
+  const selected = new Set(ids);
+  const setPage = (value: boolean) => {
+    if (canEdit && visible.length) void controller.current?.apply({ action: "set", ids: visible.map(searchId), selected: value });
+  };
+  return {
+    selected, ids, count: snapshot?.selectedCount ?? 0, total: snapshot?.savedCount ?? 0,
+    records: snapshot?.selectedRecords ?? [], revision: snapshot?.revision,
+    snapshot, pending: current ? state.pending : null, phase: state.phase,
+    loading: !!run && state.phase === "loading", saving: state.phase === "saving",
+    error: state.error, unavailable: !!run && !enabled,
+    ready, canEdit, detailsReady: ready && snapshot.recordsComplete,
+    reload: () => controller.current?.load(true), retry: () => controller.current?.retry(),
+    selectAll: () => { if (canEdit) void controller.current?.apply({ action: "all" }); },
+    deselectAll: () => { if (canEdit) void controller.current?.apply({ action: "none" }); },
+    selectPage: () => setPage(true), deselectPage: () => setPage(false),
+    toggle: (article: Article) => {
+      const id = searchId(article);
+      if (canEdit && visible.some(item => searchId(item) === id))
+        void controller.current?.apply({ action: "set", ids: [id], selected: !selected.has(id) });
     },
-    deselectAll: () => { initialized.current = true; setSelected(new Map()); },
-    toggle: (article: Article) => { if (ready && (all.has(searchId(article)) || visible.some(item => searchId(item) === searchId(article)))) {
-      initialized.current = true; setSelected(value => toggleArticle(value, article, 100));
-    } },
   };
 }

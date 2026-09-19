@@ -1,6 +1,6 @@
 // Isolated synthetic transport; not native serializer/provider qualification.
 import { afterEach, expect, it, vi } from "vitest";
-import { clearSession, sessionGeneration, setSession } from "./api";
+import { clearSession, sessionGeneration, setSession, metadataFilename } from "./api";
 import { structuredExport, type ExportScope, type StructuredFormat } from "./structuredExport";
 
 const record = { searchId: "S-中文", identifiers: { pmid: "000123", doi: "10.123/α", pmcid: null },
@@ -39,7 +39,7 @@ for (const format of ["json", "jsonl"] as const) {
     expect(init.method).toBe("POST"); expect(init.credentials).toBe("same-origin");
     expect(new Headers(init.headers).get("X-CSRF")).toBe("SYNTHETIC-CSRF");
     expect(await result.blob.text()).toBe(data(format, scope));
-    expect(result.filename).toBe(`litradock-research.${format}`);
+    expect(result.filename).toBe(metadataFilename(scope, format));
   });
   it.each(["wrong media", "error envelope", "foreign scope", "truncated", "wrong count", "invalid UTF8"])(`${format} rejects %s rather than producing a file`, async failure => {
     setSession({ csrf: "SYNTHETIC" });
@@ -57,7 +57,7 @@ for (const format of ["json", "jsonl"] as const) {
 
 it("accepts a browser-normalized media essence while still validating actual UTF8", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response(data("json", runScope), { headers: { "Content-Type": "application/json" } })));
-  expect((await structuredExport("L", runScope, "json", sessionGeneration(), new AbortController().signal)).filename).toBe("litradock-research.json");
+  expect((await structuredExport("L", runScope, "json", sessionGeneration(), new AbortController().signal)).filename).toBe("litradock-saved-R-中文.json");
 });
 
 it.each([{}, { runID: "R", batchID: "B" }, { runID: "" }])("rejects ambiguous/missing scope before HTTP", async scope => {
@@ -82,7 +82,7 @@ for (const status of [200, 401, 503]) {
     await expect(old).rejects.toThrow("Session changed");
     expect(sessionGeneration()).toBe(newer);
     vi.stubGlobal("fetch", vi.fn(async () => response("jsonl", { batchID: "NEW" })));
-    expect((await structuredExport("L2", { batchID: "NEW" }, "jsonl", newer, new AbortController().signal)).filename).toBe("litradock-research.jsonl");
+    expect((await structuredExport("L2", { batchID: "NEW" }, "jsonl", newer, new AbortController().signal)).filename).toBe("batch-NEW.jsonl");
   });
 }
 
@@ -107,3 +107,25 @@ it("a current401 expires the session; a current503 is not a file", async () => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response('{"error":"unavailable"}', { status: 503 })));
   await expect(structuredExport("L", runScope, "json", sessionGeneration(), new AbortController().signal)).rejects.toThrow("HTTP 503");
 });
+
+for (const format of ["json", "jsonl"] as const) {
+  it.each(["valid", "header scope", "header revision", "header count", "IDs", "revision", "saved count"])(`${format} selected snapshot validates exact membership and headers: %s`, async fault => {
+    const scope = { runID: "R-中文", selection: "selected" as const, selectionRevision: 7, selectedIDs: [record.searchId], savedCount: 1000 };
+    let text = data(format, runScope).replace('"selection":"all_saved_scope"', '"selection":"selected_saved_records","selectionRevision":7,"savedRecords":1000');
+    if (fault === "IDs") text = text.replace(record.searchId, "WRONG");
+    if (fault === "revision") text = text.replace('"selectionRevision":7', '"selectionRevision":8');
+    if (fault === "saved count") text = text.replace('"savedRecords":1000', '"savedRecords":1');
+    const headers = { "Content-Type": format === "json" ? "application/json" : "application/x-ndjson",
+      "X-LitraDock-Export-Scope": fault === "header scope" ? "all_saved_scope" : "selected_saved_records",
+      "X-LitraDock-Selection-Revision": fault === "header revision" ? "8" : "7",
+      "X-LitraDock-Export-Count": fault === "header count" ? "2" : "1" };
+    const fetch = vi.fn(async () => new Response(text, { headers })); vi.stubGlobal("fetch", fetch);
+    const pending = structuredExport("L", scope, format, sessionGeneration(), new AbortController().signal);
+    if (fault === "valid") {
+      const result = await pending; expect(await result.blob.text()).toBe(text);
+      expect(result.filename).toBe(`litradock-selected-R-中文-r7.${format}`);
+      expect(JSON.parse(String((fetch.mock.calls as unknown as [string, RequestInit][])[0][1].body)))
+        .toEqual({ RunID: "R-中文", Selection: "selected", SelectionRevision: 7, Format: format });
+    } else await expect(pending).rejects.toThrow("No file was saved");
+  });
+}

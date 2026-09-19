@@ -1,5 +1,5 @@
 // Compiled browser qualification with labelled synthetic transport. No provider traffic.
-import { showWorkspace, openDisclosure } from "./workspace-navigation.mjs";
+import { setSavedCheck, createSelectionFixture, showWorkspace, openDisclosure } from "./workspace-navigation.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import { preview } from "vite";
 import { chromium } from "@playwright/test";
 
+const selectionFixture = createSelectionFixture();
 const root = process.cwd();
 const out = process.env.NATIVE_SOURCE_OUTCOME_BROWSER_OUTPUT || path.join(root, ".litradock/runtime/native021", new Date().toISOString().replaceAll(/[:.]/g, "-"));
 fs.mkdirSync(out, { recursive: true });
@@ -32,7 +33,7 @@ try {
     const req=route.request(),url=new URL(req.url()),method=req.method();
     if(url.origin!==origin)return route.abort();
     const reply=(data,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(data)});
-    if(url.pathname==="/service-info")return reply({pdfEnabled:true,planEnabled:true,searchEnabled:false,acquisitionEnabled:true});
+    if(url.pathname==="/service-info")return reply({ durableSelectionEnabled: true, selectionWriteEnabled: true, selectionRecordLimit: 1000,pdfEnabled:true,planEnabled:true,searchEnabled:false,acquisitionEnabled:true});
     if(!url.pathname.startsWith("/api/"))return route.continue();
     requests.push({path:url.pathname,method});
     if(url.pathname==="/api/session")return reply(signed?{csrf:"SYNTHETIC"}:{},signed?200:401);
@@ -41,6 +42,10 @@ try {
     if(url.pathname==="/api/libraries")return reply({items:[{library_id:"L1",name:"SYNTHETIC A"},{library_id:"L2",name:"SYNTHETIC B"}],total:2});
     if(url.pathname==="/api/libraries/L1")return reply({runs:[run],batches:[{batch_id:"B1",state:"partial"}],totals:{runs:1,batches:1},offset:0,limit:100});
     if(url.pathname==="/api/libraries/L2")return reply({runs:[],batches:[],totals:{runs:0,batches:0},offset:0,limit:100});
+    if (url.pathname.endsWith("/selection")) {
+      const selectionRun = url.pathname.split("/").at(-2);
+      return selectionFixture(url.pathname, selectionRun, states.map((_, i) => article(i)), method, method === "POST" ? req.postDataJSON() : null, reply);
+    }
     if(url.pathname.endsWith("/runs/R1")){const offset=Number(url.searchParams.get("offset"));return reply({run,records:states.slice(offset,offset+5).map((_,n)=>article(offset+n)),total:8,offset,limit:5});}
     if(url.pathname.endsWith("/batches/B1"))return reply({requestedFormat:"pdf",batch:{batch_id:"B1",state:"partial"},items:states.map((_,i)=>({search_id:`S${i}`,rank:i+1,state:i===5?"acquired":"unavailable",reason:"SYNTHETIC saved reason",attempts:1,article:article(i),downloadAvailable:false,sourceOutcome:outcome(i)})),total:8,counts:{acquired:1,unavailable:7}});
     if(url.pathname.endsWith("/plans"))return reply({plans:url.pathname.includes("L1")?[plan]:[],total:url.pathname.includes("L1")?1:0,offset:0,limit:25});
@@ -49,10 +54,10 @@ try {
     return reply({error:"SYNTHETIC route unavailable"},404);
   });
   await page.goto(origin);await page.getByLabel("Login",{exact:true}).fill("SYNTHETIC");await page.getByLabel("Password",{exact:true}).fill("SYNTHETIC");await page.getByRole("button",{name:"Sign in",exact:true}).click();
-  await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").click();await page.getByRole("button",{name:"Select all",exact:true}).waitFor();
+  await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").click();await page.getByRole("button",{name:"Select all saved",exact:true}).waitFor();
   await page.waitForFunction(()=>document.querySelector('.selection-toolbar')?.textContent.includes('8 selected of 8'));
   for(const label of labels.slice(0,5))assert((await page.locator(".results .source-outcome, .result-card .source-outcome").allTextContents()).some(s=>s.includes(label)));
-  await page.locator('.result-card input').first().uncheck();await page.getByRole("button",{name:"Next records",exact:true}).click();
+  await setSavedCheck(page.locator('.result-card input').first(), false);await page.getByRole("button",{name:"Next records",exact:true}).click();
   await page.locator('.result-card').filter({hasText:labels[7]}).waitFor();
   assert((await page.locator('.selection-toolbar').innerText()).includes('7 selected of 8'));
   for(const label of labels.slice(5))assert((await page.locator('.result-card').allTextContents()).some(s=>s.includes(label)));

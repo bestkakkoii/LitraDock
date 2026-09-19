@@ -48,6 +48,9 @@ export type LibraryPage = {
   limit: number;
 };
 export type ServiceInfo = {
+  durableSelectionEnabled?: boolean;
+  selectionWriteEnabled?: boolean;
+  selectionRecordLimit?: number;
   searchContinuationEnabled?: boolean;
   searchWindowLimit?: number;
   savedSetEnabled?: boolean;
@@ -93,6 +96,31 @@ export type BatchDetail = {
   counts: Record<string, number>;
   policy?: string;
 };
+export type MetadataExportScope = { runID?: string; batchID?: string; selection?: never } | {
+  runID: string; batchID?: never; selection: "selected"; selectionRevision: number;
+  selectedIDs: readonly string[]; savedCount: number;
+};
+export function metadataExportBody(scope: MetadataExportScope, format: string) {
+  if (scope.selection !== "selected") return { ...scope, format };
+  if (!scope.runID || scope.batchID || !["csv", "xlsx", "json", "jsonl"].includes(format) ||
+      !Number.isSafeInteger(scope.selectionRevision) || scope.selectionRevision < 1 ||
+      !Number.isSafeInteger(scope.savedCount) || scope.savedCount > 1000 ||
+      scope.selectedIDs.length < 1 || scope.selectedIDs.length > scope.savedCount ||
+      new Set(scope.selectedIDs).size !== scope.selectedIDs.length || scope.selectedIDs.some(id => !id))
+    throw new Error("Select a supported saved-run scope before exporting.");
+  return { RunID: scope.runID, Selection: "selected", SelectionRevision: scope.selectionRevision, Format: format };
+}
+export function validateMetadataResponse(scope: MetadataExportScope, response: Response) {
+  if (scope.selection !== "selected") return;
+  if (response.headers.get("X-LitraDock-Export-Scope") !== "selected_saved_records" ||
+      response.headers.get("X-LitraDock-Selection-Revision") !== String(scope.selectionRevision) ||
+      response.headers.get("X-LitraDock-Export-Count") !== String(scope.selectedIDs.length))
+    throw new Error("The export did not match the selected saved scope. No file was saved; reload the selection.");
+}
+export function metadataFilename(scope: MetadataExportScope, format: string) {
+  return scope.batchID ? `batch-${scope.batchID}.${format}` :
+    scope.selection === "selected" ? `litradock-selected-${scope.runID}-r${scope.selectionRevision}.${format}` : `litradock-saved-${scope.runID}.${format}`;
+}
 let csrf = "";
 let generation = 0;
 const sessionListeners = new Set<() => void>();
@@ -215,7 +243,7 @@ export async function requestBlob(
   path: string,
   init: RequestInit = {},
   expectedGeneration = generation,
-  transfer: TransferOptions & { maxErrorBytes?: number } = {},
+  transfer: TransferOptions & { maxErrorBytes?: number; validateResponse?: (response: Response) => void } = {},
 ): Promise<Blob> {
   const slot = requestSlot();
   const release = typeof slot === "function" ? slot : await slot;
@@ -241,6 +269,8 @@ export async function requestBlob(
     throw new ApiError(response.status, `Download unavailable (HTTP ${response.status}).`,
       response.status === 429 ? retryAfterSeconds(response.headers?.get("Retry-After") ?? null) : undefined);
   }
+  try { transfer.validateResponse?.(response); }
+  catch (error) { await response.body?.cancel().catch(() => {}); throw error; }
   const blob = await readTransfer(response, init.signal,
     () => assertRequestCurrent(expectedGeneration, init.signal), transfer);
   assertRequestCurrent(expectedGeneration, init.signal);
@@ -332,29 +362,29 @@ export const api = {
     ),
   exportCsv: (
     library: string,
-    selection: { runID?: string; batchID?: string },
+    selection: MetadataExportScope,
     g = generation,
     signal?: AbortSignal,
     transfer: TransferOptions = {},
   ) =>
     requestBlob(
       `/api/libraries/${encodeURIComponent(library)}/exports`,
-      { method: "POST", body: JSON.stringify({ ...selection, format: "csv" }), signal },
+      { method: "POST", body: JSON.stringify(metadataExportBody(selection, "csv")), signal },
       g,
-      transfer,
+      { ...transfer, validateResponse: response => validateMetadataResponse(selection, response) },
     ),
   exportXlsx: (
     library: string,
-    selection: { runID?: string; batchID?: string },
+    selection: MetadataExportScope,
     g = generation,
     signal?: AbortSignal,
     transfer: TransferOptions = {},
   ) =>
     requestBlob(
       `/api/libraries/${encodeURIComponent(library)}/exports`,
-      { method: "POST", body: JSON.stringify({ ...selection, format: "xlsx" }), signal },
+      { method: "POST", body: JSON.stringify(metadataExportBody(selection, "xlsx")), signal },
       g,
-      transfer,
+      { ...transfer, validateResponse: response => validateMetadataResponse(selection, response) },
     ),
   exportBundle: (library: string, batchID: string, g = generation, signal?: AbortSignal, transfer: TransferOptions = {}) =>
     requestBlob(

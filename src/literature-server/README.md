@@ -128,3 +128,28 @@ expired payloads but retains UUID tombstones to prevent accidental resubmission.
 Snapshots expire in 24 hours. Metadata quotas: 16 MiB/library, 64 MiB globally,
 20 active snapshots/plan, 4096 global receipts. Tombstone removal requires a
 separately qualified retention decision; exhaustion needs operator action.
+
+## Durable saved-run selection (schema 9)
+
+After a verified paired backup and isolated restore, stop the application and
+use `./server migrate-run-selection` on schema 8. Enable
+`SelectionWriteEnabled` only after qualification. Saved runs default to all
+saved members, up to 1,000; explicit exceptions survive reload and subsequent
+metadata pages. All/none also sets the policy for future saved members, while
+page controls add/remove only that page. Previously browser-only choices cannot
+be recovered by migration. Provider matches, saved records, visible rows and
+selected records remain separate. PDF limits remain 10 per batch / 100 per plan.
+
+`GET /api/libraries/{library}/runs/{run}/selection` returns confirmed counts,
+all selected IDs, a revision and bounded selected metadata. POST uses a request
+UUID, that revision, and an all/none/set action. Uncertain writes retry the same
+intent; conflicts require reloading before a new explicit choice. Selected
+metadata exports require `Selection: "selected"` and `SelectionRevision` with
+the existing run/format fields. CSV/XLSX/JSON/JSONL retain the exact selected
+saved scope; ordinary saved-run exports retain the whole saved scope.
+
+`rollback-empty-run-selection` refuses any saved choice or action receipt.
+After use, retain schema 9 and its compatible reader with selection writes
+disabled, preserving the data for a reviewed forward repair. An old schema-8
+binary cannot read schema 9. Never discard choices or restore an old dump over
+newer research to downgrade. See [ADR-0027](docs/adr/0027-durable-saved-run-selection.md).

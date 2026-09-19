@@ -1,5 +1,5 @@
 // SYNTHETIC loopback HTTP fixtures and files. No native Go/PG/provider evidence.
-import { showWorkspace } from "./workspace-navigation.mjs";
+import { setSavedCheck, createSelectionFixture, showWorkspace } from "./workspace-navigation.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -9,6 +9,7 @@ import { gzipSync } from "node:zlib";
 import { chromium, expect } from "@playwright/test";
 import { zipSync, unzipSync } from "../../../tests/native-browser/node_modules/fflate/esm/index.mjs";
 
+const selectionFixture = createSelectionFixture();
 const root = process.cwd();
 const out = path.join(root, ".litradock/runtime/frontend016", new Date().toISOString().replaceAll(/[:.]/g, "-"));
 fs.mkdirSync(out, { recursive: true });
@@ -71,7 +72,7 @@ const server = http.createServer(async (req, res) => {
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks)) : null;
     const reply = (value, status = 200) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(value)); };
     if (req.method === "POST") posts.push({ path: route, body, csrf: req.headers["x-csrf"] });
-    if (route === "/service-info") return reply({ planEnabled: true, pdfEnabled: true, savedSetEnabled: admission, acquisitionEnabled: true });
+    if (route === "/service-info") return reply({ durableSelectionEnabled: true, selectionWriteEnabled: true, selectionRecordLimit: 1000, planEnabled: true, pdfEnabled: true, savedSetEnabled: admission, acquisitionEnabled: true });
     if (!route.startsWith("/api/")) {
       const data = assets.get(route === "/" ? "/index.html" : route);
       if (!data) { res.writeHead(404); return res.end(); }
@@ -82,6 +83,10 @@ const server = http.createServer(async (req, res) => {
     if (route === "/api/logout") { authenticated = false; return reply({}); }
     if (route === "/api/libraries") return reply({ items: (account === "A" ? ["L1", "L2"] : ["LB"]).map(library_id => ({ library_id, name: `SYNTHETIC ${library_id}` })), total: account === "A" ? 2 : 1 });
     if (/\/libraries\/[^/]+$/.test(route)) return reply({ runs: Object.keys(runs).map(run), batches: [], totals: { runs: 4, batches: 0 }, offset: 0, limit: 100 });
+    if (route.endsWith("/selection")) {
+      const selectionRun = route.split("/").at(-2);
+      return selectionFixture(account + route, selectionRun, runs[selectionRun].map(article), req.method, req.method === "POST" ? body : null, reply);
+    }
     if (route.includes("/runs/")) { const id = route.split("/").at(-1), offset = Number(url.searchParams.get("offset")), limit = Number(url.searchParams.get("limit"));
       return reply({ run: run(id), records: runs[id].slice(offset, offset + limit).map(article), total: runs[id].length, offset, limit }); }
     if (route.endsWith("/plans") && req.method === "POST") {
@@ -148,7 +153,7 @@ try {
   await page.addInitScript(() => { const fetch = window.fetch.bind(window); window.fetch = (url, init) => fetch(url, window.__ignoreAbort ? { ...init, signal: undefined } : init); });
   const button = name => page.getByRole("button", { name, exact: true });
   const login = async who => { await page.getByLabel("Login", { exact: true }).fill(who); await page.getByLabel("Password", { exact: true }).fill("SYNTHETIC"); await button("Sign in").click(); await expect(page.getByLabel("Choose library", { exact: true })).toHaveValue(who === "B" ? "LB" : "L1"); };
-  const openRun = async id => { await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").filter({ has: page.locator(".history-id", { hasText: new RegExp(`${id}$`) }) }).click(); await expect(button("Select all")).toBeEnabled(); await expect(page.locator(".selection-toolbar")).toContainText(`of ${runs[id].length}`); };
+  const openRun = async id => { await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").filter({ has: page.locator(".history-id", { hasText: new RegExp(`${id}$`) }) }).click(); await expect(button("Select all saved")).toBeEnabled(); await expect(page.locator(".selection-toolbar")).toContainText(`of ${runs[id].length}`); };
   const open = async id => { await showWorkspace(page, "Research plans"); await page.getByLabel("Saved plans", { exact: true }).selectOption(id); await expect(page.getByRole("heading", { name: `Plan ${id}`, exact: true })).toBeVisible(); };
   const add = async count => { await showWorkspace(page, "Research plans"); await button(`Add checked records to basket (${count})`).click(); };
   const removeBasket = async searchID => {
@@ -180,7 +185,7 @@ try {
   await page.locator(".saved-basket > details > summary").click(); await expect(page.locator(".saved-basket")).toContainText("4 associations");
   await removeBasket("S2"); await expect(page.locator(".saved-basket")).toContainText("2 records in basket"); await add(2);
   await button("Clear basket").click(); await openRun("R4"); await page.getByLabel("Page size", { exact: true }).selectOption("5");
-  await expect(button("Select all")).toBeEnabled(); await add(6); await showWorkspace(page, "Search & PDFs"); await button("Next records").click(); await expect(button("Previous records")).toBeEnabled(); await add(6);
+  await expect(button("Select all saved")).toBeEnabled(); await add(6); await showWorkspace(page, "Search & PDFs"); await button("Next records").click(); await expect(button("Previous records")).toBeEnabled(); await add(6);
   await expect(page.locator(".saved-basket")).toContainText("6 records in basket · 1 saved searches");
   await button("Clear basket").click(); await openRun("R1"); await showWorkspace(page, "Research plans"); await button("Add checked records to basket (2)").focus(); await page.keyboard.press("Enter"); await openRun("R2"); await add(2);
   await expect(page.locator(".saved-basket")).toContainText("3 records in basket · 2 saved searches");

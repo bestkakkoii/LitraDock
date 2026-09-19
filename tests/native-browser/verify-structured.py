@@ -11,7 +11,7 @@ def pairs(items):
     return result
 
 
-def load(path, require_source_outcomes=False):
+def load(path, require_source_outcomes=False, expected_selection="all_saved_scope"):
     raw = pathlib.Path(path).read_bytes()
     assert len(raw) <= 8 * 1024 * 1024 and not raw.startswith(b"\xef\xbb\xbf")
     text = raw.decode("utf-8", errors="strict")
@@ -26,7 +26,7 @@ def load(path, require_source_outcomes=False):
     else:
         document = json.loads(text, object_pairs_hook=pairs)
         assert document["type"] == "document"
-    validate(document, require_source_outcomes)
+    validate(document, require_source_outcomes, expected_selection=expected_selection)
     return document
 
 
@@ -100,13 +100,20 @@ def source_outcome(r, scope, originals_revalidated):
     assert o["sourceLinks"] == r["sourceLinks"] == expected
 
 
-def validate(d, require_source_outcomes=False, originals_revalidated=False):
+def validate(d, require_source_outcomes=False, originals_revalidated=False, expected_selection="all_saved_scope"):
     assert set(d) == {"schema", "schemaVersion", "type", "generatedAt", "scope", "counts", "queryContexts", "records"}
     assert d["schema"] == "litradock.research-export" and type(d["schemaVersion"]) is int and d["schemaVersion"] == 1
     records = d["records"]
     assert 1 <= len(records) <= 1000
     assert d["counts"]["exportedRecords"] == d["counts"]["scopeRecords"] == len(records)
-    assert d["scope"]["selection"] == "all_saved_scope"
+    assert expected_selection in ("all_saved_scope", "selected_saved_records")
+    assert d["scope"]["selection"] == expected_selection
+    if expected_selection == "selected_saved_records":
+        assert set(d["scope"]) == {"kind", "runId", "batchId", "selection", "selectionRevision", "savedRecords"}
+        assert d["scope"]["kind"] == "run" and d["scope"]["batchId"] is None
+        assert isinstance(d["scope"]["runId"], str) and d["scope"]["runId"]
+        assert type(d["scope"]["selectionRevision"]) is int and d["scope"]["selectionRevision"] > 0
+        assert type(d["scope"]["savedRecords"]) is int and len(records) <= d["scope"]["savedRecords"] <= 1000
     assert len({r["searchId"] for r in records}) == len(records)
     allowed = {"searchId", "runIds", "identifiers", "publication", "sourceLinks", "acquisition", "originals"}
     publication = {"title", "authors", "year", "journal", "publicationDate", "articleNumber", "pages", "abstract", "publicationTypes", "retrievedAt"}

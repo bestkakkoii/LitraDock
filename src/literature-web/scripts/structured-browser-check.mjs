@@ -1,5 +1,5 @@
 // Isolated SYNTHETIC transport. Tests the compiled frontend, not native Go/source provenance.
-import { showWorkspace, openDisclosure } from "./workspace-navigation.mjs";
+import { setSavedCheck, createSelectionFixture, showWorkspace, openDisclosure } from "./workspace-navigation.mjs";
 import assert from "node:assert/strict";
 import { installBodyGates } from "./body-gates.mjs";
 import fs from "node:fs";
@@ -8,6 +8,7 @@ import crypto from "node:crypto";
 import { preview } from "vite";
 import { chromium, expect } from "@playwright/test";
 
+const selectionFixture = createSelectionFixture();
 const root = process.cwd();
 const out = path.join(root, ".litradock/runtime/frontend013", new Date().toISOString().replaceAll(/[:.]/g, "-"));
 fs.mkdirSync(out, { recursive: true });
@@ -51,7 +52,7 @@ try {
     const request = route.request(), url = new URL(request.url()), method = request.method();
     if (url.origin !== origin) { external.push(url.origin); return route.abort(); }
     const reply = (body, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
-    if (url.pathname === "/service-info") return reply({ pdfEnabled: true, planEnabled: true, acquisitionEnabled: true });
+    if (url.pathname === "/service-info") return reply({ durableSelectionEnabled: true, selectionWriteEnabled: true, selectionRecordLimit: 1000, pdfEnabled: true, planEnabled: true, acquisitionEnabled: true });
     if (!url.pathname.startsWith("/api/")) return route.continue();
     if (method === "POST") posts.push({ path: url.pathname, body: request.postDataJSON(), csrf: request.headers()["x-csrf"] });
     if (url.pathname === "/api/session") return reply(authenticated ? { csrf: "SYNTHETIC" } : {}, authenticated ? 200 : 401);
@@ -59,6 +60,10 @@ try {
     if (url.pathname === "/api/logout") { authenticated = false; return reply({}); }
     if (url.pathname === "/api/libraries") return reply({ items: (account === "B" ? ["LB"] : ["L1", "L2"]).map(id => ({ library_id: id, name: `SYNTHETIC ${id}` })), total: account === "B" ? 1 : 2 });
     if (/\/api\/libraries\/[^/]+$/.test(url.pathname)) return reply({ runs: [run("R1"), run("R2")], batches: [{ batch_id: "B1", state: "partial" }, { batch_id: "B2", state: "complete" }], totals: { runs: 2, batches: 2 }, offset: 0, limit: 100 });
+    if (url.pathname.endsWith("/selection")) {
+      const selectionRun = url.pathname.split("/").at(-2);
+      return selectionFixture(account + url.pathname, selectionRun, Array.from({ length: 7 }, (_, i) => article(i)), method, method === "POST" ? request.postDataJSON() : null, reply);
+    }
     if (url.pathname.includes("/runs/")) {
       const offset = Number(url.searchParams.get("offset")), limit = Math.min(5, Number(url.searchParams.get("limit")));
       return reply({ run: run(url.pathname.split("/").at(-1)), records: Array.from({ length: Math.min(limit, 7 - offset) }, (_, i) => article(offset + i)), total: 7, offset, limit });
@@ -86,7 +91,7 @@ try {
   };
   const open = async id => {
     await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").filter({ has: page.locator(".history-id", { hasText: new RegExp(`${id}$`) }) }).click();
-    await expect(button("Select all")).toBeEnabled();
+    await expect(button("Select all saved")).toBeEnabled();
     await openDisclosure(page, "Export saved results and other actions");
     await expect(button("Export saved run JSON")).toBeEnabled();
   };
@@ -102,7 +107,7 @@ try {
     const name = `Export ${scope.runID ? "saved run" : "batch"} ${format.toUpperCase()}`;
     const event = page.waitForEvent("download"); await button(name).click(); const file = await event;
     const bytes = fs.readFileSync(await file.path());
-    assert.deepEqual(bytes, payload(scope, format)); assert.equal(file.suggestedFilename(), `litradock-research.${format}`);
+    assert.deepEqual(bytes, payload(scope, format)); assert.equal(file.suggestedFilename(), scope.batchID ? `batch-${scope.batchID}.${format}` : `litradock-saved-${scope.runID}.${format}`);
     const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
     const document = format === "json" ? JSON.parse(text) : JSON.parse(text.split("\n")[0]);
     const records = format === "json" ? document.records : text.trimEnd().split("\n").slice(1).map(line => JSON.parse(line).record);
@@ -115,7 +120,7 @@ try {
     await expect(button(name)).toBeEnabled();
   };
   await page.goto(origin); await login("A"); await open("R1");
-  await button("Deselect all").click(); await page.locator(".result-card input").first().check();
+  await button("Deselect all").click(); await setSavedCheck(page.locator(".result-card input").first(), true);
   await button("Next records").click(); await expect(page.locator(".result-card")).toHaveCount(2);
   for (const format of ["json", "jsonl"]) await download({ runID: "R1" }, format);
   await showWorkspace(page, "Downloads"); await page.getByLabel("Saved batches", { exact: true }).selectOption("B1");

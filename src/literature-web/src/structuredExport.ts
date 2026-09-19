@@ -1,8 +1,8 @@
-import { requestBlob, sessionGeneration } from "./api";
+import { requestBlob, sessionGeneration, type MetadataExportScope, metadataExportBody, metadataFilename, validateMetadataResponse } from "./api";
 import { TransferOptions } from "./transfer";
 
 export type StructuredFormat = "json" | "jsonl";
-export type ExportScope = { runID: string; batchID?: never } | { batchID: string; runID?: never };
+export type ExportScope = { runID: string; batchID?: never; selection?: never } | { batchID: string; runID?: never; selection?: never } | Extract<MetadataExportScope, { selection: "selected" }>;
 
 const mediaTypes = { json: "application/json", jsonl: "application/x-ndjson" } as const;
 const invalidExport = () => new Error("The server did not return a valid research export. No file was saved.");
@@ -25,7 +25,7 @@ export async function structuredExport(
   };
   current();
   if (!library || !["json", "jsonl"].includes(format) ||
-      Object.keys(scope).length !== 1 ||
+      (scope.selection !== "selected" && Object.keys(scope).length !== 1) ||
       !((typeof scope.runID === "string" && scope.runID) ||
         (typeof scope.batchID === "string" && scope.batchID))) throw invalidExport();
   const expectedScope = scope.runID !== undefined
@@ -33,9 +33,9 @@ export async function structuredExport(
     : { kind: "batch", runId: null, batchId: scope.batchID };
   const blob = await requestBlob(
     `/api/libraries/${encodeURIComponent(library)}/exports`,
-    { method: "POST", body: JSON.stringify({ ...scope, format }), signal },
+    { method: "POST", body: JSON.stringify(metadataExportBody(scope, format)), signal },
     generation,
-    { ...transfer, maxBytes: 8 * 1024 * 1024 },
+    { ...transfer, maxBytes: 8 * 1024 * 1024, validateResponse: response => validateMetadataResponse(scope, response) },
   );
   current();
   const [mime, ...parameters] = blob.type.toLowerCase().split(";").map(value => value.trim());
@@ -67,13 +67,16 @@ export async function structuredExport(
       envelope.schemaVersion !== 1 || envelope.type !== (format === "json" ? "document" : "manifest") ||
       "error" in envelope || !object(envelope.scope) || !object(envelope.counts) ||
       envelope.scope.kind !== expectedScope.kind || envelope.scope.runId !== expectedScope.runId ||
-      envelope.scope.batchId !== expectedScope.batchId || envelope.scope.selection !== "all_saved_scope" ||
+      envelope.scope.batchId !== expectedScope.batchId || envelope.scope.selection !== (scope.selection === "selected" ? "selected_saved_records" : "all_saved_scope") ||
       !Array.isArray(envelope.queryContexts) || records.length < 1 || records.length > 1000 ||
       envelope.counts.exportedRecords !== records.length || envelope.counts.scopeRecords !== records.length ||
       !records.every(record => object(record) && typeof record.searchId === "string" && record.searchId.length > 0))
     throw invalidExport();
   if (new Set(records.map(record => (record as Record<string, unknown>).searchId)).size !== records.length)
     throw invalidExport();
+  if (scope.selection === "selected" && (envelope.scope.selectionRevision !== scope.selectionRevision ||
+      envelope.scope.savedRecords !== scope.savedCount || records.length !== scope.selectedIDs.length ||
+      records.some((record, i) => (record as Record<string, unknown>).searchId !== scope.selectedIDs[i]))) throw invalidExport();
   current();
-  return { blob, filename: `litradock-research.${format}` };
+  return { blob, filename: metadataFilename(scope, format) };
 }

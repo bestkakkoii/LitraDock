@@ -23,11 +23,13 @@ const structuredLimit = 1000
 const structuredBytes = 8 * 1024 * 1024
 
 type structuredScope struct {
-	PlanID    *string `json:"planId,omitempty"`
-	Kind      string  `json:"kind"`
-	RunID     *string `json:"runId"`
-	BatchID   *string `json:"batchId"`
-	Selection string  `json:"selection"`
+	PlanID            *string `json:"planId,omitempty"`
+	SelectionRevision *int    `json:"selectionRevision,omitempty"`
+	SavedRecords      *int    `json:"savedRecords,omitempty"`
+	Kind              string  `json:"kind"`
+	RunID             *string `json:"runId"`
+	BatchID           *string `json:"batchId"`
+	Selection         string  `json:"selection"`
 }
 type structuredCounts struct {
 	Exported  int  `json:"exportedRecords"`
@@ -178,7 +180,19 @@ func (s *server) structuredResearch(ctx context.Context, library, run, batch str
 
 // The caller owns one consistent snapshot, including any plan state and original bytes.
 func (s *server) liveStructuredResearchSnapshot(ctx context.Context, tx pgx.Tx, library, run, batch, plan string, frozenPlan ...bool) (structuredDocument, error) {
+	return s.liveStructuredSelectionSnapshot(ctx, tx, library, run, batch, plan, nil, frozenPlan...)
+}
+
+func (s *server) liveStructuredSelectionSnapshot(ctx context.Context, tx pgx.Tx, library, run, batch, plan string, selection *runSelectionView, frozenPlan ...bool) (structuredDocument, error) {
 	d := structuredDocument{Schema: structuredSchema, Version: 1, Type: "document", GeneratedAt: time.Now().UTC(), Queries: []structuredQuery{}, Records: []structuredRecord{}, Scope: structuredScope{Selection: "all_saved_scope", RunID: optionalText(run), BatchID: optionalText(batch), PlanID: optionalText(plan)}}
+	if selection != nil {
+		if run == "" || selection.RunID != run || batch != "" || plan != "" || selection.Revision < 1 {
+			return d, exportInvalid("Selected metadata requires one coherent saved run selection")
+		}
+		d.Scope.Selection = "selected_saved_records"
+		d.Scope.SelectionRevision = &selection.Revision
+		d.Scope.SavedRecords = &selection.SavedCount
+	}
 	var err error
 	format := ""
 	if plan != "" {
@@ -208,20 +222,28 @@ func (s *server) liveStructuredResearchSnapshot(ctx context.Context, tx pgx.Tx, 
 		join, identifier, column = "native_plan_items", plan, "plan_id"
 	}
 	from := " FROM ld_records r JOIN " + join + " x USING(library_id,search_id) WHERE x.library_id=$1 AND x." + column + "=$2"
+	args := []any{library, identifier}
+	if selection != nil {
+		from += " AND x.search_id=ANY($3::text[])"
+		args = append(args, selection.SelectedIDs)
+	}
 	var count int
 	var metadataBytes int64
-	if err = tx.QueryRow(ctx, "SELECT count(*),COALESCE(sum(octet_length(r.metadata)),0)"+from, library, identifier).Scan(&count, &metadataBytes); err != nil {
+	if err = tx.QueryRow(ctx, "SELECT count(*),COALESCE(sum(octet_length(r.metadata)),0)"+from, args...).Scan(&count, &metadataBytes); err != nil {
 		return d, err
 	}
-	if count < 1 || count > structuredLimit || metadataBytes > 4*1024*1024 || (d.Counts.Retrieved != nil && count != *d.Counts.Retrieved) {
+	if count < 1 || count > structuredLimit || metadataBytes > 4*1024*1024 || (selection == nil && d.Counts.Retrieved != nil && count != *d.Counts.Retrieved) || (selection != nil && (count != selection.SelectedCount || d.Counts.Retrieved == nil || *d.Counts.Retrieved != selection.SavedCount)) {
 		return d, exportInvalid("Saved export count or metadata bound unavailable; nothing truncated")
 	}
 	d.Counts.Exported, d.Counts.Scope = count, count
 	query := "SELECT r.search_id,r.metadata,'' AS state,'' AS reason" + from + " ORDER BY x.rank"
+	if selection != nil {
+		query += ",x.search_id"
+	}
 	if batch != "" {
 		query = "SELECT r.search_id,r.metadata,x.state,x.reason" + from + " ORDER BY x.rank"
 	}
-	rows, err := tx.Query(ctx, query, library, identifier)
+	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {
 		return d, err
 	}

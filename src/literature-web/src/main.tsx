@@ -2,6 +2,7 @@ import React, { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState
 import { createRoot } from "react-dom/client";
 import {
   api,
+  ApiError,
   Article,
   Library,
   Run,
@@ -9,6 +10,8 @@ import {
   BatchDetail,
   SavedBatch,
   ServiceInfo,
+  type MetadataExportScope,
+  metadataFilename,
   clearSession,
   onSessionInvalidated,
   sessionGeneration,
@@ -16,8 +19,9 @@ import {
 import { ArticleCard, SourceLinks } from "./components/ArticleCard";
 import { SourceOutcomeView } from "./components/SourceOutcome";
 import { canAdvanceRecords } from "./pagination";
-import { searchId, selectedSearchIds } from "./selection";
+import { searchId } from "./selection";
 import { useSavedSelection } from "./savedSelection";
+import { selectionIntentLabel } from "./runSelection";
 import { originalKind } from "./originalKind";
 import { structuredExport, type ExportScope, type StructuredFormat } from "./structuredExport";
 import { PlanWorkspace } from "./plans/PlanWorkspace";
@@ -41,6 +45,11 @@ function safeRightsLink(value: unknown): string | null {
   } catch {
     return null;
   }
+}
+function metadataExportError(failure: unknown, scope: MetadataExportScope) {
+  return scope.selection === "selected" && failure instanceof ApiError && failure.status === 409
+    ? "The saved selection changed. Reload saved selection, then export the current choices. No file was saved."
+    : (failure as Error).message;
 }
 function stateLabel(run: Run | null) {
   if (!run) return "No search selected";
@@ -81,10 +90,12 @@ export function App() {
     [message, setMessage] = useState(""),
     [error, setError] = useState("");
   const [view, setView] = useState<WorkspaceView>("search");
+  const [selectionReadVersion, setSelectionReadVersion] = useState(0);
   const [filters, setFilters] = useState(emptyFilters);
   const [pdfNotice, setPdfNotice] = useState({ library: "", runID: "", message: "" });
   const navigationTarget = useRef(readWorkspaceRoute());
   const showView = (next: WorkspaceView) => {
+    if (next === "search" && view !== next) setSelectionReadVersion(value => value + 1);
     setView(next);
     writeWorkspaceRoute({ library, run: run?.run_id ?? "", view: next });
   };
@@ -160,13 +171,14 @@ export function App() {
       writeWorkspaceRoute({ library, run: page.run.run_id, view });
     }
     setRun(page.run); setContinuation(page.continuation ?? null); setRecords(page.records);
+    setSelectionReadVersion(value => value + 1);
     setSnapshot(page.run.input); setPageTotal(page.total); setRecordOffset(page.offset); setPageSize(page.limit);
     setMessage(stateLabel(page.run)); setBusy(false);
     void refreshHistory();
   };
-  const selection = useSavedSelection(library, run, sessionGeneration(), planScope.current.signal, records);
+  const selection = useSavedSelection(library, run, sessionGeneration(), planScope.current.signal, records, serviceInfo, selectionReadVersion);
   const selected = selection.selected;
-  const selectionMaximum = 100;
+  const selectionMaximum = 1000;
   const isCurrentBatchOperation = (
     operation: number,
     expectedLibrary: string,
@@ -221,7 +233,6 @@ export function App() {
       navigationTarget.current = null; writeWorkspaceRoute(null, true);
       setSnapshot("");
       setRecords([]);
-      selection.deselectAll();
       setHistory([]);
       setRun(null);
       setBatch(null);
@@ -353,7 +364,6 @@ export function App() {
       setSnapshot("");
       setRecords([]);
       setHistory([]);
-      selection.deselectAll();
       setRun(null);
       setBatch(null);
       setSavedBatches([]); setBatchOffset(0); setBatchTotal(0);
@@ -391,7 +401,7 @@ export function App() {
     if (serviceInfo?.searchContinuationEnabled === true) {
       retirePlanScope(); retireChildView();
       runGeneration.current++;
-      selection.deselectAll(); setRun(null); setRecords([]); setPageTotal(0); setContinuation(null);
+      setRun(null); setRecords([]); setPageTotal(0); setContinuation(null);
       setSnapshot(submitted); setRecordOffset(0);
       await searchController.search(submitted, limit);
       return;
@@ -408,7 +418,6 @@ export function App() {
     setError("");
     setRecords([]);
     setPageTotal(0);
-    selection.deselectAll();
     setRecordOffset(0);
     setSnapshot(submitted);
     try {
@@ -463,7 +472,7 @@ export function App() {
     const g = ++runGeneration.current;
     if (id !== run?.run_id) {
       retirePlanScope();
-      selection.deselectAll(); setRecords([]); setRun(null); setBatch(null);
+      setRecords([]); setRun(null); setBatch(null);
       setContinuation(null);
       batchOperation.current += 1; setBatchBusy(false);
     }
@@ -482,6 +491,7 @@ export function App() {
         return;
       setRun(page.run);
       setContinuation(page.continuation ?? null);
+      setSelectionReadVersion(value => value + 1);
       setSnapshot(page.run.input);
       restoreQuery(page.run.input); setView(nextView);
       if (remember) writeWorkspaceRoute({ library: savedLibrary, run: id, view: nextView });
@@ -500,8 +510,8 @@ export function App() {
     }
   };
   const createBatch = async () => {
-    if (!library || !selection.ready || draftChanged || busy || selected.size < 1 || selected.size > 10) return;
-    const ids = selectedSearchIds(selected);
+    if (!library || !selection.detailsReady || draftChanged || busy || selected.size < 1 || selected.size > 10) return;
+    const ids = [...selection.ids];
     if (ids.length !== selected.size) {
       setError("Selected records do not contain stable search IDs.");
       return;
@@ -544,7 +554,7 @@ export function App() {
     runGeneration.current++; historyRequest.current++; batchOperation.current++; batchHistoryRequest.current++;
     setHistory([]); setHistoryTotal(0); setHistoryOffset(0);
     setLibrary(id); setRecords([]); setRun(null); setPageTotal(0); setRecordOffset(0);
-    selection.deselectAll(); setSnapshot(""); setQuery(""); setFilters(emptyFilters()); setView("search");
+    setSnapshot(""); setQuery(""); setFilters(emptyFilters()); setView("search");
     setBatch(null); setSavedBatches([]); setBatchOffset(0); setBatchTotal(0);
     setBusy(false); setBatchBusy(false); setError(""); setMessage("");
     if (remember) { navigationTarget.current = null; writeWorkspaceRoute({ library: id, run: "", view: "search" }); }
@@ -565,9 +575,12 @@ export function App() {
       else {
         if (!target.run && run) {
           searchController.navigate(); retirePlanScope(); retireChildView(); runGeneration.current++;
-          selection.deselectAll(); setRun(null); setRecords([]); setPageTotal(0); setRecordOffset(0);
+          setRun(null); setRecords([]); setPageTotal(0); setRecordOffset(0);
           setSnapshot(""); setQuery(""); setFilters(emptyFilters()); setContinuation(null); setBusy(false);
-        } else if (run) restoreQuery(snapshot);
+        } else if (run) {
+          restoreQuery(snapshot);
+          if (target.view === "search") setSelectionReadVersion(value => value + 1);
+        }
         setView(target.view);
       }
     };
@@ -638,7 +651,7 @@ export function App() {
         setBatchBusy(false);
     }
   };
-  const exportCsv = async (selection: { runID?: string; batchID?: string }) => {
+  const exportCsv = async (selection: MetadataExportScope) => {
     if (!library) return;
     const expected = sessionGeneration();
     const expectedLibrary = library;
@@ -652,12 +665,12 @@ export function App() {
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = "literature-export.csv";
+      anchor.download = metadataFilename(selection, "csv");
       anchor.click();
       URL.revokeObjectURL(url);
     } catch (x) {
       if (isCurrentBatchOperation(operation, expectedLibrary, expected))
-        setError((x as Error).message);
+        setError(metadataExportError(x, selection));
     } finally {
       if (isCurrentBatchOperation(operation, expectedLibrary, expected))
         setBatchBusy(false);
@@ -690,7 +703,7 @@ export function App() {
         setBatchBusy(false);
     }
   };
-  const exportXlsx = async (selection: { runID?: string; batchID?: string }) => {
+  const exportXlsx = async (selection: MetadataExportScope) => {
     if (!library) return;
     const expected = sessionGeneration(), expectedLibrary = library;
     const operation = ++batchOperation.current;
@@ -700,10 +713,10 @@ export function App() {
       const blob = await api.exportXlsx(expectedLibrary, selection, expected, signal, transferFor(operation, expectedLibrary, expected, signal));
       if (!isCurrentBatchOperation(operation, expectedLibrary, expected)) return;
       const url = URL.createObjectURL(blob), anchor = document.createElement("a");
-      anchor.href = url; anchor.download = selection.batchID ? `batch-${selection.batchID}.xlsx` : "literature-export.xlsx";
+      anchor.href = url; anchor.download = metadataFilename(selection, "xlsx");
       anchor.click(); URL.revokeObjectURL(url);
     } catch (x) {
-      if (isCurrentBatchOperation(operation, expectedLibrary, expected)) setError((x as Error).message);
+      if (isCurrentBatchOperation(operation, expectedLibrary, expected)) setError(metadataExportError(x, selection));
     } finally {
       if (isCurrentBatchOperation(operation, expectedLibrary, expected)) setBatchBusy(false);
     }
@@ -728,7 +741,7 @@ export function App() {
         anchor.click();
       } finally { URL.revokeObjectURL(url); }
     } catch (failure) {
-      if (current()) setError((failure as Error).message);
+      if (current()) setError(metadataExportError(failure, scope));
     } finally {
       if (current()) { setBatchBusy(false); setExportProgress(null); }
     }
@@ -856,18 +869,25 @@ export function App() {
             </div>
             <div className="selection-and-pdfs">
               <section className="selection-toolbar" aria-label="Saved record selection">
-                <p aria-live="polite"><strong>{selected.size} selected of {run?.fetched ?? 0} loaded {(run?.fetched ?? 0) === 1 ? 'record' : 'records'}</strong></p>
+                <p aria-live="polite" style={{ lineHeight: 1.35, marginBottom: ".3rem" }}><strong>{selection.snapshot ? `${selection.count} selected of ${selection.total} saved ${selection.total === 1 ? 'record' : 'records'}` : run ? 'Selection not loaded' : 'No saved selection'}</strong></p>
                 <div className="result-actions">
-                  <button className="secondary" disabled={!selection.ready || draftChanged || busy} onClick={selection.selectAll}>{selection.pageOnly ? `Select all on this page (${records.length})` : "Select all"}</button>
-                  <button className="secondary" disabled={!selection.ready || !selected.size || draftChanged || busy} onClick={selection.deselectAll}>Deselect all</button>
-                  <details className="selection-scope"><summary>Selection scope</summary><p>{selection.pageOnly
-                    ? "Select all on this page replaces the selection with this page. Individual selections may span pages, up to 100 records."
-                    : "Select all covers loaded records across pages, up to 100. The first loaded records are selected once; retrieving more does not select new records."} Explicit deselections remain until you choose another run. PubMed matches that have not been loaded are not selected.</p></details>
+                  <button className="secondary" disabled={!selection.canEdit || draftChanged || busy} onClick={selection.selectAll}>Select all saved</button>
+                  <button className="secondary" disabled={!selection.canEdit || draftChanged || busy} onClick={selection.deselectAll}>Deselect all</button>
+                  <button className="secondary" disabled={!selection.canEdit || !records.length || draftChanged || busy} onClick={selection.selectPage}>Select page</button>
+                  <button className="secondary" disabled={!selection.canEdit || !records.length || draftChanged || busy} onClick={selection.deselectPage}>Deselect page</button>
+                  <details className="selection-scope"><summary>Selection scope</summary><p>All saved covers this run across pages, up to 1,000 records. Page controls add or remove only this page. Choices are saved to your library and restored when you reopen the run. All / none also applies to newly retrieved records; individual exceptions remain. PubMed matches not yet saved are excluded.</p>{run && !selection.unavailable && !selection.pending && !selection.error && <button className="secondary" disabled={selection.loading || busy} onClick={() => void selection.reload()}>Reload saved selection</button>}</details>
                 </div>
                 {selection.loading && <p role="status">Loading saved selection…</p>}
-                {selection.error && <div role="alert"><p>{selection.error}</p><button onClick={selection.retry}>Retry loading selection</button></div>}
+                {selection.saving && <p role="status">Saving selection…</p>}
+                {selection.unavailable && <p role="alert">Saved selection is unavailable on this server. Reload after the service is enabled, or export all saved results.</p>}
+                {selection.ready && !selection.canEdit && <p role="status">Saved choices are available to read. Selection changes are currently disabled.</p>}
+                {selection.pending && <p role="status">Pending choice: {selectionIntentLabel(selection.pending.body)}. Displayed checks reflect the last confirmed server state.</p>}
+                {selection.error && <p role="alert">{selection.error}</p>}
+                {(selection.pending || selection.error) && <button className="secondary" disabled={selection.saving || selection.loading || busy} onClick={() => void selection.reload()}>Reload saved selection</button>}
+                {selection.pending?.phase === 'uncertain' && !selection.saving && !selection.loading && <button onClick={() => void selection.retry()}>Retry same selection change</button>}
+                {selection.snapshot && !selection.snapshot.recordsComplete && <p className="small">{selection.snapshot.recordsReason} Metadata export includes the full selection. Choose up to 100 records for PDFs or a research snapshot.</p>}
               </section>
-              <PdfAvailability selectedCount={selected.size} ids={selectedSearchIds(selected)} ready={selection.ready && !busy && !draftChanged}
+              <PdfAvailability selectedCount={selected.size} ids={[...selection.ids]} ready={selection.detailsReady && !busy && !draftChanged}
                 enabled={serviceInfo?.pdfEnabled === true} plansEnabled={serviceInfo?.planEnabled === true}
                 library={library} runID={run?.run_id} generation={sessionGeneration()} scopeSignal={planScope.current.signal}
                 confirmedPlanID={confirmedPdfPlan} policy={serviceInfo?.pdfPolicySummary} onStart={retireChildView} onStatus={setPdfNotice}
@@ -882,20 +902,20 @@ export function App() {
             <details className="export-options"><summary>Export saved results and other actions</summary>
           <div className="result-head">
             <div className="result-actions">
-              <span aria-live="polite">{selected.size} selected across saved record pages (maximum {selectionMaximum})</span>
+              <span aria-live="polite">{selection.count} selected across saved record pages (maximum {selectionMaximum})</span>
               <button
                 className="secondary"
                 disabled={!run || batchBusy}
                 onClick={() => run && exportCsv({ runID: run.run_id })}
               >
-                Export CSV
+                Export saved CSV
               </button>
               <button
                 className="secondary"
                 disabled={!run || batchBusy}
                 onClick={() => run && exportXlsx({ runID: run.run_id })}
               >
-                Export XLSX
+                Export saved XLSX
               </button>
               {(["json", "jsonl"] as const).map(format => (
                 <button className="secondary" key={format} disabled={!run || busy || batchBusy}
@@ -904,12 +924,24 @@ export function App() {
                   Export saved run {format.toUpperCase()}
                 </button>
               ))}
+              {(["csv", "xlsx", "json", "jsonl"] as const).map(format => (
+                <button className="secondary" key={`selected-${format}`}
+                  disabled={!run || !selection.ready || !selection.count || busy || batchBusy || draftChanged}
+                  onClick={() => {
+                    if (!run || !selection.ready || !selection.revision || !selection.count) return;
+                    const scope = { runID: run.run_id, selection: "selected" as const, selectionRevision: selection.revision,
+                      selectedIDs: [...selection.ids], savedCount: selection.total };
+                    if (format === "csv") void exportCsv(scope);
+                    else if (format === "xlsx") void exportXlsx(scope);
+                    else void exportStructured(scope, format);
+                  }}>Export selected {format.toUpperCase()}</button>
+              ))}
               <button
                 className="secondary"
                 disabled={
                   selected.size < 1 ||
                   draftChanged || busy ||
-                  !selection.ready ||
+                  !selection.detailsReady ||
                   selected.size > 10 ||
                   batchBusy ||
                   !acquisitionEnabled
@@ -925,7 +957,7 @@ export function App() {
               </button>
             </div>
           </div>
-          <p id="run-structured-scope" className="muted small">CSV, XLSX, JSON / JSONL exports include all saved records in the run, not just selected checkboxes or the current page, up to the existing 1,000-record export limit. Provider matches that were not retrieved are not included. These are metadata files, not full-text downloads.</p>
+          <p id="run-structured-scope" className="muted small">Saved exports include all saved records in this run. Selected exports include exactly the confirmed checked records across pages, at the saved selection revision. Both support up to 1,000 records; neither includes unretrieved provider matches. These are metadata files, not full-text downloads.</p>
 
             </details>
           {run &&
@@ -960,9 +992,8 @@ export function App() {
                 key={searchId(a) || `${String(a.Pmid)}-${i}`}
                 article={a}
                 selected={selected.has(searchId(a))}
-                disabled={!selection.ready || busy || draftChanged}
+                disabled={!selection.canEdit || busy || draftChanged}
                 onSelect={() => {
-                  if (!selected.has(searchId(a)) && selected.size >= selectionMaximum) setError(`Selection limit reached. Clear or deselect a record before choosing another; maximum ${selectionMaximum}.`);
                   selection.toggle(a);
                 }}
               />
@@ -1128,11 +1159,11 @@ export function App() {
           {library && <PlanWorkspace
             key={`${sessionGeneration()}:${library}`}
             library={library} runID={run?.run_id ?? ""} generation={sessionGeneration()}
-            selectedIDs={selectedSearchIds(selected)} enabled={serviceInfo?.planEnabled === true}
-            selectedArticles={[...selected.values()]} savedSetEnabled={serviceInfo?.savedSetEnabled === true}
+            selectedIDs={[...selection.ids]} enabled={serviceInfo?.planEnabled === true}
+            selectedArticles={selection.records} savedSetEnabled={serviceInfo?.savedSetEnabled === true}
             pdfEnabled={serviceInfo?.pdfEnabled === true}
             scopeSignal={libraryPlanScope.current.signal} onPlanChange={retireChildView}
-            admissionReady={selection.ready && !draftChanged && !busy} openRequest={pdfPlan} onOpened={setConfirmedPdfPlan}
+            admissionReady={selection.detailsReady && !draftChanged && !busy} openRequest={pdfPlan} onOpened={setConfirmedPdfPlan}
             onChild={id => { retireChildView(); void openBatch(id); }}
           />}
 

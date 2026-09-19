@@ -1,5 +1,5 @@
 // SYNTHETIC loopback transport and files only; not native Go/PG/provider evidence.
-import { showWorkspace, openDisclosure } from "./workspace-navigation.mjs";
+import { setSavedCheck, createSelectionFixture, showWorkspace, openDisclosure } from "./workspace-navigation.mjs";
 import assert from "node:assert/strict";
 import { installBodyGates } from "./body-gates.mjs";
 import fs from "node:fs";
@@ -9,6 +9,7 @@ import { preview } from "vite";
 import { chromium, expect } from "@playwright/test";
 import { zipSync, unzipSync } from "../../../tests/native-browser/node_modules/fflate/esm/index.mjs";
 
+const selectionFixture = createSelectionFixture();
 const root = process.cwd(), out = path.join(root, ".litradock/runtime/frontend014", new Date().toISOString().replaceAll(/[:.]/g, "-"));
 fs.mkdirSync(out, { recursive: true });
 const hash = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
@@ -65,7 +66,7 @@ try {
     const request = route.request(), url = new URL(request.url()), method = request.method();
     if (url.origin !== origin) { external.push(url.origin); return route.abort(); }
     const reply = (value, status = 200, headers = {}) => route.fulfill({ status, contentType: "application/json", headers, body: JSON.stringify(value) });
-    if (url.pathname === "/service-info") return reply({ pdfEnabled: false, planEnabled: false, acquisitionEnabled: false });
+    if (url.pathname === "/service-info") return reply({ durableSelectionEnabled: true, selectionWriteEnabled: true, selectionRecordLimit: 1000, pdfEnabled: false, planEnabled: false, acquisitionEnabled: false });
     if (!url.pathname.startsWith("/api/")) return route.continue();
     if (method === "POST") posts.push({ path: url.pathname, body: request.postDataJSON(), csrf: request.headers()["x-csrf"] });
     if (url.pathname === "/api/session") return reply(authenticated ? { csrf: "SYNTHETIC" } : {}, authenticated ? 200 : 401);
@@ -73,6 +74,10 @@ try {
     if (url.pathname === "/api/logout") { authenticated = false; return reply({}); }
     if (url.pathname === "/api/libraries") return reply({ items: (account === "B" ? ["LB"] : ["L1", "L2"]).map(id => ({ library_id: id, name: `SYNTHETIC ${id}` })), total: account === "B" ? 1 : 2 });
     if (/\/api\/libraries\/[^/]+$/.test(url.pathname)) return reply({ runs: [run("R1"), run("R2")], batches: [], totals: { runs: 2, batches: 0 }, offset: 0, limit: 100 });
+    if (url.pathname.endsWith("/selection")) {
+      const selectionRun = url.pathname.split("/").at(-2);
+      return selectionFixture(account + url.pathname, selectionRun, [article(0), article(1), article(2)], route.request().method(), route.request().method() === "POST" ? route.request().postDataJSON() : null, reply);
+    }
     if (url.pathname.includes("/runs/")) return reply({ run: run(url.pathname.split("/").at(-1)), records: [article(0), article(1), article(2)], total: 3, offset: 0, limit: 25 });
     if (url.pathname.endsWith("/plans")) return reply({ plans: [summary("P1"), summary("P2")], total: 2, offset: 0, limit: 25 });
     if (url.pathname.endsWith("/exports")) {
@@ -94,7 +99,7 @@ try {
   const button = name => page.getByRole("button", { name, exact: true });
   const names = { json: "Export plan metadata JSON", zip: "Download available originals ZIP" };
   const login = async who => { await page.getByLabel("Login", { exact: true }).fill(who); await page.getByLabel("Password", { exact: true }).fill("SYNTHETIC"); await button("Sign in").click(); await expect(page.getByLabel("Choose library", { exact: true })).toHaveValue(who === "B" ? "LB" : "L1"); };
-  const openRun = async id => { await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").filter({ has: page.locator(".history-id", { hasText: new RegExp(`${id}$`) }) }).click(); await expect(button("Select all")).toBeEnabled(); };
+  const openRun = async id => { await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").filter({ has: page.locator(".history-id", { hasText: new RegExp(`${id}$`) }) }).click(); await expect(button("Select all saved")).toBeEnabled(); };
   const open = async id => { await showWorkspace(page, "Research plans"); await page.getByLabel("Saved plans", { exact: true }).selectOption(id); await expect(page.getByRole("heading", { name: `Plan ${id}`, exact: true })).toBeVisible(); await expect(button(names.json)).toBeEnabled(); };
   const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const hold = async (id, format, failure = "valid") => { mode = failure; await page.evaluate(id => { window.__nextHold = id; }, id); await button(names[format]).click(); await page.waitForFunction(id => !!window.__holds[id], id); mode = "valid"; await expect(page.getByRole("status").filter({ hasText: /Preparing (originals ZIP|metadata JSON)|bytes received/ })).toBeVisible(); };
@@ -165,7 +170,12 @@ try {
   await open("P1"); mode = "401"; await button(names.json).click(); await expect(page.getByLabel("Login", { exact: true })).toBeVisible();
   assert.equal(await page.locator(".plan-item,.plan-exports").count(), 0); mode = "valid"; await login("B"); await open("P1"); await download("P1", "json");
   result.cases.push("Current401 clears rendered privateplan and enables relogin plus current download");
-  assert.equal(posts.filter(post => !post.path.endsWith("/exports") && !["/api/login", "/api/logout"].includes(post.path)).length, 0);
+  const selectionWrites = posts.filter(post => post.path.endsWith("/selection"));
+  assert.equal(selectionWrites.length, 1, "Only the explicit initial Deselect all may write selection");
+  assert.equal(selectionWrites[0].path, "/api/libraries/L1/runs/R1/selection");
+  assert.equal(selectionWrites[0].body.action, "none");
+  assert.deepEqual(Object.keys(selectionWrites[0].body).sort(), ["action", "requestID", "revision"]);
+  assert.equal(posts.filter(post => !post.path.endsWith("/exports") && !post.path.endsWith("/selection") && !["/api/login", "/api/logout"].includes(post.path)).length, 0);
   assert.deepEqual(errors, []); assert.deepEqual(external, []); result.after = { source: treeHashes("src"), dist: treeHashes("dist") }; assert.deepEqual(result.after, before); result.pass = true;
 } catch (error) {
   result.pass = false; result.error = String(error); process.exitCode = 1;

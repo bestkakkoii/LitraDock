@@ -1,3 +1,4 @@
+import {selectionReady, selectionControl, setSavedCheckbox} from "./selection-controls.mjs";
 import { showWorkspace, openDisclosure } from "../../src/literature-web/scripts/workspace-navigation.mjs";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
@@ -146,11 +147,11 @@ try {
     await page.getByLabel('Page size',{exact:true}).selectOption('25');
     const boxes=page.locator('input[type="checkbox"][aria-label^="Select "]');
     await until(async()=>await boxes.count()===25,'25 saved records per page');
-    await page.getByRole('button',{name:'Deselect all',exact:true}).click();
-    for(const box of await boxes.all())await box.check();
+    await selectionControl(page, 'Deselect all');
+    for(const box of await boxes.all())await setSavedCheckbox(page, box, true);
     await page.getByRole('button',{name:'Next records',exact:true}).click();
     await until(async()=>(await page.locator('body').innerText()).includes('26–50 shown'),'second saved page');
-    for(const box of (await boxes.all()).slice(0,12))await box.check();
+    for(const box of (await boxes.all()).slice(0,12))await setSavedCheckbox(page, box, true);
     await openDisclosure(page, "Export saved results and other actions");
     assert(await page.getByRole('button',{name:'Create batch (37/10)',exact:true}).isDisabled());
     await showWorkspace(page, "Research plans");

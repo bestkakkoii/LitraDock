@@ -16,5 +16,6 @@
   "PDFEnabled": false,
   "SavedSetEnabled": false,
   "SearchContinuationEnabled": false,
-  "BundleDeliveryEnabled": false
+  "BundleDeliveryEnabled": false,
+  "SelectionWriteEnabled": false
 }

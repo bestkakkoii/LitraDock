@@ -28,7 +28,7 @@ HEADERS = ['Search ID', 'Title', 'Authors', 'Year', 'PMID', 'PMCID', 'DOI',
            'Next action', 'Outcome evidence', 'Source observed at', 'Outcome format']
 
 
-def verify(path, expected):
+def verify(path, expected, headers=HEADERS):
     raw = pathlib.Path(path).read_bytes()
     assert 0 < len(raw) <= 8 * 1024 * 1024, 'workbook file bound'
     with zipfile.ZipFile(io.BytesIO(raw)) as archive:
@@ -54,8 +54,8 @@ def verify(path, expected):
     workbook = openpyxl.load_workbook(io.BytesIO(raw), data_only=False, keep_links=False)
     assert workbook.sheetnames == ['Literature'], 'sheet identity'
     sheet = workbook['Literature']
-    assert sheet.max_row == expected['rows'] and sheet.max_column == len(HEADERS), 'dimensions'
-    assert [sheet.cell(1, i + 1).value for i in range(len(HEADERS))] == HEADERS, 'column contract'
+    assert sheet.max_row == expected['rows'] and sheet.max_column == len(headers), 'dimensions'
+    assert [sheet.cell(1, i + 1).value for i in range(len(headers))] == headers, 'column contract'
     for row in sheet:
         for cell in row:
             assert cell.data_type == 's' and cell.number_format == '@', 'reader cell type/format'
@@ -65,7 +65,7 @@ def verify(path, expected):
     assert actual_links == expected['hyperlinks'], 'hyperlink set/target mismatch'
     workbook.close()
     return {'sha256': hashlib.sha256(raw).hexdigest(), 'rows': sheet.max_row - 1,
-            'columns': len(HEADERS), 'hyperlinks': len(actual_links), 'reader': openpyxl.__version__}
+            'columns': len(headers), 'hyperlinks': len(actual_links), 'reader': openpyxl.__version__}
 
 
 def synthetic_expected():
@@ -90,7 +90,7 @@ def synthetic_expected():
     }}
 
 
-def controls(path, expected):
+def controls(path, expected, headers=HEADERS):
     with zipfile.ZipFile(path) as z:
         source = {i.filename: z.read(i) for i in z.infolist()}
     rejected = []
@@ -125,7 +125,7 @@ def controls(path, expected):
                 for member, data in changed.items():
                     z.writestr(member, data)
             try:
-                verify(target, expected)
+                verify(target, expected, headers)
             except (AssertionError, ValueError, KeyError):
                 rejected.append(name)
             else:

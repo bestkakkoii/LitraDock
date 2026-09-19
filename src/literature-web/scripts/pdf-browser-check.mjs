@@ -1,14 +1,15 @@
 // Synthetic transport/bytes only. No native handler, real-source or product PDF qualification.
-import { showWorkspace } from "./workspace-navigation.mjs";
+import { setSavedCheck, createSelectionFixture, showWorkspace } from "./workspace-navigation.mjs";
 import assert from "node:assert/strict";
 import { installBodyGates } from "./body-gates.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { preview } from "vite";
-import { chromium } from "@playwright/test";
+import { chromium, expect } from "@playwright/test";
 import { zipSync, unzipSync } from "../../../tests/native-browser/node_modules/fflate/esm/index.mjs";
 
+const selectionFixture = createSelectionFixture();
 const root = process.cwd(), out = path.join(root, ".litradock/runtime/frontend012", new Date().toISOString().replaceAll(/[:.]/g, "-"));
 fs.mkdirSync(out, { recursive: true });
 const digest = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
@@ -51,7 +52,7 @@ try {
   const errors = [], downloads = [], posts = [], gets = [];
   page.on("pageerror", e => errors.push(String(e))); page.on("download", d => downloads.push(d));
   await page.addInitScript(installBodyGates, { mode: "pdf" });
-  let authenticated = false, pdfEnabled = true, lost = true, batchReads = 0, batchIDs = ['S0','S1','S2'];
+  let account = "SYNTHETIC", authenticated = false, pdfEnabled = true, lost = true, batchReads = 0, batchIDs = ['S0','S1','S2'];
   let holdAdmission = false, releaseAdmission, losePackagePDFs=false;
   const article = i => ({ SearchId: `S${i}`, Title: `SYNTHETIC long α 中文 record ${i}`, Pmid: `99000${i}`, OriginalUri: `https://pubmed.ncbi.nlm.nih.gov/99000${i}/` });
   const run = n => ({ run_id: `R${n}`, input: `SYNTHETIC ${n} saved records; complex MeSH query`, total: 25001, fetched: n, state: "partial" });
@@ -60,14 +61,18 @@ try {
     const request = route.request(), url = new URL(request.url()), method = request.method();
     if (url.origin !== origin) return route.abort();
     const reply = (data, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
-    if (url.pathname === "/service-info") return reply({ pdfEnabled, pdfPolicySummary: "SYNTHETIC permitted repository PDF only", planEnabled: true, acquisitionEnabled: true, searchEnabled: true });
+    if (url.pathname === "/service-info") return reply({ durableSelectionEnabled: true, selectionWriteEnabled: true, selectionRecordLimit: 1000, pdfEnabled, pdfPolicySummary: "SYNTHETIC permitted repository PDF only", planEnabled: true, acquisitionEnabled: true, searchEnabled: true });
     if (!url.pathname.startsWith("/api/")) return route.continue();
     if (method === "POST") posts.push({ path: url.pathname, body: request.postDataJSON() }); else gets.push(url.pathname + url.search);
     if (url.pathname === "/api/session") return reply(authenticated ? { csrf: "SYNTHETIC" } : {}, authenticated ? 200 : 401);
-    if (url.pathname === "/api/login") { authenticated = true; return reply({ csrf: "SYNTHETIC" }); }
+    if (url.pathname === "/api/login") { authenticated = true; account = request.postDataJSON().login; return reply({ csrf: "SYNTHETIC" }); }
     if (url.pathname === "/api/logout") { authenticated = false; return reply({}); }
     if (url.pathname === "/api/libraries") return reply({ items: [{ library_id: "L1", name: "SYNTHETIC A" }, { library_id: "L2", name: "SYNTHETIC B" }], total: 2 });
     if (/\/api\/libraries\/L[12]$/.test(url.pathname)) return reply({ runs: [0, 1, 10, 11, 100].map(run), batches: [{ batch_id: "XML1", state: "complete" }, { batch_id: "B1", state: "partial" }], totals: { runs: 5, batches: 2 }, offset: 0, limit: 100 });
+    if (url.pathname.endsWith("/selection")) {
+      const selectionRun = url.pathname.split("/").at(-2);
+      return selectionFixture(account + url.pathname, selectionRun, Array.from({ length: Number(selectionRun.slice(1)) }, (_, i) => article(i)), method, method === "POST" ? request.postDataJSON() : null, reply);
+    }
     if (url.pathname.includes("/runs/")) {
       const n = Number(url.pathname.split("/R")[1]), offset = Number(url.searchParams.get("offset"));
       return reply({ run: run(n), records: Array.from({ length: Math.max(0, Math.min(5, n - offset)) }, (_, i) => article(offset + i)), total: n, offset, limit: 5 });
@@ -96,22 +101,22 @@ try {
   });
   const open = async n => {
     await showWorkspace(page, "Saved searches"); await page.locator('.history-entry').filter({ has: page.locator('.history-id', { hasText: new RegExp(`R${n}$`) }) }).click();
-    await page.getByRole("button", { name: "Select all", exact: true }).waitFor();
-    await page.waitForFunction(() => ![...document.querySelectorAll('button')].find(b => b.textContent === "Select all").disabled);
+    await page.getByRole("button", { name: "Select all saved", exact: true }).waitFor();
+    await page.waitForFunction(() => ![...document.querySelectorAll('button')].find(b => b.textContent === "Select all saved").disabled);
   };
   await page.goto(origin); await page.getByLabel("Login", { exact: true }).fill("SYNTHETIC"); await page.getByLabel("Password", { exact: true }).fill("SYNTHETIC"); await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  for (const n of [0, 1, 10, 11, 100]) { await open(n); assert((await page.locator('.selection-toolbar').innerText()).includes(`${n} selected of ${n} loaded`)); }
+  for (const n of [0, 1, 10, 11, 100]) { await open(n); assert((await page.locator('.selection-toolbar').innerText()).includes(`${n} selected of ${n} saved`)); }
   assert.equal(posts.filter(p => /\/(batches|plans)$/.test(p.path)).length, 0);
   await open(10);
-  await page.locator('.result-card input').first().uncheck();
+  await setSavedCheck(page.locator('.result-card input').first(), false);
   await page.getByRole("button", { name: "Next records", exact: true }).click();
   assert((await page.locator('.selection-toolbar').innerText()).includes("9 selected of 10"));
   await page.getByRole("button", { name: "Deselect all", exact: true }).click();
   await page.getByRole("button", { name: "Previous records", exact: true }).click();
   assert((await page.locator('.selection-toolbar').innerText()).includes("0 selected of 10"));
-  await page.getByRole("button", { name: "Select all", exact: true }).click();
+  await page.getByRole("button", { name: "Select all saved", exact: true }).click();
   await page.getByRole("button", { name: "Deselect all", exact: true }).click();
-  for (let i = 0; i < 3; i++) await page.locator('.result-card input').nth(i).check();
+  for (let i = 0; i < 3; i++) await setSavedCheck(page.locator('.result-card input').nth(i), true);
   await page.getByRole("button", { name: "Download PDFs (3 selected)", exact: true }).click();
   const automaticZip=page.waitForEvent('download');
   await page.getByRole("button", { name: "Retry same PDF request", exact: true }).click();
@@ -140,7 +145,7 @@ try {
   // The primary action now completes the file handoff in place. Keep the action
   // at its existing viewport position: do not scroll to the status afterwards.
   for(const width of [1280,390]) {
-    await page.setViewportSize({width,height:900}); await open(0); await open(1); holdAdmission=true; releaseAdmission=undefined;
+    await page.setViewportSize({width,height:900}); await open(0); await open(1); await page.getByRole("button", { name: "Select all saved", exact: true }).click(); await expect(page.getByRole("button", { name: "Select all saved", exact: true })).toBeEnabled(); holdAdmission=true; releaseAdmission=undefined;
     const action=page.getByRole('button',{name:'Download PDFs (1 selected)',exact:true});
     await action.evaluate(el=>window.scrollBy(0,el.getBoundingClientRect().top-220));
     const y=await page.evaluate(()=>scrollY), beforeDownloads=downloads.length;
@@ -153,7 +158,7 @@ try {
     const file=await next; assert.deepEqual(fs.readFileSync(await file.path()),pdf);
     await page.getByRole('button',{name:'Save again',exact:true}).waitFor();
     assert.equal(downloads.length,beforeDownloads+1);
-    await page.locator('.result-card input').first().uncheck();
+    await setSavedCheck(page.locator('.result-card input').first(), false);
     assert.equal(downloads.length,beforeDownloads+1);
     const retry=page.waitForEvent('download'); await page.getByRole('button',{name:'Save again',exact:true}).click();
     assert.deepEqual(fs.readFileSync(await (await retry).path()),pdf);
@@ -196,7 +201,7 @@ try {
   pdfEnabled = false; await page.reload(); await open(1); assert(await page.getByRole("button", { name: "Download PDFs (1 selected)", exact: true }).isDisabled());
   await page.getByRole("button", { name: "Sign out", exact: true }).click(); await page.getByLabel("Login", { exact: true }).waitFor(); assert.equal(await page.locator('.batch-item,.plan-item').count(), 0);
   await page.getByLabel("Login", { exact: true }).fill("SYNTHETIC-B"); await page.getByLabel("Password", { exact: true }).fill("SYNTHETIC-B"); await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await open(1); assert((await page.locator('.selection-toolbar').innerText()).includes("1 selected of 1 loaded"));
+  await open(1); assert((await page.locator('.selection-toolbar').innerText()).includes("1 selected of 1 saved"));
   assert.deepEqual(errors, []); assert.deepEqual(hashes(), before);
   result.checks = ["0/1/10/11/100 default-all complete saved set, no provider selection or auto acquisition", "Manual subset and Deselect all persist across pagination", "One batch or plan format-bound POST, lost-response exact replay", "Primary click hands off mixed PDF/held ZIP and complete 11-member plan ZIP with final result/hash binding", "Ready-to-unavailable final package controls for batch10 and plan11 update all counts/reasons/links without any handoff", "Slow admission and complete single original download feedback stay in action viewport at1280/390 without manual scrolling; explicit Save again", "Held old-library PDF body produces no download; XML remains XML", "Policy disabled; readable desktop/narrow selection; logout clears data"];
   result.pass = true;

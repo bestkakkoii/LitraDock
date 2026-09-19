@@ -1,3 +1,4 @@
+import {selectionReady, selectionControl, setSavedCheckbox} from "./selection-controls.mjs";
 import { showWorkspace, openDisclosure } from "../../src/literature-web/scripts/workspace-navigation.mjs";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
@@ -150,7 +151,7 @@ try {
   await check("batch-controls-and-exact-exports", async () => {
     const records = page.locator('input[type="checkbox"][aria-label^="Select "]');
     assert.equal(await records.count(), 3, "synthetic native transport must expose exactly three records");
-    for (const record of await records.all()) await record.check();
+    for (const record of await records.all()) await setSavedCheckbox(page, record, true);
     await openDisclosure(page, "Export saved results and other actions");
     await page.getByRole("button", { name: /Create batch \(3\/10\)/ }).click();
     await page.getByRole('heading',{name:/^Batch BAT-/}).waitFor();
@@ -194,7 +195,7 @@ try {
   });
   await check('structured-four-device-files-whole-scope-and-no-acquisition', async () => {
     const priorSearch = searchPosts, priorBatch = batchPosts;
-    await showWorkspace(page, "Search & PDFs"); await page.getByRole('button', {name:'Deselect all', exact:true}).click();
+    await showWorkspace(page, "Search & PDFs"); await selectionControl(page, 'Deselect all');
     const runResponse = await page.request.get(`${target}/api/libraries/${libraryId}/runs/${capturedRunId}?limit=100`);
     assert.equal(runResponse.status(),200); const saved = await runResponse.json();
     assert.equal(saved.records.length,saved.total);savedRunMembers.set(capturedRunId,new Set(saved.records.map(x=>x.SearchId)));
@@ -273,30 +274,30 @@ try {
     await page.getByLabel('Page size',{exact:true}).selectOption('5');
     const boxes=page.locator('input[type="checkbox"][aria-label^="Select "]');
     await until(async()=>await boxes.count()===5,'page-size change must reload existing run');
-    await page.getByRole('button',{name:'Deselect all',exact:true}).click();
-    for(const box of await boxes.all()) await box.check();
+    await selectionControl(page, 'Deselect all');
+    for(const box of await boxes.all()) await setSavedCheckbox(page, box, true);
     await page.getByRole('button',{name:'Next records',exact:true}).click();
     await until(async()=>(await page.locator('body').innerText()).includes('6–10 shown'),'second saved page');
-    for(const box of await boxes.all()) await box.check();
+    for(const box of await boxes.all()) await setSavedCheckbox(page, box, true);
     await page.getByRole('button',{name:'Next records',exact:true}).click();
     await until(async()=>await boxes.count()===2,'third saved page');
-    await boxes.first().check();
+    await setSavedCheckbox(page, boxes.first(), true);
     assert.equal(await boxes.first().isChecked(),true);
     await openDisclosure(page, "Export saved results and other actions");
     assert(await page.getByRole('button',{name:'Create batch (11/10)',exact:true}).isDisabled());
-    await boxes.first().uncheck();
+    await setSavedCheckbox(page, boxes.first(), false);
     assert(await page.getByRole('button',{name:'Create batch (10/10)',exact:true}).isEnabled());
     const csrf=(await (await page.request.get(target+'/api/session')).json()).csrf;
     assert.equal((await page.request.post(`${target}/api/libraries/${libraryId}/batches`,{headers:{'X-CSRF':csrf,'Origin':target},data:{requestID:crypto.randomUUID(),searchIDs:pages.slice(0,11)}})).status(),409);
     await page.getByRole('button',{name:'Previous records',exact:true}).click();
     await until(async()=>(await page.locator('body').innerText()).includes('6–10 shown'),'previous advances by selected page size');
     assert.equal(await page.locator('input[type="checkbox"][aria-label^="Select "]:checked').count(),5);
-    await page.getByRole('button',{name:'Deselect all',exact:true}).click();
+    await selectionControl(page, 'Deselect all');
     assert(await page.getByRole('button',{name:'Create batch (0/10)',exact:true}).isDisabled());
-    await boxes.first().check();
+    await setSavedCheckbox(page, boxes.first(), true);
     await page.getByRole('button',{name:'Previous records',exact:true}).click();
     await until(async()=>(await page.locator('body').innerText()).includes('1–5 shown'),'first saved page');
-    await boxes.first().check();
+    await setSavedCheckbox(page, boxes.first(), true);
     const selectedIds=[pages[5],pages[0]];
     const post=page.waitForRequest(r=>r.method()==='POST'&&r.url().endsWith('/batches'));
     await page.getByRole('button',{name:'Create batch (2/10)',exact:true}).click();
@@ -315,15 +316,16 @@ try {
     await verifyXlsx('Export batch XLSX',heldId);
     await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").filter({hasText: capturedRunId}).click(); await page.getByLabel("Search PubMed", { exact: true }).waitFor({ state: "visible" });
     await until(async()=>await boxes.count()===3,'original saved run reopen');
+    await selectionReady(page);
     await openDisclosure(page, "Export saved results and other actions");
-    await until(async()=>await page.getByRole('button',{name:'Create batch (3/10)',exact:true}).isEnabled(),'new run defaults to all3 saved records');
+    await until(async()=>await page.getByRole('button',{name:'Create batch (0/10)',exact:true}).isDisabled(),'reopened run retains its prior explicit deselection');
   });
   await check('delayed-xlsx-saved-run-switch-fence',async()=>{
     let release; const gate=new Promise(r=>release=r);let captured;const ready=new Promise(r=>captured=r);let downloads=0;
     const observe=()=>downloads++;page.on('download',observe);
     const handler=async route=>{if(route.request().postDataJSON()?.format!=='xlsx')return route.continue();const response=await route.fetch();assert.equal(response.status(),200);captured();await gate;await route.fulfill({response});};
     await page.route('**/exports',handler);
-    await page.getByRole('button',{name:'Export XLSX',exact:true}).click();await ready;
+    await page.getByRole('button',{name:'Export saved XLSX',exact:true}).click();await ready;
     const options=await page.locator('.history-id').evaluateAll(xs=>xs.map(x=>x.textContent.replace('Search Run ID: ','')));
     await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").filter({hasText: options.find(x=>x!==capturedRunId)}).click(); await page.getByLabel("Search PubMed", { exact: true }).waitFor({ state: "visible" });
     release();await page.waitForTimeout(350);assert.equal(downloads,0,'late XLSX must not save after saved-run change');
@@ -333,7 +335,7 @@ try {
     await until(async()=>await page.getByRole('button',{name:'Save XML',exact:true}).count()===2,'saved batch reopened after schedule');
   });
   await check('library-selection-and-export-ownership',async()=>{
-    await showWorkspace(page, "Search & PDFs"); const boxes=page.locator('input[type="checkbox"][aria-label^="Select "]');await boxes.first().check();
+    await showWorkspace(page, "Search & PDFs"); const boxes=page.locator('input[type="checkbox"][aria-label^="Select "]');await setSavedCheckbox(page, boxes.first(), true);
     await showWorkspace(page, "Libraries"); await page.getByLabel('New library name',{exact:true}).fill('SYNTHETIC second isolated library');
     await page.getByRole('button',{name:'Create',exact:true}).click();
     const choose=page.getByLabel('Choose library',{exact:true});

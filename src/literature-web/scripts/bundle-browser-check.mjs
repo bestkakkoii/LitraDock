@@ -1,6 +1,6 @@
 // SYNTHETIC fixed compiled UI and independently paced loopback HTTP only.
 // No native handler, PostgreSQL, provider, public runtime or clinical data.
-import { showWorkspace } from "./workspace-navigation.mjs";
+import { setSavedCheck, createSelectionFixture, showWorkspace } from "./workspace-navigation.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -10,6 +10,7 @@ import { chromium, expect } from "@playwright/test";
 import { zipSync, unzipSync } from "../../../tests/native-browser/node_modules/fflate/esm/index.mjs";
 import { fixtureDocument, fixturePlan } from "../src/bundles/fixtures.ts";
 
+const selectionFixture = createSelectionFixture();
 const root = process.cwd(), out = path.join(root, ".litradock/runtime/frontend018", new Date().toISOString().replaceAll(/[:.]/g, "-"));
 fs.mkdirSync(out, { recursive: true });
 const hash = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
@@ -45,12 +46,16 @@ const server = http.createServer(async (req, res) => {
   let raw = ""; for await (const chunk of req) raw += chunk;
   const reply = (value, status = 200, headers = {}) => { res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store", ...headers }); res.end(JSON.stringify(value)); };
   try {
-    if (pathname === "/service-info") return reply({ bundleDeliveryEnabled: enabled, planEnabled: false, acquisitionEnabled: false, pdfEnabled: false });
+    if (pathname === "/service-info") return reply({ durableSelectionEnabled: true, selectionWriteEnabled: true, selectionRecordLimit: 1000, bundleDeliveryEnabled: enabled, planEnabled: false, acquisitionEnabled: false, pdfEnabled: false });
     if (pathname === "/api/session") return reply(authenticated ? { csrf: "SYNTHETIC" } : {}, authenticated ? 200 : 401);
     if (pathname === "/api/login") { authenticated = true; account = JSON.parse(raw).login; return reply({ csrf: "SYNTHETIC" }); }
     if (pathname === "/api/logout") { authenticated = false; return reply({}); }
     if (pathname === "/api/libraries") return reply({ items: (account === "B" ? ["LB"] : ["L1", "L2"]).map(id => ({ library_id: id, name: `SYNTHETIC ${id}` })), total: account === "B" ? 1 : 2 });
     if (/^\/api\/libraries\/[^/]+$/.test(pathname)) return reply({ runs: [run], batches: [], totals: { runs: 1, batches: 0 }, offset: 0, limit: 100 });
+    if (pathname.endsWith("/selection")) {
+      const selectionRun = pathname.split("/").at(-2);
+      return selectionFixture(pathname, selectionRun, [article(0), article(1), article(2)], req.method, req.method === "POST" ? JSON.parse(raw) : null, reply);
+    }
     if (pathname.includes("/runs/")) return reply({ run, records: [article(0), article(1), article(2)], total: 3, offset: 0, limit: 25 });
     if (pathname.endsWith("/plans")) return reply({ plans: [plan], total: 1, offset: 0, limit: 25 });
     if (pathname.endsWith(`/plans/${plan.planID}`)) return reply({ plan, items: [{ searchID: "SYNTHETIC-S2", rank: 3, phase: "held", childBatchID: null, acquisitionState: "unavailable", reason: "SYNTHETIC rights held", attempts: 1, retryEligible: false, downloadAvailable: false, article: article(2) }], total: 3, offset: 0, limit: 25, nextPollAfterMs: 2000, policy: "SYNTHETIC" });
@@ -126,7 +131,7 @@ try {
   const button = name => page.getByRole("button", { name, exact: true });
   const area = page.getByRole("region", { name: "Partitioned original downloads" });
   const login = async who => { await page.getByLabel("Login", { exact: true }).fill(who); await page.getByLabel("Password", { exact: true }).fill("SYNTHETIC"); await button("Sign in").click(); await expect(page.getByLabel("Choose library", { exact: true })).toHaveValue(who === "B" ? "LB" : "L1"); };
-  const openPlan = async () => { await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").first().click(); await expect(button("Select all")).toBeEnabled(); await showWorkspace(page, "Research plans"); await page.getByLabel("Saved plans", { exact: true }).selectOption(plan.planID); await expect(button("Prepare download parts")).toBeEnabled(); };
+  const openPlan = async () => { await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").first().click(); await expect(button("Select all saved")).toBeEnabled(); await showWorkspace(page, "Research plans"); await page.getByLabel("Saved plans", { exact: true }).selectOption(plan.planID); await expect(button("Prepare download parts")).toBeEnabled(); };
   const openSnapshot = async id => { await page.getByLabel("Saved download snapshots", { exact: true }).selectOption(id); await expect(button("Save bundle manifest")).toBeEnabled(); };
   const waitBytes = async () => { await expect(area.getByRole("status").filter({ hasText: /4,096 \/ .*bytes/ })).toBeVisible(); };
   const getDownload = async action => { const promise = page.waitForEvent("download"); await action(); return await promise; };
@@ -199,7 +204,7 @@ try {
   await expect(button("Download selected parts")).toHaveCount(0);
   await checkDownload(await getDownload(() => button("Save bundle manifest").click()), "json"); result.cases.push("library retirement blocks late part; new account usable; manifest-only snapshot remains downloadable");
   enabled = false; await page.reload(); await expect(page.getByLabel("Choose library", { exact: true })).toBeVisible();
-  await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").first().click(); await expect(button("Select all")).toBeEnabled(); await showWorkspace(page, "Research plans"); await page.getByLabel("Saved plans", { exact: true }).selectOption(plan.planID);
+  await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").first().click(); await expect(button("Select all saved")).toBeEnabled(); await showWorkspace(page, "Research plans"); await page.getByLabel("Saved plans", { exact: true }).selectOption(plan.planID);
   await expect(button("Prepare download parts")).toBeDisabled(); await openSnapshot(d.snapshotID);
   mode = "401"; await button("Save part 1").click(); await expect(button("Sign in")).toBeEnabled(); await expect(area).toHaveCount(0);
   mode = "valid"; await login("A"); result.cases.push("policy-disabled new preparation retains saved reads; current401 clears private UI and login remains usable");

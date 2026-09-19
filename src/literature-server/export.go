@@ -11,8 +11,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 )
 
 func csvSafe(s string) string {
@@ -26,24 +24,21 @@ func (s *server) exportRows(ctx context.Context, library, run, batch string) ([]
 	if (run == "") == (batch == "") {
 		return nil, errors.New("choose exactly one run or batch")
 	}
+	if run != "" {
+		rows, _, err := s.runMetadataRows(ctx, library, run, 0)
+		return rows, err
+	}
 	var rows []map[string]any
 	var e error
 	var count int
-	if run != "" {
-		e = s.db.QueryRow(ctx, "SELECT count(*) FROM ld_results WHERE library_id=$1 AND run_id=$2", library, run).Scan(&count)
-		if e == nil && count <= 1000 {
-			rows, e = s.rows(ctx, "SELECT r.metadata,'' AS state,'' AS reason,'' AS rights_uri,'' AS original_hash FROM ld_records r JOIN ld_results x USING(library_id,search_id) WHERE x.library_id=$1 AND x.run_id=$2 ORDER BY x.rank", library, run)
-		}
-	} else {
-		var detail any
-		detail, e = s.batchDetail(ctx, library, batch)
-		if e == nil {
-			rows = detail.(map[string]any)["items"].([]map[string]any)
-			count = len(rows)
-			for _, row := range rows {
-				raw, _ := json.Marshal(row["article"])
-				row["metadata"] = string(raw)
-			}
+	var detail any
+	detail, e = s.batchDetail(ctx, library, batch)
+	if e == nil {
+		rows = detail.(map[string]any)["items"].([]map[string]any)
+		count = len(rows)
+		for _, row := range rows {
+			raw, _ := json.Marshal(row["article"])
+			row["metadata"] = string(raw)
 		}
 	}
 	if e != nil {
@@ -86,31 +81,6 @@ func (s *server) exportRows(ctx context.Context, library, run, batch string) ([]
 			row["run_ids"] = previous + link["run_id"].(string)
 		}
 	}
-	if run != "" {
-		tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
-		if err != nil {
-			return nil, err
-		}
-		defer tx.Rollback(context.Background())
-		ids := []string{}
-		for _, row := range rows {
-			var a map[string]any
-			if json.Unmarshal([]byte(row["metadata"].(string)), &a) != nil {
-				return nil, errors.New("Invalid saved metadata")
-			}
-			ids = append(ids, articleString(a, "SearchId"))
-		}
-		outcomes, err := sourceHistory(ctx, tx, library, ids, "pdf")
-		if err != nil {
-			return nil, err
-		}
-		for n, row := range rows {
-			row["sourceOutcome"] = outcomes[ids[n]]
-		}
-		if err = tx.Commit(ctx); err != nil {
-			return nil, err
-		}
-	}
 	return rows, nil
 }
 func (s *server) exportCSV(ctx context.Context, library, run, batch string) ([]byte, error) {
@@ -118,10 +88,20 @@ func (s *server) exportCSV(ctx context.Context, library, run, batch string) ([]b
 	if e != nil {
 		return nil, e
 	}
+	return encodeRecordCSV(ctx, rows)
+}
+
+func encodeRecordCSV(ctx context.Context, rows []map[string]any, extraColumns ...string) ([]byte, error) {
+	if len(rows) < 1 || len(rows) > runSelectionLimit {
+		return nil, errors.New("CSV supports 1–1000 saved records; nothing truncated")
+	}
 	var b bytes.Buffer
 	w := csv.NewWriter(&b)
-	_ = w.Write(append(append([]string{"Search ID", "Title", "Authors", "Year", "PMID", "PMCID", "DOI", "PubMed URL", "PMC URL", "DOI URL", "Current item state", "Reason", "Rights URI", "Original SHA256"}, sourceOutcomeColumns...), "Search Run ID", "Batch ID"))
+	_ = w.Write(append(append(append([]string{"Search ID", "Title", "Authors", "Year", "PMID", "PMCID", "DOI", "PubMed URL", "PMC URL", "DOI URL", "Current item state", "Reason", "Rights URI", "Original SHA256"}, sourceOutcomeColumns...), "Search Run ID", "Batch ID"), extraColumns...))
 	for _, row := range rows {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		var a map[string]any
 		if json.Unmarshal([]byte(row["metadata"].(string)), &a) != nil {
 			return nil, errors.New("invalid stored metadata")
@@ -139,6 +119,15 @@ func (s *server) exportCSV(ctx context.Context, library, run, batch string) ([]b
 			out = append(out, csvSafe(value))
 		}
 		out = append(out, csvSafe(row["run_ids"].(string)), csvSafe(row["batch_id"].(string)))
+		if len(extraColumns) > 0 {
+			extra, ok := row["snapshot_extra"].([]string)
+			if !ok || len(extra) != len(extraColumns) {
+				return nil, errors.New("incomplete CSV scope detail")
+			}
+			for _, value := range extra {
+				out = append(out, csvSafe(value))
+			}
+		}
 		_ = w.Write(out)
 		if b.Len() > 4*1024*1024 {
 			return nil, errors.New("export byte limit reached; no partial export returned")
@@ -201,8 +190,19 @@ func (s *server) nativeRoutes(w http.ResponseWriter, r *http.Request, ctx contex
 		return true
 	}
 	if len(parts) == 4 && parts[3] == "exports" && r.Method == "POST" {
-		var input struct{ RunID, BatchID, Format string }
+		var input struct {
+			RunID, BatchID, Format, Selection string
+			SelectionRevision                 *int
+		}
 		if !decode(w, r, &input) {
+			return true
+		}
+		if input.Selection != "" || input.SelectionRevision != nil {
+			if input.Selection != "selected" || input.RunID == "" || input.BatchID != "" || input.SelectionRevision == nil || *input.SelectionRevision < 1 {
+				reply(w, 400, map[string]string{"error": "Selected metadata requires one saved run and its current selection revision."})
+				return true
+			}
+			s.selectedRunExport(w, r, ctx, library, input.RunID, input.Format, *input.SelectionRevision)
 			return true
 		}
 		if input.Format == "json" || input.Format == "jsonl" {

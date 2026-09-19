@@ -101,7 +101,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return 10
 			}
 			return 0
-		}(), "searchContinuationEnabled": s.continuation && s.cfg.SearchContinuationEnabled && s.cfg.SearchEnabled, "searchWindowLimit": searchWindowLimit, "bundleDeliveryEnabled": s.bundles && s.cfg.BundleDeliveryEnabled, "bundleOriginalLimitBytes": bundleOriginalLimit, "bundlePartOriginalLimitBytes": bundlePartOriginalLimit, "pdfEnabled": s.native && s.cfg.PDFEnabled && s.cfg.AcquisitionEnabled, "pdfPolicySummary": pdfPolicySummary, "planEnabled": s.native && s.cfg.PlanEnabled, "savedSnapshotEnabled": s.native && s.savedSnapshots && s.cfg.SavedSetEnabled, "savedSetEnabled": s.native && s.cfg.PlanEnabled && s.cfg.SavedSetEnabled, "planSelectionLimit": 100, "planGroupLimit": 10, "acquisitionEnabled": s.cfg.AcquisitionEnabled, "source": s.cfg.Revision})
+		}(), "searchContinuationEnabled": s.continuation && s.cfg.SearchContinuationEnabled && s.cfg.SearchEnabled, "searchWindowLimit": searchWindowLimit,
+			"durableSelectionEnabled": s.runSelection, "selectionWriteEnabled": s.runSelection && s.cfg.SelectionWriteEnabled, "selectionRecordLimit": runSelectionLimit,
+			"bundleDeliveryEnabled": s.bundles && s.cfg.BundleDeliveryEnabled, "bundleOriginalLimitBytes": bundleOriginalLimit, "bundlePartOriginalLimitBytes": bundlePartOriginalLimit, "pdfEnabled": s.native && s.cfg.PDFEnabled && s.cfg.AcquisitionEnabled, "pdfPolicySummary": pdfPolicySummary, "planEnabled": s.native && s.cfg.PlanEnabled, "savedSnapshotEnabled": s.native && s.savedSnapshots && s.cfg.SavedSetEnabled, "savedSetEnabled": s.native && s.cfg.PlanEnabled && s.cfg.SavedSetEnabled, "planSelectionLimit": 100, "planGroupLimit": 10, "acquisitionEnabled": s.cfg.AcquisitionEnabled, "source": s.cfg.Revision})
 		return
 	}
 	if !strings.HasPrefix(r.URL.Path, "/api/") {
@@ -276,6 +278,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if !owns {
 		reply(w, 404, nil)
+		return
+	}
+	if s.native && s.runSelectionRoute(w, r, ctx, library, parts) {
 		return
 	}
 	if s.native && s.nativeRoutes(w, r, ctx, library, parts) {

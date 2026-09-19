@@ -1,3 +1,4 @@
+import { setSavedCheck, createSelectionFixture } from "./workspace-navigation.mjs";
 // Closed-transport behavioral controls. All metadata here is explicitly synthetic.
 // This never acquires papers, calls NCBI or represents a live PubMed comparison.
 import assert from "node:assert/strict";
@@ -20,6 +21,7 @@ try {
   browser = await chromium.launch({ headless: true, ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE } : {}) });
   result.browser = browser.version();
   for (const viewport of [{ width: 1365, height: 833 }, { width: 390, height: 844 }]) {
+    const selectionFixture = createSelectionFixture();
     const page = await browser.newPage({ viewport });
     page.setDefaultTimeout(12000);
     const errors = [], posts = [], requests = [];
@@ -32,7 +34,7 @@ try {
       const endpoint = url.pathname;
       requests.push({ endpoint, method: request.method() });
       const reply = (value, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(value) });
-      if (endpoint === "/service-info") return reply({ searchEnabled: true, searchContinuationEnabled: true, planEnabled: true, pdfEnabled: true, acquisitionEnabled: true, savedSetEnabled: true });
+      if (endpoint === "/service-info") return reply({ durableSelectionEnabled: true, selectionWriteEnabled: true, selectionRecordLimit: 1000, searchEnabled: true, searchContinuationEnabled: true, planEnabled: true, pdfEnabled: true, acquisitionEnabled: true, savedSetEnabled: true });
       if (!endpoint.startsWith("/api/")) return route.continue();
       if (request.method() === "POST") posts.push({ endpoint, body: request.postDataJSON() });
       if (endpoint === "/api/session") return reply(authenticated ? { csrf: "SYNTHETIC" } : {}, authenticated ? 200 : 401);
@@ -49,6 +51,10 @@ try {
         runs.set(id, { run_id: id, input: body.query, total: 57, fetched: 10, state: "partial" });
         return reply({ id });
       }
+    if (endpoint.endsWith("/selection")) {
+      const selectionRun = endpoint.split("/").at(-2);
+      return selectionFixture(endpoint, selectionRun, Array.from({ length: runs.get(selectionRun).fetched }, (_, i) => article(i)), request.method(), request.method() === "POST" ? request.postDataJSON() : null, reply);
+    }
       if (endpoint.includes("/runs/")) {
         const run = runs.get(endpoint.split("/")[5]), offset = Number(url.searchParams.get("offset") ?? 0), limit = Number(url.searchParams.get("limit") ?? 25);
         if (library !== "L1" || !run) return reply({ error: "SYNTHETIC library boundary" }, 404);
@@ -68,10 +74,11 @@ try {
     });
     const button = name => page.getByRole("button", { name, exact: true });
     const nav = async name => { await page.getByRole("navigation", { name: "Workspace", exact: true }).getByRole("button", { name, exact: true }).click(); };
-    const open = async id => { await nav("Saved searches"); await page.locator('.history-entry').filter({ has: page.locator('.history-id', { hasText: id }) }).click(); await expect(button("Select all")).toBeEnabled(); };
+    const open = async id => { await nav("Saved searches"); await page.locator('.history-entry').filter({ has: page.locator('.history-id', { hasText: id }) }).click(); await expect(button("Select all saved")).toBeEnabled(); };
     const filters = async () => { if (!await page.locator('.search-filters').evaluate(e => e.open)) await page.locator('.search-filters > summary').click(); };
     const selection = page.getByRole("region", { name: "Saved record selection" });
     const measure = async name => {
+      if (name !== "initial") await expect(button("Select all saved")).toBeEnabled();
       await page.evaluate(() => scrollTo(0, 0));
       const geometry = await page.evaluate(() => {
         const box = selector => { const e = document.querySelector(selector), r = e.getBoundingClientRect(); return { y: r.y, bottom: r.bottom, width: r.width }; };
@@ -90,20 +97,20 @@ try {
     await open(runID(1)); await measure("saved-run");
     await page.getByLabel("Page size", { exact: true }).selectOption("5");
     await expect(page.locator('.result-card')).toHaveCount(5);
-    await page.locator('.result-card input').first().uncheck();
+    await setSavedCheck(page.locator('.result-card input').first(), false);
     let releasePage;
     heldRecordPage = new Promise(resolve => { releasePage = resolve; });
     await button("Next records").click();
     await expect(button("Deselect all")).toBeDisabled();
     await button("Deselect all").focus(); await page.keyboard.press("Enter");
-    await expect(selection).toContainText("9 selected of 10 loaded");
+    await expect(selection).toContainText("9 selected of 10 saved");
     releasePage(); heldRecordPage = null;
     await expect(button("Deselect all")).toBeEnabled();
     await button("Deselect all").focus(); await page.keyboard.press("Enter");
-    await expect(selection).toContainText("0 selected of 10 loaded");
+    await expect(selection).toContainText("0 selected of 10 saved");
     await button("Previous records").click();
-    await expect(selection).toContainText("0 selected of 10 loaded");
-    await button("Select all").click();
+    await expect(selection).toContainText("0 selected of 10 saved");
+    await button("Select all saved").click();
     const query = '"heart failure"[Title] OR asthma';
     await page.getByLabel("Search PubMed", { exact: true }).fill(query);
     await expect(button("Download PDFs (10 selected)")).toBeDisabled();
@@ -114,7 +121,7 @@ try {
     await expect(page.locator('.filter-state')).toHaveText("Filters applied");
     assert.equal(posts.filter(p => p.endpoint.endsWith('/search')).at(-1).body.query, expectedQuery);
     await measure("filtered-run");
-    await page.reload(); await expect(selection).toContainText("10 selected of 10 loaded");
+    await page.reload(); await expect(selection).toContainText("10 selected of 10 saved");
     await expect(page.getByLabel("Search PubMed", { exact: true })).toHaveValue(query);
     await expect(page.locator('.filter-state')).toHaveText("Filters applied");
     await filters(); await expect(page.getByRole("checkbox", { name: "Review", exact: true })).toBeChecked();
@@ -124,9 +131,9 @@ try {
     await button("Restore active search").click(); await expect(page.locator('.filter-state')).toHaveText("Filters applied");
     if (viewport.width < 900) await page.locator('.search-filters > summary').click();
     await nav("Research plans"); await page.goBack(); await expect(page.locator('.active-results')).toBeVisible();
-    await expect(selection).toContainText("10 selected of 10 loaded");
+    await expect(selection).toContainText("10 selected of 10 saved");
     // Same mounted PDF request survives secondary views, local failure and retry.
-    await button("Deselect all").click(); await page.locator('.result-card input').first().check();
+    await button("Deselect all").click(); await setSavedCheck(page.locator('.result-card input').first(), true);
     pdfPending = true; await button("Download PDFs (1 selected)").click();
     await expect(page.locator('.pdf-progress')).toContainText('1 pending');
     await nav("Saved searches"); await expect(page.locator('.pdf-view-notice')).toContainText('1 pending'); await button("Return to PDF progress").click();
@@ -141,7 +148,7 @@ try {
     await page.getByLabel("Choose library").selectOption("L2");
     await expect(page.getByLabel("Search PubMed", { exact: true })).toHaveValue('');
     await expect(page.locator('.pdf-progress')).toHaveText('');
-    await expect(selection).toContainText('0 selected of 0 loaded');
+    await expect(selection).toContainText('No saved selection');
     await page.goBack(); await expect(page.getByLabel('Choose library')).toHaveValue('L1');
     await expect(page.getByLabel("Search PubMed", { exact: true })).toHaveValue(query);
     await expect(page.locator('.pdf-progress')).toHaveText('');

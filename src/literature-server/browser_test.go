@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -85,7 +86,9 @@ func TestBrowserServer(t *testing.T) {
 	bundles := os.Getenv("LITRADOCK_BUNDLE_BROWSER_TEST") == "yes"
 	continuation := os.Getenv("LITRADOCK_CONTINUATION_BROWSER_TEST") == "yes" || bundles
 	multirun := os.Getenv("LITRADOCK_MULTIRUN_BROWSER_TEST") == "yes" || continuation
-	if multirun {
+	// All compiled clients use the current persistence capability. Feature flags
+	// still bound each browser workload; migrations do not enable source traffic.
+	{
 		tx, err := db.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -94,14 +97,8 @@ func TestBrowserServer(t *testing.T) {
 			tx.Rollback(ctx)
 			t.Fatal(err)
 		}
-		if continuation {
-			if err = migrateContinuation(ctx, tx, false); err != nil {
-				tx.Rollback(ctx)
-				t.Fatal(err)
-			}
-		}
-		if bundles {
-			if err = migrateBundles(ctx, tx, false); err != nil {
+		for _, migrate := range []func(context.Context, pgx.Tx, bool) error{migrateContinuation, migrateBundles, migrateSavedSnapshots, migrateRunSelection} {
+			if err = migrate(ctx, tx, false); err != nil {
 				tx.Rollback(ctx)
 				t.Fatal(err)
 			}
@@ -135,6 +132,7 @@ func TestBrowserServer(t *testing.T) {
 	cfg.SavedSetEnabled = multirun
 	cfg.SearchContinuationEnabled = continuation
 	cfg.BundleDeliveryEnabled = bundles
+	cfg.SelectionWriteEnabled = true
 	if bundles {
 		cfg.PDFEnabled = true
 	}
@@ -269,6 +267,8 @@ func TestBrowserServer(t *testing.T) {
 	s := &server{native: true, db: db, cfg: cfg, slots: make(chan struct{}, 2), loginGate: make(chan struct{}, 1), provider: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	s.continuation = continuation
 	s.bundles = bundles
+	s.savedSnapshots = true
+	s.runSelection = true
 	service := &http.Server{Handler: s, ReadHeaderTimeout: 5 * time.Second}
 	defer service.Close()
 	go s.worker(ctx)

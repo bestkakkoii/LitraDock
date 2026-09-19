@@ -51,6 +51,7 @@ jobs:
           NATIVE_MULTIRUN_TEST_OUTPUT: ${{ runner.temp }}/native-multirun
           NATIVE_PLAN_EXPORT_TEST_OUTPUT: ${{ runner.temp }}/native-plan-export
           NATIVE_STRUCTURED_TEST_OUTPUT: ${{ runner.temp }}/native-structured
+          LITRADOCK_SELECTION_ARTIFACT_DIR: ${{ runner.temp }}/native-selection
         run: |
           go test -count=1 -v ./...
           go vet ./...
@@ -73,6 +74,8 @@ jobs:
       - name: Independent saved snapshot readers
         run: |
           "$RUNNER_TEMP/workbook-reader/bin/python" tests/native-browser/verify-saved-snapshot.py "$RUNNER_TEMP/native-snapshot"
+      - name: Independent exact selected metadata readers and mutation controls
+        run: '"$RUNNER_TEMP/workbook-reader/bin/python" tests/native-browser/verify-run-selection.py "$RUNNER_TEMP/native-selection"'
       - name: Repeated compiler outputs
         run: |
           mkdir -p "$RUNNER_TEMP/native-build"
@@ -98,6 +101,9 @@ jobs:
       - name: Compiled PDF selection and download transport controls
         working-directory: src/literature-web
         run: node scripts/pdf-browser-check.mjs
+      - name: Compiled durable selection interruption and scope controls
+        working-directory: src/literature-web
+        run: node scripts/durable-selection-browser-check.mjs
       - name: Compact visual workspace and navigation boundaries
         working-directory: src/literature-web
         run: node scripts/compact-browser-check.mjs
@@ -187,6 +193,9 @@ jobs:
           name: native-browser-synthetic-evidence
           include-hidden-files: true
           path: |
+            ${{ runner.temp }}/native-selection/SYNTHETIC-selected.*
+            src/literature-web/.litradock/runtime/native023a/**/result.json
+            src/literature-web/.litradock/runtime/native023a/**/*.png
             src/literature-web/.litradock/runtime/native022/**/result.json
             src/literature-web/.litradock/runtime/native022/**/*.png
             src/literature-web/.litradock/runtime/frontend018/**/result.json
