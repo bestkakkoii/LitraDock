@@ -23,7 +23,7 @@ try {
     const page = await browser.newPage({ viewport });
     page.setDefaultTimeout(12000);
     const errors = [], posts = [], requests = [];
-    let authenticated = false, nextRun = 2, batchIDs = [], pdfPending = false, pdfFailure = false, heldSearch = null, rejectSearch = false;
+    let authenticated = false, nextRun = 2, batchIDs = [], pdfPending = false, pdfFailure = false, heldSearch = null, rejectSearch = false, heldRecordPage = null;
     const runs = new Map([[runID(1), { run_id: runID(1), input: "SYNTHETIC asthma OR COPD", total: 243, fetched: 10, state: "partial" }]]);
     page.on("pageerror", error => errors.push(String(error)));
     await page.route("**/*", async route => {
@@ -52,6 +52,7 @@ try {
       if (endpoint.includes("/runs/")) {
         const run = runs.get(endpoint.split("/")[5]), offset = Number(url.searchParams.get("offset") ?? 0), limit = Number(url.searchParams.get("limit") ?? 25);
         if (library !== "L1" || !run) return reply({ error: "SYNTHETIC library boundary" }, 404);
+        if (offset === 5 && heldRecordPage) await heldRecordPage;
         return reply({ run, records: Array.from({ length: run.fetched }, (_, n) => article(n)).slice(offset, offset + limit), total: run.fetched, offset, limit });
       }
       if (endpoint.endsWith("/batches")) {
@@ -89,9 +90,18 @@ try {
     await open(runID(1)); await measure("saved-run");
     await page.getByLabel("Page size", { exact: true }).selectOption("5");
     await expect(page.locator('.result-card')).toHaveCount(5);
-    await page.locator('.result-card input').first().uncheck(); await button("Next records").click();
+    await page.locator('.result-card input').first().uncheck();
+    let releasePage;
+    heldRecordPage = new Promise(resolve => { releasePage = resolve; });
+    await button("Next records").click();
+    await expect(button("Deselect all")).toBeDisabled();
+    await button("Deselect all").focus(); await page.keyboard.press("Enter");
     await expect(selection).toContainText("9 selected of 10 loaded");
-    await button("Deselect all").focus(); await page.keyboard.press("Enter"); await button("Previous records").click();
+    releasePage(); heldRecordPage = null;
+    await expect(button("Deselect all")).toBeEnabled();
+    await button("Deselect all").focus(); await page.keyboard.press("Enter");
+    await expect(selection).toContainText("0 selected of 10 loaded");
+    await button("Previous records").click();
     await expect(selection).toContainText("0 selected of 10 loaded");
     await button("Select all").click();
     const query = '"heart failure"[Title] OR asthma';
