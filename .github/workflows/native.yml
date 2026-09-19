@@ -185,6 +185,7 @@ jobs:
         if: always()
         with:
           name: native-browser-synthetic-evidence
+          include-hidden-files: true
           path: |
             src/literature-web/.litradock/runtime/native022/**/result.json
             src/literature-web/.litradock/runtime/native022/**/*.png
