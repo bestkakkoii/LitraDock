@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ApiError, sessionGeneration } from "../api";
 import { definitiveAdmissionError, PdfRequest } from "../pdfRequest";
 import { handoffPdf, pdfFile, pdfOutcomes, PdfStatus, readPdfStatus, waitForPdf } from "../pdfDownload";
@@ -10,6 +10,7 @@ type Props = {
   selectedCount: number; ids?: string[]; ready?: boolean; enabled?: boolean; plansEnabled?: boolean;
   library?: string; runID?: string; generation?: number; scopeSignal?: AbortSignal; policy?: string; confirmedPlanID?: string;
   onBatch?: (id: string) => Promise<void>; onPlan?: (id: string) => void; onStart?: () => void;
+  onStatus?: (value: { library: string; runID: string; message: string }) => void;
 };
 export function PdfAvailability(props: Props) {
   const [busy, setBusy] = useState(false), [message, setMessage] = useState("");
@@ -24,6 +25,11 @@ export function PdfAvailability(props: Props) {
     if (props.scopeSignal?.aborted) stop();
     return () => { controller.abort(); attempt.current?.abort(); props.scopeSignal?.removeEventListener("abort", stop); };
   }, [props.library, props.runID, props.generation, props.scopeSignal]);
+  // Publish message changes only; a scope change must not relabel an old message
+  // with the new run before the layout effect has cleared it.
+  useEffect(() => {
+    props.onStatus?.({ library: props.library ?? "", runID: props.runID ?? "", message });
+  }, [message, props.onStatus]);
 
   // Only a deliberate click enters this function: no polling effect, reload or
   // re-render can start an acquisition or repeat a browser file handoff.
@@ -41,12 +47,12 @@ export function PdfAvailability(props: Props) {
         intent = new PdfRequest(props.library!, props.runID!, props.ids ?? [], props.generation!, props.plansEnabled === true);
         setPending(intent); setStatus(undefined); setSent(false); props.onStart?.();
       }
-      setMessage(`Preparing PDFs for ${intent.body.searchIDs.length} selected records…`);
+      setMessage(`Preparing PDFs for ${intent.body.searchIDs.length} selected ${intent.body.searchIDs.length === 1 ? "record" : "records"}…`);
       await intent.send(signal);
       if (!current()) return;
       if (action === "details") {
         if (intent.kind === "batch") await props.onBatch?.(intent.confirmedID!); else props.onPlan?.(intent.confirmedID!);
-        if (current()) setMessage("Saved download details opened below. Your PDF progress and save actions remain here.");
+        if (current()) setMessage("Saved download details opened. Return to Search & PDFs for this request's progress and save actions.");
         return;
       }
       let progress = await readPdfStatus(intent, signal);
@@ -99,20 +105,20 @@ export function PdfAvailability(props: Props) {
   const validSelection = props.selectedCount >= 1 && props.selectedCount <= 100 && (props.selectedCount <= 10 || props.plansEnabled);
   const changedSelection = pending && (pending.body.searchIDs.length !== props.ids?.length || pending.body.searchIDs.some(id => !props.ids?.includes(id)));
   return <section className="pdf-availability" aria-label="PDF downloads">
-    <h3>Download PDFs</h3>
-    <p>{pending ? `${pending.body.searchIDs.length} records in this download` : `${props.selectedCount} selected saved records`}. Available originals download as a PDF or ZIP; other records keep their source links.</p>
+    <h3 className="sr-only">Download PDFs</h3>
     {!props.enabled && <p>PDF acquisition is currently unavailable under the server policy. Existing saved originals remain available as permitted.</p>}
     <button disabled={busy || (!pending && (!props.enabled || !props.ready || !validSelection))} onClick={() => void submit()}>
       {busy ? "Preparing PDFs…" : pending ? sent ? "Save again" : pending.confirmedID ? status?.pending || !status ? "Continue checking" : "Check and download again" : "Retry same PDF request" : `Download PDFs (${props.selectedCount} selected)`}
     </button>
     {busy && <button className="secondary" onClick={stopWaiting}>Stop waiting</button>}
+    <p className="pdf-scope">{pending ? `${pending.body.searchIDs.length} ${pending.body.searchIDs.length === 1 ? "record" : "records"} in this download` : `${props.selectedCount} selected saved ${props.selectedCount === 1 ? "record" : "records"}`}. Available originals: PDF or ZIP.</p>
     <div className="pdf-progress" aria-live="polite" aria-atomic="true">
       {message && <p role={error ? "alert" : "status"}>{message}</p>}
       {status && <p><strong>{status.ready} ready · {status.pending} pending · {status.unresolved} without an available PDF</strong> · {status.items.length} selected</p>}
     </div>
     {status && <button className="secondary" disabled={busy} onClick={() => void submit("outcomes")}>Export source outcomes</button>}
     {changedSelection && <button className="secondary" disabled={busy || !props.ready || !props.enabled || !validSelection} onClick={() => void submit("download", undefined, true)}>Download current selection ({props.selectedCount})</button>}
-    {status && <details open={status.ready === 0 && status.pending === 0} className="pdf-results"><summary>File and source details ({status.items.length} records)</summary>
+    {status && <details open={status.ready === 0 && status.pending === 0} className="pdf-results"><summary>File and source details ({status.items.length} {status.items.length === 1 ? "record" : "records"})</summary>
       <div className="pdf-result-list">{status.items.map(item => <article key={item.id}>
         <h4>{String(item.article.Title ?? item.id)}</h4>
         <SourceOutcomeView outcome={item.outcome} />

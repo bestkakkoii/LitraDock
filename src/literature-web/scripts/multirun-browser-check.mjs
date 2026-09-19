@@ -1,4 +1,5 @@
 // SYNTHETIC loopback HTTP fixtures and files. No native Go/PG/provider evidence.
+import { showWorkspace } from "./workspace-navigation.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -147,9 +148,9 @@ try {
   await page.addInitScript(() => { const fetch = window.fetch.bind(window); window.fetch = (url, init) => fetch(url, window.__ignoreAbort ? { ...init, signal: undefined } : init); });
   const button = name => page.getByRole("button", { name, exact: true });
   const login = async who => { await page.getByLabel("Login", { exact: true }).fill(who); await page.getByLabel("Password", { exact: true }).fill("SYNTHETIC"); await button("Sign in").click(); await expect(page.getByLabel("Choose library", { exact: true })).toHaveValue(who === "B" ? "LB" : "L1"); };
-  const openRun = async id => { await page.locator(".history-entry").filter({ has: page.locator(".history-id", { hasText: new RegExp(`${id}$`) }) }).click(); await expect(button("Select all")).toBeEnabled(); await expect(page.locator(".selection-toolbar")).toContainText(`of ${runs[id].length}`); };
-  const open = async id => { await page.getByLabel("Saved plans", { exact: true }).selectOption(id); await expect(page.getByRole("heading", { name: `Plan ${id}`, exact: true })).toBeVisible(); };
-  const add = count => button(`Add checked records to basket (${count})`).click();
+  const openRun = async id => { await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").filter({ has: page.locator(".history-id", { hasText: new RegExp(`${id}$`) }) }).click(); await expect(button("Select all")).toBeEnabled(); await expect(page.locator(".selection-toolbar")).toContainText(`of ${runs[id].length}`); };
+  const open = async id => { await showWorkspace(page, "Research plans"); await page.getByLabel("Saved plans", { exact: true }).selectOption(id); await expect(page.getByRole("heading", { name: `Plan ${id}`, exact: true })).toBeVisible(); };
+  const add = async count => { await showWorkspace(page, "Research plans"); await button(`Add checked records to basket (${count})`).click(); };
   const removeBasket = async searchID => {
     // Full saved identity remains in native details, even with concise labels.
     const row = page.locator(".basket-row").filter({ has: page.locator("dd").filter({ hasText: new RegExp(`^${searchID}$`) }) });
@@ -179,16 +180,16 @@ try {
   await page.locator(".saved-basket > details > summary").click(); await expect(page.locator(".saved-basket")).toContainText("4 associations");
   await removeBasket("S2"); await expect(page.locator(".saved-basket")).toContainText("2 records in basket"); await add(2);
   await button("Clear basket").click(); await openRun("R4"); await page.getByLabel("Page size", { exact: true }).selectOption("5");
-  await expect(button("Select all")).toBeEnabled(); await add(6); await button("Next records").click(); await expect(button("Previous records")).toBeEnabled(); await add(6);
+  await expect(button("Select all")).toBeEnabled(); await add(6); await showWorkspace(page, "Search & PDFs"); await button("Next records").click(); await expect(button("Previous records")).toBeEnabled(); await add(6);
   await expect(page.locator(".saved-basket")).toContainText("6 records in basket · 1 saved searches");
-  await button("Clear basket").click(); await openRun("R1"); await button("Add checked records to basket (2)").focus(); await page.keyboard.press("Enter"); await openRun("R2"); await add(2);
+  await button("Clear basket").click(); await openRun("R1"); await showWorkspace(page, "Research plans"); await button("Add checked records to basket (2)").focus(); await page.keyboard.press("Enter"); await openRun("R2"); await add(2);
   await expect(page.locator(".saved-basket")).toContainText("3 records in basket · 2 saved searches");
   assert.equal(posts.filter(post => post.path.endsWith("/plans")).length, 0);
   await button("Download basket PDFs (3)").click(); await expect(button("Retry same submission")).toBeVisible();
   await openRun("R3"); await add(1); // Changed draft must not replace the unconfirmed three-member body.
   while (receiptFailures.length) { await button("Retry same submission").click(); await expect(button("Retry same submission")).toBeVisible(); await expect(button("Download basket PDFs (4)")).toBeDisabled(); }
   await button("Retry same submission").click(); await expect(button("Reopen confirmed plan")).toBeVisible();
-  await expect(button("Retry same submission")).toHaveCount(0); await openRun("R1"); await expect(button("Download basket PDFs (4)")).toBeDisabled();
+  await expect(button("Retry same submission")).toHaveCount(0); await openRun("R1"); await showWorkspace(page, "Research plans"); await expect(button("Download basket PDFs (4)")).toBeDisabled();
   const creates = posts.filter(post => post.path.endsWith("/plans")); assert.equal(creates.length, admissionCalls); creates.forEach(post => assert.deepEqual(post.body, creates[0].body));
   failedDetail = false; await button("Reopen confirmed plan").click(); await expect(page.getByRole("heading", { name: "Plan PLN-00000000000000000000000000000001", exact: true })).toBeVisible();
   assert.equal(posts.filter(post => post.path.endsWith("/plans")).length, admissionCalls);
@@ -207,7 +208,7 @@ try {
   }
   result.cases.push("Populated1280/390 long multilingual Boolean titles, provenance and controls have readable width/height and no document overflow");
   await held("run-independent", "zip"); await expect(page.locator(".plan-exports [role=status]")).toContainText("%");
-  const download = page.waitForEvent("download"); await openRun("R1"); await expect(exportButton("zip")).toBeDisabled(); await release("run-independent"); await verify(await download, "PLN-00000000000000000000000000000001", "zip");
+  const download = page.waitForEvent("download"); await openRun("R1"); await showWorkspace(page, "Research plans"); await expect(exportButton("zip")).toBeDisabled(); await release("run-independent"); await verify(await download, "PLN-00000000000000000000000000000001", "zip");
   await expect(exportButton("zip")).toBeEnabled();
   for (const extra of [{ unknown: true }, { encoded: true }]) {
     await held("bytes-only", "json", extra); await expect(page.locator(".plan-exports [role=status]")).not.toContainText("%");
@@ -243,7 +244,7 @@ try {
     await page.evaluate(() => { window.__ignoreAbort = true; }); await held(scope, "zip", { status });
     if (scope === "library") await page.getByLabel("Choose library", { exact: true }).selectOption("L2");
     else { await button("Sign out").click(); await login("B"); }
-    await release(scope); await page.evaluate(() => { window.__ignoreAbort = false; }); assert.equal(downloads.length, count); await expect(page.locator(".saved-basket")).toContainText("0 records in basket");
+    await release(scope); await page.evaluate(() => { window.__ignoreAbort = false; }); assert.equal(downloads.length, count); await showWorkspace(page, "Research plans"); await expect(page.locator(".saved-basket")).toContainText("0 records in basket");
     await expect(page.getByRole("heading", { name: "Plan PLN-00000000000000000000000000000001", exact: true })).toHaveCount(0);
     await expect(page.getByLabel("Saved plans", { exact: true })).not.toContainText("PLN-00000000000000000000000000000001");
     if (scope === "library") await page.getByLabel("Choose library", { exact: true }).selectOption("L1");

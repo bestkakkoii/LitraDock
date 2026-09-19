@@ -1,5 +1,6 @@
 // SYNTHETIC fixed compiled UI and independently paced loopback HTTP only.
 // No native handler, PostgreSQL, provider, public runtime or clinical data.
+import { showWorkspace } from "./workspace-navigation.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -125,7 +126,7 @@ try {
   const button = name => page.getByRole("button", { name, exact: true });
   const area = page.getByRole("region", { name: "Partitioned original downloads" });
   const login = async who => { await page.getByLabel("Login", { exact: true }).fill(who); await page.getByLabel("Password", { exact: true }).fill("SYNTHETIC"); await button("Sign in").click(); await expect(page.getByLabel("Choose library", { exact: true })).toHaveValue(who === "B" ? "LB" : "L1"); };
-  const openPlan = async () => { await page.locator(".history-entry").first().click(); await expect(button("Select all")).toBeEnabled(); await page.getByLabel("Saved plans", { exact: true }).selectOption(plan.planID); await expect(button("Prepare download parts")).toBeEnabled(); };
+  const openPlan = async () => { await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").first().click(); await expect(button("Select all")).toBeEnabled(); await showWorkspace(page, "Research plans"); await page.getByLabel("Saved plans", { exact: true }).selectOption(plan.planID); await expect(button("Prepare download parts")).toBeEnabled(); };
   const openSnapshot = async id => { await page.getByLabel("Saved download snapshots", { exact: true }).selectOption(id); await expect(button("Save bundle manifest")).toBeEnabled(); };
   const waitBytes = async () => { await expect(area.getByRole("status").filter({ hasText: /4,096 \/ .*bytes/ })).toBeVisible(); };
   const getDownload = async action => { const promise = page.waitForEvent("download"); await action(); return await promise; };
@@ -198,7 +199,7 @@ try {
   await expect(button("Download selected parts")).toHaveCount(0);
   await checkDownload(await getDownload(() => button("Save bundle manifest").click()), "json"); result.cases.push("library retirement blocks late part; new account usable; manifest-only snapshot remains downloadable");
   enabled = false; await page.reload(); await expect(page.getByLabel("Choose library", { exact: true })).toBeVisible();
-  await page.locator(".history-entry").first().click(); await expect(button("Select all")).toBeEnabled(); await page.getByLabel("Saved plans", { exact: true }).selectOption(plan.planID);
+  await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").first().click(); await expect(button("Select all")).toBeEnabled(); await showWorkspace(page, "Research plans"); await page.getByLabel("Saved plans", { exact: true }).selectOption(plan.planID);
   await expect(button("Prepare download parts")).toBeDisabled(); await openSnapshot(d.snapshotID);
   mode = "401"; await button("Save part 1").click(); await expect(button("Sign in")).toBeEnabled(); await expect(area).toHaveCount(0);
   mode = "valid"; await login("A"); result.cases.push("policy-disabled new preparation retains saved reads; current401 clears private UI and login remains usable");

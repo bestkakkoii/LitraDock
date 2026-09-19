@@ -1,4 +1,5 @@
 // Actual native handlers/PostgreSQL/compiled React with explicitly synthetic transport.
+import { showWorkspace, openDisclosure } from "../../src/literature-web/scripts/workspace-navigation.mjs";
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -42,9 +43,11 @@ const login=async(account=input.accounts[0])=>{
 };
 const detail=async()=>{const r=await page.request.get(`${target}/api/libraries/${library}/plans/${plan}?limit=100`);assert.equal(r.status(),200);return r.json();};
 const search=async(query,count)=>{
-  await page.getByLabel('Query',{exact:true}).fill(query);
+  await showWorkspace(page, "Search & PDFs");
+  await page.getByLabel('Search PubMed',{exact:true}).fill(query);
   await page.getByRole('button',{name:'Search PubMed',exact:true}).click();
-  await until(async()=>{const text=await page.locator('body').innerText();return text.includes(`retrieved ${count} of`) && text.includes(query);},'saved search complete');
+  await until(async()=>{const text=await page.locator('.compact-result-head').innerText();return text.includes(`${count} loaded`);},'saved search complete');
+  await openDisclosure(page, /^Search progress and query details/); assert.equal(await page.locator('.query-snapshot strong').innerText(),query);
   const run=(await page.locator('.query-snapshot .small').innerText()).replace('Search Run ID: ','');
   const r=await page.request.get(`${target}/api/libraries/${library}/runs/${run}?limit=100`);
   assert.equal(r.status(),200);return {run,data:await r.json()};
@@ -58,18 +61,18 @@ try {
     for(const [name,want] of Object.entries(manifest.files).filter(([n])=>n.startsWith('web/'))){const r=await page.request.get(target+'/'+(name==='web/index.html'?'':name.slice(4)));assert.equal(hash(await r.body()),want);}
   });
   await login();
-  await page.getByLabel('New library name',{exact:true}).fill('SYNTHETIC multi-run browser');
+  await showWorkspace(page, "Libraries"); await page.getByLabel('New library name',{exact:true}).fill('SYNTHETIC multi-run browser');
   await page.getByRole('button',{name:'Create',exact:true}).click();
   await until(async()=>!!await page.getByLabel('Choose library',{exact:true}).inputValue(),'library');
   library=await page.getByLabel('Choose library',{exact:true}).inputValue();
   await check('two-real-saved-run-rows-stable-dedup-and-query-associations',async()=>{
     const first=await search('SYNTHETIC_FIRST_RUN',3);runA=first.run;
     assert.equal(first.data.run.total,25000);assert.equal(first.data.total,3);
-    await basket.getByRole('button',{name:'Add checked records to basket (3)',exact:true}).click();
+    await showWorkspace(page, "Research plans"); await basket.getByRole('button',{name:'Add checked records to basket (3)',exact:true}).click();
     expected=first.data.records.map(r=>({searchID:r.SearchId,runIDs:[runA]}));
     const second=await search('SYNTHETIC_SECOND_RUN',2);runB=second.run;
     assert.notEqual(runA,runB);assert.equal(second.data.run.total,10001);assert.equal(second.data.total,2);
-    await basket.getByRole('button',{name:'Add checked records to basket (2)',exact:true}).click();
+    await showWorkspace(page, "Research plans"); await basket.getByRole('button',{name:'Add checked records to basket (2)',exact:true}).click();
     for(const r of second.data.records){const m=expected.find(x=>x.searchID===r.SearchId);assert(m);m.runIDs.push(runB);m.runIDs.sort();}
     assert((await basket.innerText()).includes('3 records in basket · 2 saved searches'));
     await basket.getByLabel('Basket original format',{exact:true}).selectOption('xml');
@@ -99,8 +102,8 @@ try {
     fs.writeFileSync(input.source_gate,'release synthetic source only');
     await until(async()=>{const p=await detail();return p.plan.counts.completed===2&&p.plan.counts.held===1;},'mixed final phases');
     const before=JSON.stringify(posts);
-    await page.getByRole('list',{name:'Saved searches',exact:true}).getByRole('button').filter({hasText:runA}).click();
-    await plans.getByRole('heading',{name:'Plan '+plan,exact:true}).waitFor();
+    await showWorkspace(page, "Saved searches"); await page.getByRole('list',{name:'Saved searches',exact:true}).getByRole('button').filter({hasText:runA}).click(); await page.getByLabel("Search PubMed", { exact: true }).waitFor({ state: "visible" });
+    await showWorkspace(page, "Research plans"); await plans.getByRole('heading',{name:'Plan '+plan,exact:true}).waitFor();
     assert.equal(JSON.stringify(posts),before,'opening saved run must not acquire');
     const intentFile=inputPath+'.intent.json';fs.writeFileSync(intentFile,JSON.stringify(expected));
     for(const [label,format] of [['Export plan metadata JSON','json'],['Download available originals ZIP','zip']]){
@@ -109,7 +112,7 @@ try {
       const download=await wait;assert.equal(await download.failure(),null);
       const filename=inputPath+'.download.'+format;await download.saveAs(filename);
       const raw=fs.readFileSync(filename);
-      const reader=execFileSync('python3',[fileURLToPath(new URL('./verify-plan-export.py',import.meta.url)),filename,'--expected-saved-set',intentFile,'--negative-controls','--synthetic-transport'],{encoding:'utf8'});
+      const reader=execFileSync('python3',[fileURLToPath(new URL('./verify-plan-export.py',import.meta.url)),filename,'--expected-saved-set',intentFile,'--negative-controls','--synthetic-transport'],{encoding:'utf8',windowsHide:true});
       assert.equal(JSON.parse(reader).pass,true);
       if(format==='zip'){
         const entries=unzipSync(raw),m=JSON.parse(new TextDecoder().decode(entries['manifest.json']));
@@ -125,7 +128,7 @@ try {
     assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
     const before=JSON.stringify(posts);
     await page.reload();await page.getByLabel('Choose library',{exact:true}).selectOption(library);
-    await page.getByLabel('Saved plans',{exact:true}).selectOption(plan);
+    await showWorkspace(page, "Research plans"); await page.getByLabel('Saved plans',{exact:true}).selectOption(plan);
     await plans.getByRole('heading',{name:'Plan '+plan,exact:true}).waitFor();
     assert((await basket.innerText()).includes('0 records in basket'));
     await page.getByRole('button',{name:'Sign out',exact:true}).click();await login(input.accounts[1]);
@@ -133,7 +136,7 @@ try {
     assert(!(await page.locator('body').innerText()).includes(plan));
     await page.getByRole('button',{name:'Sign out',exact:true}).click();await login();
     await page.getByLabel('Choose library',{exact:true}).selectOption(library);
-    await page.getByLabel('Saved plans',{exact:true}).selectOption(plan);
+    await showWorkspace(page, "Research plans"); await page.getByLabel('Saved plans',{exact:true}).selectOption(plan);
     await plans.getByRole('heading',{name:'Plan '+plan,exact:true}).waitFor();
     assert.equal(JSON.stringify(posts),before);
   });

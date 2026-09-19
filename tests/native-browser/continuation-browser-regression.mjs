@@ -1,4 +1,5 @@
 // Actual native PostgreSQL/handlers and pinned compiled React; synthetic source only.
+import { showWorkspace, openDisclosure } from "../../src/literature-web/scripts/workspace-navigation.mjs";
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -39,22 +40,23 @@ try{
   const info=await(await page.request.get(target+'/service-info')).json();assert.equal(info.searchContinuationEnabled,true);assert.equal(info.searchWindowLimit,1000);
   for(const[name,want]of Object.entries(manifest.files).filter(([n])=>n.startsWith('web/'))){const r=await page.request.get(target+'/'+(name==='web/index.html'?'':name.slice(4)));assert.equal(hash(await r.body()),want);}
  });
- await login();await page.getByLabel('New library name',{exact:true}).fill('SYNTHETIC continuation browser');await page.getByRole('button',{name:'Create',exact:true}).click();
+ await login();await showWorkspace(page, "Libraries"); await page.getByLabel('New library name',{exact:true}).fill('SYNTHETIC continuation browser');await page.getByRole('button',{name:'Create',exact:true}).click();
  await until(async()=>!!await page.getByLabel('Choose library',{exact:true}).inputValue(),'library creation');library=await page.getByLabel('Choose library',{exact:true}).inputValue();
  await check('lost-initial-receipt-same-UUID-one-frozen-run',async()=>{
   let first=true;
   await page.route('**/search',async route=>{if(first&&route.request().method()==='POST'){first=false;const response=await route.fetch();assert.equal(response.status(),200);const body=await response.json();run=body.id;await route.fulfill({status:200,contentType:'application/json',body:'{}'});}else await route.continue();});
-  await page.getByLabel('Query',{exact:true}).fill('SYNTHETIC_CONTINUATION_25000');await page.getByLabel('Retrieved limit',{exact:true}).selectOption('100');
+  await showWorkspace(page, "Search & PDFs"); await page.getByLabel('Search PubMed',{exact:true}).fill('SYNTHETIC_CONTINUATION_25000');await openDisclosure(page, "Search options"); await page.getByLabel('Retrieved limit',{exact:true}).selectOption('100');
   await page.getByRole('button',{name:'Search PubMed',exact:true}).click();await panel.getByRole('button',{name:'Retry same search request',exact:true}).waitFor();
   await panel.getByRole('button',{name:'Retry same search request',exact:true}).click();
   await until(async()=>(await detail()).continuation?.savedCount===100,'first100 persisted');
-  await until(async()=>(await toolbar.innerText()).includes('100 selected of 100 retrieved'),'initial bounded all');
+  await until(async()=>(await toolbar.innerText()).includes('100 selected of 100 loaded'),'initial bounded all');
   const sent=posts.filter(p=>p.url.endsWith('/search'));assert.equal(sent.length,2);assert.deepEqual(sent[0].body,sent[1].body);assert.match(sent[0].body.requestID,/^[a-f0-9-]{36}$/);
   const d=await detail();assert.equal(d.run.run_id,run);assert.equal(d.run.total,25000);assert.equal(d.total,100);assert.equal(d.continuation.windowCount,1000);
   assert.equal(d.continuation.processedCount,100);assert(!('RawXml'in d.records[0]));assert.equal(sources().length,2);
   fs.writeFileSync(path.join(path.dirname(inputPath),'initial-page.json'),JSON.stringify(d));
  });
  await check('cancel-held-response-and-resume-same-page-without-selection-growth',async()=>{
+  await openDisclosure(page, /^Search progress and query details/);
   await page.locator('.result-card input[type=checkbox]').first().uncheck();await until(async()=>(await toolbar.innerText()).includes('99 selected'),'intentional deselection');
   fs.writeFileSync(inputPath+'.metadata-hold','synthetic schedule');
   await panel.getByRole('button',{name:'Retrieve next metadata page',exact:true}).click();
@@ -65,10 +67,11 @@ try{
   await until(async()=>(await detail()).continuation.state==='cancelled','cancel persisted');
   fs.writeFileSync(inputPath+'.metadata-release','release synthetic response');
   await new Promise(r=>setTimeout(r,1000));let d=await detail();assert.equal(d.total,100);assert.equal(d.continuation.processedCount,100);
+  await openDisclosure(page, /^Search progress and query details/);
   await until(async()=>await panel.getByRole('button',{name:'Retrieve next metadata page',exact:true}).isEnabled(),'resume ready');
   await panel.getByRole('button',{name:'Retrieve next metadata page',exact:true}).click();
   await until(async()=>(await detail()).continuation.savedCount===200,'second100 saved');
-  await until(async()=>(await toolbar.innerText()).includes('99 selected of 200 retrieved'),'no implicit widening');
+  await until(async()=>(await toolbar.innerText()).includes('99 selected of 200 loaded'),'no implicit widening');
   d=await detail();assert.equal(d.run.total,25000);assert.equal(d.continuation.windowCount,1000);assert.equal(d.continuation.processedCount,200);
   const second=await(await page.request.get(`${target}/api/libraries/${library}/runs/${run}?limit=100&offset=100`)).json();assert.equal(second.records.length,100);
   assert.equal(new Set([...d.records,...second.records].map(a=>a.SearchId)).size,200);assert.equal(second.records[0].Pmid,'990000101');
@@ -79,6 +82,7 @@ try{
   const visible=await page.locator('.result-card').count();await toolbar.getByRole('button',{name:`Select all on this page (${visible})`,exact:true}).click();
   await until(async()=>(await toolbar.innerText()).includes(`${visible} selected of 200`),'explicit page replacement');
   const sourceBefore=sources().length;
+  await openDisclosure(page, "Export saved results and other actions");
   const downloadEvent=page.waitForEvent('download');await page.getByRole('button',{name:'Export CSV',exact:true}).click();const download=await downloadEvent;
   const file=path.join(path.dirname(inputPath),'continued-run.csv');await download.saveAs(file);const raw=fs.readFileSync(file);const text=raw.toString('utf8');assert(text.includes('Search ID'));assert(text.includes('990000001'));assert(text.includes('990000101'));
   const parsed=JSON.parse(execFileSync(process.platform==='win32'?'python':'python3',['-c',"import csv,json,sys; print(json.dumps(list(csv.DictReader(open(sys.argv[1],encoding='utf-8-sig',newline='')))))",file],{encoding:'utf8',windowsHide:true}));
@@ -90,14 +94,14 @@ try{
   const before=posts.filter(p=>/\/(search|continuation|plans|batches)$/.test(p.url)).length;const sourceBefore=sources().length;
   await page.setViewportSize({width:390,height:844});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   await page.reload();await page.getByLabel('Choose library',{exact:true}).selectOption(library);
-  await page.getByRole('list',{name:'Saved searches',exact:true}).getByRole('button').filter({hasText:'SYNTHETIC_CONTINUATION_25000'}).click();
-  await until(async()=>(await toolbar.innerText()).includes('200 retrieved'),'saved run reopen');
+  await showWorkspace(page, "Saved searches"); await page.getByRole('list',{name:'Saved searches',exact:true}).getByRole('button').filter({hasText:'SYNTHETIC_CONTINUATION_25000'}).click(); await page.getByLabel("Search PubMed", { exact: true }).waitFor({ state: "visible" });
+  await until(async()=>(await toolbar.innerText()).includes('200 loaded'),'saved run reopen');
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
   await page.getByRole('button',{name:'Sign out',exact:true}).click();await login(input.accounts[1]);
   assert.equal((await page.request.get(`${target}/api/libraries/${library}/runs/${run}`)).status(),404);assert(!(await page.locator('body').innerText()).includes(run));
   await page.getByRole('button',{name:'Sign out',exact:true}).click();await login();await page.getByLabel('Choose library',{exact:true}).selectOption(library);
-  await page.getByRole('list',{name:'Saved searches',exact:true}).getByRole('button').filter({hasText:'SYNTHETIC_CONTINUATION_25000'}).click();
-  await until(async()=>(await toolbar.innerText()).includes('200 retrieved'),'relogin reopen');
+  await showWorkspace(page, "Saved searches"); await page.getByRole('list',{name:'Saved searches',exact:true}).getByRole('button').filter({hasText:'SYNTHETIC_CONTINUATION_25000'}).click(); await page.getByLabel("Search PubMed", { exact: true }).waitFor({ state: "visible" });
+  await until(async()=>(await toolbar.innerText()).includes('200 loaded'),'relogin reopen');
   assert.equal(posts.filter(p=>/\/(search|continuation|plans|batches)$/.test(p.url)).length,before);assert.equal(sources().length,sourceBefore);
  });
  assert.deepEqual(errors,[]);console.log(JSON.stringify({scope:'SYNTHETIC provider transport; actual native PostgreSQL and compiled React; no genuine-source claim',revision:input.source_revision,checks,providerTotal:25000,window:1000,saved:200,sourceCalls:sources().length}));

@@ -1,4 +1,5 @@
 // Compiled browser qualification with labelled synthetic transport. No provider traffic.
+import { showWorkspace, openDisclosure } from "./workspace-navigation.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -48,7 +49,7 @@ try {
     return reply({error:"SYNTHETIC route unavailable"},404);
   });
   await page.goto(origin);await page.getByLabel("Login",{exact:true}).fill("SYNTHETIC");await page.getByLabel("Password",{exact:true}).fill("SYNTHETIC");await page.getByRole("button",{name:"Sign in",exact:true}).click();
-  await page.locator(".history-entry").click();await page.getByRole("button",{name:"Select all",exact:true}).waitFor();
+  await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").click();await page.getByRole("button",{name:"Select all",exact:true}).waitFor();
   await page.waitForFunction(()=>document.querySelector('.selection-toolbar')?.textContent.includes('8 selected of 8'));
   for(const label of labels.slice(0,5))assert((await page.locator(".results .source-outcome, .result-card .source-outcome").allTextContents()).some(s=>s.includes(label)));
   await page.locator('.result-card input').first().uncheck();await page.getByRole("button",{name:"Next records",exact:true}).click();
@@ -56,6 +57,7 @@ try {
   assert((await page.locator('.selection-toolbar').innerText()).includes('7 selected of 8'));
   for(const label of labels.slice(5))assert((await page.locator('.result-card').allTextContents()).some(s=>s.includes(label)));
   await page.getByRole("button",{name:"Deselect all",exact:true}).click();
+  await openDisclosure(page, "Export saved results and other actions");
   const downloadPromise=page.waitForEvent('download');
   await page.getByRole("button",{name:"Export saved run JSON",exact:true}).click();
   const download=await downloadPromise;const filename=path.join(out,'download.json');await download.saveAs(filename);
@@ -65,7 +67,7 @@ try {
   await page.locator('.batch-item .source-outcome').filter({hasText:labels[7]}).waitFor();
   for(const label of labels)assert((await page.locator('.batch-item .source-outcome').allTextContents()).some(s=>s.includes(label)));
   assert.equal(requests.filter(r=>r.method==='POST'&&/\/(searches|batches|plans|control)$/.test(r.path)).length,0);
-  await page.getByLabel("Saved plans",{exact:true}).selectOption(planID);
+  await showWorkspace(page, "Research plans"); await page.getByLabel("Saved plans",{exact:true}).selectOption(planID);
   await page.locator('.plan-item').first().waitFor();
   for(const label of labels)assert((await page.locator('.plan-item .source-outcome').allTextContents()).some(s=>s.includes(label)));
   await page.getByLabel("Choose library",{exact:true}).selectOption("L2");

@@ -1,4 +1,5 @@
 // SYNTHETIC loopback transport and files only; not native Go/PG/provider evidence.
+import { showWorkspace, openDisclosure } from "./workspace-navigation.mjs";
 import assert from "node:assert/strict";
 import { installBodyGates } from "./body-gates.mjs";
 import fs from "node:fs";
@@ -93,8 +94,8 @@ try {
   const button = name => page.getByRole("button", { name, exact: true });
   const names = { json: "Export plan metadata JSON", zip: "Download available originals ZIP" };
   const login = async who => { await page.getByLabel("Login", { exact: true }).fill(who); await page.getByLabel("Password", { exact: true }).fill("SYNTHETIC"); await button("Sign in").click(); await expect(page.getByLabel("Choose library", { exact: true })).toHaveValue(who === "B" ? "LB" : "L1"); };
-  const openRun = async id => { await page.locator(".history-entry").filter({ has: page.locator(".history-id", { hasText: new RegExp(`${id}$`) }) }).click(); await expect(button("Select all")).toBeEnabled(); };
-  const open = async id => { await page.getByLabel("Saved plans", { exact: true }).selectOption(id); await expect(page.getByRole("heading", { name: `Plan ${id}`, exact: true })).toBeVisible(); await expect(button(names.json)).toBeEnabled(); };
+  const openRun = async id => { await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").filter({ has: page.locator(".history-id", { hasText: new RegExp(`${id}$`) }) }).click(); await expect(button("Select all")).toBeEnabled(); };
+  const open = async id => { await showWorkspace(page, "Research plans"); await page.getByLabel("Saved plans", { exact: true }).selectOption(id); await expect(page.getByRole("heading", { name: `Plan ${id}`, exact: true })).toBeVisible(); await expect(button(names.json)).toBeEnabled(); };
   const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const hold = async (id, format, failure = "valid") => { mode = failure; await page.evaluate(id => { window.__nextHold = id; }, id); await button(names[format]).click(); await page.waitForFunction(id => !!window.__holds[id], id); mode = "valid"; await expect(page.getByRole("status").filter({ hasText: /Preparing (originals ZIP|metadata JSON)|bytes received/ })).toBeVisible(); };
   const release = async id => { await page.evaluate(id => window.__holds[id](), id); await settle(); };
@@ -125,6 +126,7 @@ try {
     await page.setViewportSize({ width, height: 1000 });
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
     for (const name of Object.values(names)) { const box = await button(name).boundingBox(); assert(box.width > 120 && box.height >= 36); }
+    await openDisclosure(page.locator(".plan-exports"), "Export scope, limits and alternatives");
     await expect(page.locator(".plan-exports")).toContainText("32 MiB"); await expect(page.locator(".plan-exports")).toContainText("37 MiB");
     await page.locator(".plan-workspace").screenshot({ path: path.join(out, `plan-exports-${width}.png`) });
   }

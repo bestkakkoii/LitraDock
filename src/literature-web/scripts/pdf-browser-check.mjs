@@ -1,4 +1,5 @@
 // Synthetic transport/bytes only. No native handler, real-source or product PDF qualification.
+import { showWorkspace } from "./workspace-navigation.mjs";
 import assert from "node:assert/strict";
 import { installBodyGates } from "./body-gates.mjs";
 import fs from "node:fs";
@@ -94,12 +95,12 @@ try {
     return reply({ error: "Synthetic route missing" }, 404);
   });
   const open = async n => {
-    await page.locator('.history-entry').filter({ has: page.locator('.history-id', { hasText: new RegExp(`R${n}$`) }) }).click();
+    await showWorkspace(page, "Saved searches"); await page.locator('.history-entry').filter({ has: page.locator('.history-id', { hasText: new RegExp(`R${n}$`) }) }).click();
     await page.getByRole("button", { name: "Select all", exact: true }).waitFor();
     await page.waitForFunction(() => ![...document.querySelectorAll('button')].find(b => b.textContent === "Select all").disabled);
   };
   await page.goto(origin); await page.getByLabel("Login", { exact: true }).fill("SYNTHETIC"); await page.getByLabel("Password", { exact: true }).fill("SYNTHETIC"); await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  for (const n of [0, 1, 10, 11, 100]) { await open(n); assert((await page.locator('.selection-toolbar').innerText()).includes(`${n} selected of ${n} retrieved`)); }
+  for (const n of [0, 1, 10, 11, 100]) { await open(n); assert((await page.locator('.selection-toolbar').innerText()).includes(`${n} selected of ${n} loaded`)); }
   assert.equal(posts.filter(p => /\/(batches|plans)$/.test(p.path)).length, 0);
   await open(10);
   await page.locator('.result-card input').first().uncheck();
@@ -174,7 +175,7 @@ try {
   await page.getByLabel("Choose library", { exact: true }).selectOption("L2"); await page.evaluate(() => window.__releaseBody());
   await open(1); assert.equal(downloads.length, countBefore);
   await page.evaluate(() => { window.__holdOriginal = false; });
-  await page.getByLabel("Saved batches", { exact: true }).selectOption("XML1");
+  await showWorkspace(page, "Downloads"); await page.getByLabel("Saved batches", { exact: true }).selectOption("XML1");
   const xmlEvent = page.waitForEvent("download"); await page.getByRole("button", { name: "Save XML", exact: true }).click(); const xmlDownload = await xmlEvent; assert.deepEqual(fs.readFileSync(await xmlDownload.path()), xml); assert.equal(xmlDownload.suggestedFilename(), "S0.xml");
   // The earlier GET still reports two ready. Final current validation can lose
   // them both: neither the batch nor the plan primary action may hand off a ZIP.
@@ -195,7 +196,7 @@ try {
   pdfEnabled = false; await page.reload(); await open(1); assert(await page.getByRole("button", { name: "Download PDFs (1 selected)", exact: true }).isDisabled());
   await page.getByRole("button", { name: "Sign out", exact: true }).click(); await page.getByLabel("Login", { exact: true }).waitFor(); assert.equal(await page.locator('.batch-item,.plan-item').count(), 0);
   await page.getByLabel("Login", { exact: true }).fill("SYNTHETIC-B"); await page.getByLabel("Password", { exact: true }).fill("SYNTHETIC-B"); await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await open(1); assert((await page.locator('.selection-toolbar').innerText()).includes("1 selected of 1 retrieved"));
+  await open(1); assert((await page.locator('.selection-toolbar').innerText()).includes("1 selected of 1 loaded"));
   assert.deepEqual(errors, []); assert.deepEqual(hashes(), before);
   result.checks = ["0/1/10/11/100 default-all complete saved set, no provider selection or auto acquisition", "Manual subset and Deselect all persist across pagination", "One batch or plan format-bound POST, lost-response exact replay", "Primary click hands off mixed PDF/held ZIP and complete 11-member plan ZIP with final result/hash binding", "Ready-to-unavailable final package controls for batch10 and plan11 update all counts/reasons/links without any handoff", "Slow admission and complete single original download feedback stay in action viewport at1280/390 without manual scrolling; explicit Save again", "Held old-library PDF body produces no download; XML remains XML", "Policy disabled; readable desktop/narrow selection; logout clears data"];
   result.pass = true;

@@ -1,3 +1,4 @@
+import { showWorkspace, openDisclosure } from "../../src/literature-web/scripts/workspace-navigation.mjs";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -121,6 +122,7 @@ try {
   });
   await check("login-and-library-creation", async () => {
     await login();
+    await showWorkspace(page, "Libraries");
     const newLibrary = page.getByLabel("New library name", { exact: true });
     await newLibrary.fill(`native-browser-${Date.now()}`);
     await page.getByRole("button", { name: "Create", exact: true }).click();
@@ -128,17 +130,20 @@ try {
     libraryId=await page.getByLabel('Choose library',{exact:true}).inputValue();
   });
   await check('loading-and-source-error',async()=>{
-    await page.getByLabel('Query',{exact:true}).fill('SYNTHETIC_ERROR');
+    await showWorkspace(page, "Search & PDFs"); await page.getByLabel('Search PubMed',{exact:true}).fill('SYNTHETIC_ERROR');
     await page.getByRole('button',{name:'Search PubMed',exact:true}).click();
     await page.getByRole('button',{name:'Working…',exact:true}).waitFor();
     await until(async()=>(await page.locator('body').innerText()).includes('NCBI denied access'),'truthful provider denial absent');
-    assert.equal(await page.getByLabel('Query',{exact:true}).inputValue(),'SYNTHETIC_ERROR','query label must remain stable with populated text');
+    assert.equal(await page.getByLabel('Search PubMed',{exact:true}).inputValue(),'SYNTHETIC_ERROR','query label must remain stable with populated text');
   });
   await check("search-partial-count-and-reopen", async () => {
-    await page.getByLabel("Query", { exact: true }).fill('"synthetic α" AND PMID:123');
+    await page.getByLabel("Search PubMed", { exact: true }).fill('"synthetic α" AND PMID:123');
     await page.getByRole("button", { name: "Search PubMed", exact: true }).click();
-    await until(async()=>(await page.locator('body').innerText()).includes('retrieved 3 of 25000'),'truthful partial totals absent');
+    await until(async()=>{const text=await page.locator('.compact-result-head').innerText();return text.includes('3 loaded')&&text.includes('25,000 matches');},'truthful partial totals absent');
+    await openDisclosure(page, /^Search progress and query details/);
+    await showWorkspace(page, "Saved searches");
     await page.locator(".history-entry").first().waitFor();
+    await showWorkspace(page, "Search & PDFs");
     capturedRunId = (await page.locator(".query-snapshot .small").innerText()).replace("Search Run ID: ", "");
     assert(capturedRunId, "saved run id must be captured for reopen");
   });
@@ -146,6 +151,7 @@ try {
     const records = page.locator('input[type="checkbox"][aria-label^="Select "]');
     assert.equal(await records.count(), 3, "synthetic native transport must expose exactly three records");
     for (const record of await records.all()) await record.check();
+    await openDisclosure(page, "Export saved results and other actions");
     await page.getByRole("button", { name: /Create batch \(3\/10\)/ }).click();
     await page.getByRole('heading',{name:/^Batch BAT-/}).waitFor();
     capturedBatchId = await page.getByRole("heading", { name: /Batch / }).textContent();
@@ -188,7 +194,7 @@ try {
   });
   await check('structured-four-device-files-whole-scope-and-no-acquisition', async () => {
     const priorSearch = searchPosts, priorBatch = batchPosts;
-    await page.getByRole('button', {name:'Deselect all', exact:true}).click();
+    await showWorkspace(page, "Search & PDFs"); await page.getByRole('button', {name:'Deselect all', exact:true}).click();
     const runResponse = await page.request.get(`${target}/api/libraries/${libraryId}/runs/${capturedRunId}?limit=100`);
     assert.equal(runResponse.status(),200); const saved = await runResponse.json();
     assert.equal(saved.records.length,saved.total);savedRunMembers.set(capturedRunId,new Set(saved.records.map(x=>x.SearchId)));
@@ -198,11 +204,13 @@ try {
     const results={};
     try {
       for (const scope of ['run','batch']) for (const format of ['json','jsonl']) {
+        await showWorkspace(page, scope === 'run' ? 'Search & PDFs' : 'Downloads');
+        if (scope === 'run') await openDisclosure(page, "Export saved results and other actions");
         const label=scope==='run'?`Export saved run ${format.toUpperCase()}`:`Export batch ${format.toUpperCase()}`;
         const waiting=page.waitForEvent('download'); await page.getByRole('button',{name:label,exact:true}).click();
         const file=await waiting; assert.equal(file.suggestedFilename(),`litradock-research.${format}`);
         const destination=path.join(directory,`${scope}.${format}`);await file.saveAs(destination);
-        const parsed=JSON.parse(execFileSync(process.env.NATIVE_STRUCTURED_PYTHON||'python3',[fileURLToPath(new URL('./verify-structured.py',import.meta.url)),destination],{encoding:'utf8'}));
+        const parsed=JSON.parse(execFileSync(process.env.NATIVE_STRUCTURED_PYTHON||'python3',[fileURLToPath(new URL('./verify-structured.py',import.meta.url)),destination],{encoding:'utf8',windowsHide:true}));
         assert.deepEqual(parsed.records,[3]);
         const text=fs.readFileSync(destination,'utf8');let d;
         if(format==='json')d=JSON.parse(text);else{const lines=text.trimEnd().split('\n').map(x=>JSON.parse(x));d=lines[0];d.records=lines.slice(1).map(x=>x.record);}
@@ -245,11 +253,12 @@ try {
   });
   await check('xlsx-independent-reader-batch-bytes-and-provenance', async()=>{ await verifyXlsx('Export batch XLSX', capturedBatchId); });
   await check('saved-record-pages-cap-and-large-synthetic-counts', async()=>{
-    await page.getByLabel('Retrieved limit',{exact:true}).selectOption('25');
+    await showWorkspace(page, "Search & PDFs"); await openDisclosure(page, "Search options"); await page.getByLabel('Retrieved limit',{exact:true}).selectOption('25');
     for(const total of [1000,10000,25001]) {
-      await page.getByLabel('Query',{exact:true}).fill('SYNTHETIC_PAGES_'+total);
+      await page.getByLabel('Search PubMed',{exact:true}).fill('SYNTHETIC_PAGES_'+total);
       await page.getByRole('button',{name:'Search PubMed',exact:true}).click();
-      await until(async()=>(await page.locator('body').innerText()).includes(`retrieved 12 of ${total}`),'synthetic saved/provider count distinction');
+      await until(async()=>{const text=await page.locator('.compact-result-head').innerText();return text.includes('12 loaded')&&text.includes(`${total.toLocaleString()} matches`);},'synthetic saved/provider count distinction');
+      await openDisclosure(page, /^Search progress and query details/);
       assert.equal(await page.locator('input[type="checkbox"][aria-label^="Select "]').count(),12);
       const runID = (await page.locator('.query-snapshot .small').innerText()).replace('Search Run ID: ', '');
       const response = await page.request.get(`${target}/api/libraries/${libraryId}/runs/${runID}?limit=100`);
@@ -267,25 +276,26 @@ try {
     await page.getByRole('button',{name:'Deselect all',exact:true}).click();
     for(const box of await boxes.all()) await box.check();
     await page.getByRole('button',{name:'Next records',exact:true}).click();
-    await until(async()=>(await page.locator('body').innerText()).includes('showing 6–10'),'second saved page');
+    await until(async()=>(await page.locator('body').innerText()).includes('6–10 shown'),'second saved page');
     for(const box of await boxes.all()) await box.check();
     await page.getByRole('button',{name:'Next records',exact:true}).click();
     await until(async()=>await boxes.count()===2,'third saved page');
     await boxes.first().check();
     assert.equal(await boxes.first().isChecked(),true);
+    await openDisclosure(page, "Export saved results and other actions");
     assert(await page.getByRole('button',{name:'Create batch (11/10)',exact:true}).isDisabled());
     await boxes.first().uncheck();
     assert(await page.getByRole('button',{name:'Create batch (10/10)',exact:true}).isEnabled());
     const csrf=(await (await page.request.get(target+'/api/session')).json()).csrf;
     assert.equal((await page.request.post(`${target}/api/libraries/${libraryId}/batches`,{headers:{'X-CSRF':csrf,'Origin':target},data:{requestID:crypto.randomUUID(),searchIDs:pages.slice(0,11)}})).status(),409);
     await page.getByRole('button',{name:'Previous records',exact:true}).click();
-    await until(async()=>(await page.locator('body').innerText()).includes('showing 6–10'),'previous advances by selected page size');
+    await until(async()=>(await page.locator('body').innerText()).includes('6–10 shown'),'previous advances by selected page size');
     assert.equal(await page.locator('input[type="checkbox"][aria-label^="Select "]:checked').count(),5);
     await page.getByRole('button',{name:'Deselect all',exact:true}).click();
     assert(await page.getByRole('button',{name:'Create batch (0/10)',exact:true}).isDisabled());
     await boxes.first().check();
     await page.getByRole('button',{name:'Previous records',exact:true}).click();
-    await until(async()=>(await page.locator('body').innerText()).includes('showing 1–5'),'first saved page');
+    await until(async()=>(await page.locator('body').innerText()).includes('1–5 shown'),'first saved page');
     await boxes.first().check();
     const selectedIds=[pages[5],pages[0]];
     const post=page.waitForRequest(r=>r.method()==='POST'&&r.url().endsWith('/batches'));
@@ -303,8 +313,9 @@ try {
       return value.items.length===2&&value.items.every(item=>item.state==='unavailable'&&item.reason.includes('clarification'));
     },'both held items stable before separate workbook oracle snapshot');
     await verifyXlsx('Export batch XLSX',heldId);
-    await page.locator(".history-entry").filter({hasText: capturedRunId}).click();
+    await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").filter({hasText: capturedRunId}).click(); await page.getByLabel("Search PubMed", { exact: true }).waitFor({ state: "visible" });
     await until(async()=>await boxes.count()===3,'original saved run reopen');
+    await openDisclosure(page, "Export saved results and other actions");
     await until(async()=>await page.getByRole('button',{name:'Create batch (3/10)',exact:true}).isEnabled(),'new run defaults to all3 saved records');
   });
   await check('delayed-xlsx-saved-run-switch-fence',async()=>{
@@ -314,21 +325,21 @@ try {
     await page.route('**/exports',handler);
     await page.getByRole('button',{name:'Export XLSX',exact:true}).click();await ready;
     const options=await page.locator('.history-id').evaluateAll(xs=>xs.map(x=>x.textContent.replace('Search Run ID: ','')));
-    await page.locator(".history-entry").filter({hasText: options.find(x=>x!==capturedRunId)}).click();
+    await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").filter({hasText: options.find(x=>x!==capturedRunId)}).click(); await page.getByLabel("Search PubMed", { exact: true }).waitFor({ state: "visible" });
     release();await page.waitForTimeout(350);assert.equal(downloads,0,'late XLSX must not save after saved-run change');
     await page.unroute('**/exports',handler);page.off('download',observe);
-    await page.locator(".history-entry").filter({hasText: capturedRunId}).click();
-    await page.getByLabel('Saved batches',{exact:true}).selectOption(capturedBatchId);
+    await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").filter({hasText: capturedRunId}).click(); await page.getByLabel("Search PubMed", { exact: true }).waitFor({ state: "visible" });
+    await showWorkspace(page, "Downloads"); await page.getByLabel('Saved batches',{exact:true}).selectOption(capturedBatchId);
     await until(async()=>await page.getByRole('button',{name:'Save XML',exact:true}).count()===2,'saved batch reopened after schedule');
   });
   await check('library-selection-and-export-ownership',async()=>{
-    const boxes=page.locator('input[type="checkbox"][aria-label^="Select "]');await boxes.first().check();
-    await page.getByLabel('New library name',{exact:true}).fill('SYNTHETIC second isolated library');
+    await showWorkspace(page, "Search & PDFs"); const boxes=page.locator('input[type="checkbox"][aria-label^="Select "]');await boxes.first().check();
+    await showWorkspace(page, "Libraries"); await page.getByLabel('New library name',{exact:true}).fill('SYNTHETIC second isolated library');
     await page.getByRole('button',{name:'Create',exact:true}).click();
     const choose=page.getByLabel('Choose library',{exact:true});
     await until(async()=>await choose.locator('option').count()===3,'second library not refreshed');
     const other=(await choose.locator('option').evaluateAll(xs=>xs.map(x=>x.value))).find(x=>x&&x!==libraryId);
-    await choose.selectOption(other);assert.equal(await boxes.count(),0);assert(await page.getByRole('button',{name:'Create batch (0/10)',exact:true}).isDisabled());
+    await choose.selectOption(other);await showWorkspace(page, "Search & PDFs"); await openDisclosure(page, "Export saved results and other actions"); assert.equal(await boxes.count(),0);assert(await page.getByRole('button',{name:'Create batch (0/10)',exact:true}).isDisabled());
     const denied=await page.evaluate(async ({other,batch,owned})=>{
       // Catalog reads can briefly fill the two-request admission budget after a
       // library switch. Retry only the explicit not-admitted GET response; an
@@ -349,8 +360,8 @@ try {
     },{other,batch:capturedBatchId,owned:libraryId});
     assert.equal(denied.status,409,JSON.stringify(denied));assert(!denied.attachment);
     await choose.selectOption(libraryId);
-    await page.locator(".history-entry").filter({hasText: capturedRunId}).click();
-    await page.getByLabel('Saved batches',{exact:true}).selectOption(capturedBatchId);
+    await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").filter({hasText: capturedRunId}).click(); await page.getByLabel("Search PubMed", { exact: true }).waitFor({ state: "visible" });
+    await showWorkspace(page, "Downloads"); await page.getByLabel('Saved batches',{exact:true}).selectOption(capturedBatchId);
     await until(async()=>await page.getByRole('button',{name:'Save XML',exact:true}).count()===2,'original library batch reopened');
   });
   await check("logout-relogin-and-narrow-layout", async () => {
@@ -362,14 +373,14 @@ try {
     assert.equal(await page.getByText(/Batch /).count(), 0, "private batch must clear on logout");
     await login(account);
     await page.getByLabel('Choose library',{exact:true}).selectOption(libraryId);
-    await page.locator(".history-entry").filter({hasText: capturedRunId}).click();
-    await page.getByLabel("Saved batches", { exact: true }).selectOption(capturedBatchId);
+    await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").filter({hasText: capturedRunId}).click(); await page.getByLabel("Search PubMed", { exact: true }).waitFor({ state: "visible" });
+    await showWorkspace(page, "Downloads"); await page.getByLabel("Saved batches", { exact: true }).selectOption(capturedBatchId);
     await until(async()=>await page.getByRole('button',{name:'Save XML',exact:true}).count()===2,'relogin batch not reopened');
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.getByLabel("Choose library", { exact: true }).waitFor();
     await page.getByLabel('Choose library',{exact:true}).selectOption(libraryId);
-    await page.locator(".history-entry").filter({hasText: capturedRunId}).click();
-    await page.getByLabel("Saved batches", { exact: true }).selectOption(capturedBatchId);
+    await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").filter({hasText: capturedRunId}).click(); await page.getByLabel("Search PubMed", { exact: true }).waitFor({ state: "visible" });
+    await showWorkspace(page, "Downloads"); await page.getByLabel("Saved batches", { exact: true }).selectOption(capturedBatchId);
     await until(async()=>await page.getByRole('button',{name:'Save XML',exact:true}).count()===2,'reload batch not reopened');
     assert.deepEqual([searchPosts,batchPosts],prior,'reopen must not submit acquisition/search');
     assert(await page.getByText(new RegExp(capturedBatchId)).count() > 0, "saved batch must reopen after reload");

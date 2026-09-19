@@ -27,7 +27,11 @@ import { PdfAvailability } from "./components/PdfAvailability";
 import { Continuation } from "./continuation/api";
 import { SearchController, emptySearchState } from "./continuation/controller";
 import { ContinuationPanel } from "./continuation/ContinuationPanel";
+import { FilterChips, SearchFilters } from "./components/SearchFilters";
+import { composeSearch, emptyFilters, filterCount, restoreSearch } from "./searchFilters";
+import { readWorkspaceRoute, writeWorkspaceRoute, WorkspaceView } from "./workspaceNavigation";
 import "./styles.css";
+import "./workspace.css";
 
 function safeRightsLink(value: unknown): string | null {
   if (typeof value !== "string" || !value) return null;
@@ -48,7 +52,7 @@ function stateLabel(run: Run | null) {
     return `Search error${run.reason ? ` · ${run.reason}` : ""}`;
   return `${run.state} · retrieved ${run.fetched} of ${run.total}${run.reason ? ` · ${run.reason}` : ""}`;
 }
-function App() {
+export function App() {
   const [signedIn, setSignedIn] = useState(false),
     [login, setLogin] = useState(""),
     [password, setPassword] = useState(""),
@@ -76,6 +80,21 @@ function App() {
     [busy, setBusy] = useState(false),
     [message, setMessage] = useState(""),
     [error, setError] = useState("");
+  const [view, setView] = useState<WorkspaceView>("search");
+  const [filters, setFilters] = useState(emptyFilters);
+  const [pdfNotice, setPdfNotice] = useState({ library: "", runID: "", message: "" });
+  const navigationTarget = useRef(readWorkspaceRoute());
+  const showView = (next: WorkspaceView) => {
+    setView(next);
+    writeWorkspaceRoute({ library, run: run?.run_id ?? "", view: next });
+  };
+  const restoreQuery = (input: string) => {
+    const restored = restoreSearch(input);
+    setQuery(restored.query); setFilters(restored.filters);
+  };
+  let effectiveQuery = query, filterError = "";
+  try { effectiveQuery = composeSearch(query, filters); }
+  catch (failure) { filterError = (failure as Error).message; }
   const runGeneration = useRef(0);
   const recordPageScope = useRef(new AbortController());
   const retireRecordPage = () => {
@@ -115,6 +134,13 @@ function App() {
   };
   const [continuation, setContinuation] = useState<Continuation | null>(null);
   const [searchState, setSearchState] = useState(emptySearchState);
+  const searchBlocked = busy || searchState.busy || !!searchState.pending || !!searchState.confirmed;
+  const draftChanged = !!run && (!!filterError || effectiveQuery.trim() !== snapshot);
+  const activeSearchError = searchState.error || (run?.state === "error" ? stateLabel(run) : "");
+  const activeSearchMessage = activeSearchError || searchState.notice || (searchState.pending
+    ? "Search confirmation is pending. Return to search progress before retrying."
+    : searchState.busy || searchState.confirmed || (run && ["queued", "running"].includes(run.state))
+      ? "Search in progress. Results are not ready yet." : "");
   const applySearchPage = useRef<(page: RunPage) => void>(() => {});
   const searchController = useMemo(() => new SearchController(library, sessionGeneration(), setSearchState,
     page => applySearchPage.current(page), libraryPlanScope.current.signal,
@@ -127,6 +153,12 @@ function App() {
     retireRecordPage();
     runGeneration.current++;
     if (page.run.run_id !== run?.run_id) { retirePlanScope(); retireChildView(); }
+    if (page.run.run_id !== run?.run_id) {
+      // A response belongs to the submitted snapshot; a later draft remains
+      // editable and visibly unapplied until the researcher submits it.
+      if (!filterError && effectiveQuery === snapshot) restoreQuery(page.run.input);
+      writeWorkspaceRoute({ library, run: page.run.run_id, view });
+    }
     setRun(page.run); setContinuation(page.continuation ?? null); setRecords(page.records);
     setSnapshot(page.run.input); setPageTotal(page.total); setRecordOffset(page.offset); setPageSize(page.limit);
     setMessage(stateLabel(page.run)); setBusy(false);
@@ -154,7 +186,10 @@ function App() {
     const data = await api.libraries();
     if (expected !== sessionGeneration()) return;
     setLibraries(data.items);
-    if (!library && data.items[0]) setLibrary(data.items[0].library_id);
+    if (!library && data.items[0]) {
+      const preferred = navigationTarget.current?.library;
+      setLibrary(data.items.find(item => item.library_id === preferred)?.library_id ?? data.items[0].library_id);
+    }
   };
   const refreshHistory = async (id = library, offset = historyOffset) => {
     if (!id) return;
@@ -182,6 +217,8 @@ function App() {
       setLibraries([]);
       setLibrary("");
       setQuery("");
+      setFilters(emptyFilters()); setView("search");
+      navigationTarget.current = null; writeWorkspaceRoute(null, true);
       setSnapshot("");
       setRecords([]);
       selection.deselectAll();
@@ -269,7 +306,7 @@ function App() {
     setBatchBusy(true); setError('');
     try {
       const detail = await api.batch(expectedLibrary, id, expected, signal);
-      if (isCurrentBatchOperation(operation, expectedLibrary, expected)) setBatch(detail);
+      if (isCurrentBatchOperation(operation, expectedLibrary, expected)) { setBatch(detail); setView("downloads"); }
     } catch (e) {
       if (isCurrentBatchOperation(operation, expectedLibrary, expected)) {
         setError((e as Error).message);
@@ -311,6 +348,8 @@ function App() {
       setLibraries([]);
       setLibrary("");
       setQuery("");
+      setFilters(emptyFilters()); setView("search");
+      navigationTarget.current = null; writeWorkspaceRoute(null, true);
       setSnapshot("");
       setRecords([]);
       setHistory([]);
@@ -344,11 +383,17 @@ function App() {
       setError("Choose or create a library first.");
       return;
     }
-    if (searchState.pending || searchState.confirmed || searchState.busy) return;
+    if (busy || serviceInfo?.searchEnabled !== true || searchState.pending || searchState.confirmed || searchState.busy) return;
+    if (filterError) { setError(filterError); return; }
+    const submitted = effectiveQuery;
+    setView("search"); setError(""); setMessage("");
+    writeWorkspaceRoute({ library, run: "", view: "search" });
     if (serviceInfo?.searchContinuationEnabled === true) {
-      retireRecordPage();
+      retirePlanScope(); retireChildView();
       runGeneration.current++;
-      await searchController.search(query, limit);
+      selection.deselectAll(); setRun(null); setRecords([]); setPageTotal(0); setContinuation(null);
+      setSnapshot(submitted); setRecordOffset(0);
+      await searchController.search(submitted, limit);
       return;
     }
     searchController.navigate(); setContinuation(null);
@@ -365,9 +410,9 @@ function App() {
     setPageTotal(0);
     selection.deselectAll();
     setRecordOffset(0);
-    setSnapshot(query);
+    setSnapshot(submitted);
     try {
-      const queued = await api.search(searchLibrary, query, limit, expectedSession, searchSignal);
+      const queued = await api.search(searchLibrary, submitted, limit, expectedSession, searchSignal);
       if (
         g !== runGeneration.current ||
         expectedSession !== sessionGeneration()
@@ -384,6 +429,7 @@ function App() {
         )
           return;
         setRun(page.run);
+        writeWorkspaceRoute({ library: searchLibrary, run: page.run.run_id, view: "search" }, true);
         if (page.run.state === "queued" || page.run.state === "running")
           continue;
         if (page.run.state !== "complete" && page.run.state !== "partial") {
@@ -410,7 +456,7 @@ function App() {
         setBusy(false);
     }
   };
-  const openSaved = async (id: string, offset = 0, size = pageSize) => {
+  const openSaved = async (id: string, offset = 0, size = pageSize, remember = true, nextView: WorkspaceView = "search") => {
     if (!id || !library) return;
     retireRecordPage();
     searchController.navigate();
@@ -437,12 +483,12 @@ function App() {
       setRun(page.run);
       setContinuation(page.continuation ?? null);
       setSnapshot(page.run.input);
+      restoreQuery(page.run.input); setView(nextView);
+      if (remember) writeWorkspaceRoute({ library: savedLibrary, run: id, view: nextView });
       setRecords(page.records);
       setPageTotal(page.total);
       setRecordOffset(offset);
-      setMessage(
-        `${stateLabel(page.run)} · showing ${page.total ? offset + 1 : 0}–${offset + page.records.length} of ${page.total}`,
-      );
+      setMessage(stateLabel(page.run));
     } catch (x) {
       if (g === runGeneration.current) setError((x as Error).message);
     } finally {
@@ -454,7 +500,7 @@ function App() {
     }
   };
   const createBatch = async () => {
-    if (!library || !selection.ready || selected.size < 1 || selected.size > 10) return;
+    if (!library || !selection.ready || draftChanged || busy || selected.size < 1 || selected.size > 10) return;
     const ids = selectedSearchIds(selected);
     if (ids.length !== selected.size) {
       setError("Selected records do not contain stable search IDs.");
@@ -483,6 +529,7 @@ function App() {
       setBatchTotal(total => total + 1);
       setSavedBatches(items => [{ batch_id: detail.batch.batch_id, state: detail.batch.state }, ...items.filter(x => x.batch_id !== detail.batch.batch_id)]);
       setMessage(`Batch created with ${detail.total} selected records.`);
+      setView("downloads");
     } catch (x) {
       if (isCurrentBatchOperation(operation, expectedLibrary, expected))
         setError((x as Error).message);
@@ -491,6 +538,47 @@ function App() {
         setBatchBusy(false);
     }
   };
+  const changeLibrary = (id: string, remember = true) => {
+    if (id === library) return;
+    retireLibraryPlans(); retirePlanScope();
+    runGeneration.current++; historyRequest.current++; batchOperation.current++; batchHistoryRequest.current++;
+    setHistory([]); setHistoryTotal(0); setHistoryOffset(0);
+    setLibrary(id); setRecords([]); setRun(null); setPageTotal(0); setRecordOffset(0);
+    selection.deselectAll(); setSnapshot(""); setQuery(""); setFilters(emptyFilters()); setView("search");
+    setBatch(null); setSavedBatches([]); setBatchOffset(0); setBatchTotal(0);
+    setBusy(false); setBatchBusy(false); setError(""); setMessage("");
+    if (remember) { navigationTarget.current = null; writeWorkspaceRoute({ library: id, run: "", view: "search" }); }
+  };
+  // Reopening reads the server's complete effective query. A browser entry is
+  // only a requested location, fenced by the current account's library list.
+  useEffect(() => {
+    if (!signedIn || !library || !libraries.length) return;
+    const restore = () => {
+      const target = navigationTarget.current;
+      if (!target) return;
+      if (!libraries.some(item => item.library_id === target.library)) {
+        navigationTarget.current = null; writeWorkspaceRoute(null, true); return;
+      }
+      if (target.library !== library) { changeLibrary(target.library, false); return; }
+      navigationTarget.current = null;
+      if (target.run && target.run !== run?.run_id) void openSaved(target.run, 0, pageSize, false, target.view);
+      else {
+        if (!target.run && run) {
+          searchController.navigate(); retirePlanScope(); retireChildView(); runGeneration.current++;
+          selection.deselectAll(); setRun(null); setRecords([]); setPageTotal(0); setRecordOffset(0);
+          setSnapshot(""); setQuery(""); setFilters(emptyFilters()); setContinuation(null); setBusy(false);
+        } else if (run) restoreQuery(snapshot);
+        setView(target.view);
+      }
+    };
+    restore();
+    const back = () => {
+      navigationTarget.current = readWorkspaceRoute();
+      if (navigationTarget.current) restore();
+    };
+    window.addEventListener("popstate", back);
+    return () => window.removeEventListener("popstate", back);
+  }, [signedIn, library, libraries, run?.run_id, snapshot, pageSize]);
   const controlBatch = async (
     value: "pause" | "resume" | "cancel" | "retry",
   ) => {
@@ -693,42 +781,14 @@ function App() {
       </main>
     );
   return (
-    <main className="shell">
+    <main className="shell research-workspace">
       <header className="topbar">
-        <div>
-          <p className="eyebrow">LITRADock · LITERATURE WORKSPACE</p>
-          <h1>Research library</h1>
-        </div>
-        <button className="secondary" onClick={signOut} disabled={busy}>
-          Sign out
-        </button>
-      </header>
-      <section className="grid">
-        <aside>
-          <section className="panel">
-            <h2>Library</h2>
+        <div className="brand"><h1>LitraDock</h1><span className="muted small">Research with PubMed</span></div>
+        <div className="account-controls">
+          <label className="sr-only">Library</label>
             <select
               value={library}
-              onChange={(e) => {
-                if (e.target.value === library) return;
-                retireLibraryPlans();
-                retirePlanScope();
-                runGeneration.current += 1;
-                historyRequest.current += 1;
-                setHistory([]); setHistoryTotal(0); setHistoryOffset(0);
-                batchOperation.current += 1;
-                setLibrary(e.target.value);
-                setRecords([]);
-                setRun(null);
-                setPageTotal(0);
-                selection.deselectAll();
-                setSnapshot("");
-                setBatch(null);
-                setSavedBatches([]); setBatchOffset(0); setBatchTotal(0);
-                batchHistoryRequest.current += 1;
-                setBusy(false);
-                setBatchBusy(false);
-              }}
+              onChange={e => changeLibrary(e.target.value)}
               aria-label="Choose library"
             >
               <option value="">Choose a library</option>
@@ -738,141 +798,89 @@ function App() {
                 </option>
               ))}
             </select>
-            <form onSubmit={submitLibrary} className="inline">
-              <label>
-                New library name
-                <input
-                  value={newLibrary}
-                  onChange={(e) => setNewLibrary(e.target.value)}
-                  placeholder="New library name"
-                  maxLength={120}
-                  required
-                />
-              </label>
-              <button disabled={busy}>Create</button>
-            </form>
-          </section>
-          <section className="panel">
-            <h2>Saved batches</h2>
-            <p className="muted small">{batchTotal} saved batches · {savedBatches.length ? batchOffset + 1 : 0}–{batchOffset + savedBatches.length}</p>
-            <select aria-label="Saved batches" value={batch?.batch.batch_id ?? ''}
-              onChange={e => openBatch(e.target.value)}>
-              <option value="">Choose a saved batch</option>
-              {savedBatches.map(x => <option key={x.batch_id} value={x.batch_id}>{x.batch_id} · {x.state}</option>)}
-            </select>
-            <div className="pager">
-              <button className="secondary" disabled={!library || batchOffset === 0} onClick={() => refreshBatches(Math.max(0, batchOffset - 100))}>Previous batches</button>
-              <button className="secondary" disabled={!library || batchOffset + 100 >= batchTotal} onClick={() => refreshBatches(batchOffset + 100)}>Next batches</button>
+
+          <button className="secondary" onClick={signOut} disabled={busy}>Sign out</button>
+        </div>
+      </header>
+      <nav className="workspace-nav" aria-label="Workspace">
+        {([['search', 'Search & PDFs'], ['history', 'Saved searches'], ['downloads', 'Downloads'], ['plans', 'Research plans'], ['library', 'Libraries']] as const).map(([key, label]) =>
+          <button key={key} className={view === key ? 'active' : 'secondary'} aria-current={view === key ? 'page' : undefined} onClick={() => showView(key)}>{label}</button>)}
+      </nav>
+      {view !== "search" && pdfNotice.message && pdfNotice.library === library && pdfNotice.runID === run?.run_id &&
+        <div className="pdf-view-notice" role="status"><p>{pdfNotice.message}</p><button className="secondary" onClick={() => showView("search")}>Return to PDF progress</button></div>}
+      {view !== "search" && activeSearchMessage &&
+        <div className="search-view-notice" role={activeSearchError ? "alert" : "status"}>
+          <p>{activeSearchMessage}</p>
+          <button className="secondary" onClick={() => showView("search")}>Return to search progress</button>
+        </div>}
+      {(error || (message && message !== stateLabel(run))) && <p className={error ? "error status" : "status"} role={error ? "alert" : "status"}>{error || message}</p>}
+      {batchBusy && exportProgress?.operation === batchOperation.current && <div className="transfer-notice">
+        <p role="status">{exportProgress.label}</p>
+        <button className="secondary" onClick={() => { beginBatchRequest(); batchOperation.current++; setBatchBusy(false); setExportProgress(null); setMessage("Transfer cancelled. No file was saved."); }}>Cancel download</button>
+      </div>}
+      <div hidden={view !== "search"}>
+        <section className="panel search-panel" aria-label="PubMed search">
+          <form id="pubmed-search" onSubmit={submitSearch}>
+            <div className="query"><label htmlFor="pubmed-query">Search PubMed</label>
+              <textarea id="pubmed-query" value={query} onChange={e => setQuery(e.target.value)}
+                maxLength={2000} rows={1} required placeholder="Topic, title, author or PubMed query"
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }} />
             </div>
-            <button className="secondary" disabled={!library} onClick={() => refreshBatches(batchOffset)}>Refresh saved batches</button>
-          </section>
-        </aside>
-        <section>
-          <section className="panel search-panel">
-            <div>
-              <h2>PubMed search</h2>
-              <p className="muted">
-                Use explicit PubMed syntax, for example{" "}
-                <code>"heart failure"[Title] AND 2020:2024[dp]</code>.
-              </p>
+            <button disabled={searchBlocked || !library || serviceInfo?.searchEnabled !== true}>{searchBlocked ? "Working…" : <>Search<span className="sr-only"> PubMed</span></>}</button>
+          </form>
+          <details className="search-options"><summary>Search options</summary>
+            <p>Boolean and fielded queries are supported, for example <code>"heart failure"[Title] AND 2020:2024[dp]</code>. Shift+Enter adds a line.</p>
+            <label>Records to retrieve per request <select aria-label="Retrieved limit" value={limit} onChange={e => setLimit(Number(e.target.value))}>
+              {[5, 10, 25, 50, 100].map(n => <option key={n}>{n}</option>)}
+            </select></label>
+          </details>
+        </section>
+        <div className="research-grid">
+          <SearchFilters filters={filters} onChange={setFilters} disabled={searchBlocked} appliedRun={run?.run_id} canSearch={!!library && !!query.trim() && serviceInfo?.searchEnabled === true} />
+          <section className="active-results" aria-label="Active results">
+            {!!filterCount(filters) && <p className="filter-state">{run && !draftChanged ? 'Filters applied' : 'Filters for next search'}</p>}
+            <FilterChips filters={filters} onChange={setFilters} disabled={searchBlocked} />
+            {draftChanged && <div className="draft-notice" role="status">Search changes are not applied. Results and selection still belong to the saved search.
+              <button className="secondary" onClick={() => restoreQuery(snapshot)}>Restore active search</button>
+            </div>}
+            {serviceInfo?.searchEnabled === false && <p className="muted">New searches are temporarily disabled. Saved results remain available.</p>}
+            <div className="result-head compact-result-head">
+              <div><h2 id="results-heading" tabIndex={-1}>Results <span className="count">{run?.total.toLocaleString() ?? 0} matches</span></h2>
+                <p className="muted small">{run?.fetched ?? 0} loaded · {records.length ? recordOffset + 1 : 0}–{recordOffset + records.length} shown{run ? ` · ${run.state}` : ''}</p>
+              </div>
+              <div className="result-display"><span className="small">Sort: PubMed relevance</span>
+                <label>Per page <select aria-label="Page size" value={pageSize} disabled={busy} onChange={e => { const size = Number(e.target.value); setPageSize(size); if (run) void openSaved(run.run_id, 0, size); }}>
+                  {[5, 25, 50, 100].map(n => <option key={n}>{n}</option>)}
+                </select></label>
+              </div>
             </div>
-            <form onSubmit={submitSearch}>
-              <label className="query" htmlFor="pubmed-query">Query</label>
-                <textarea
-                  id="pubmed-query"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  maxLength={2000}
-                  rows={3}
-                  required
-                  placeholder="Enter a PubMed query"
-                />
-              <label>
-                Page size
-                <select
-                  value={pageSize}
-                  onChange={(e) => {
-                    const size = Number(e.target.value);
-                    setPageSize(size);
-                    if (run) void openSaved(run.run_id, 0, size);
-                  }}
-                  disabled={busy}
-                  aria-label="Page size"
-                >
-                  {[5, 25, 50, 100].map((n) => <option key={n}>{n}</option>)}
-                </select>
-              </label>
-              <label>
-                Metadata page limit
-                <select
-                  aria-label="Retrieved limit"
-                  value={limit}
-                  onChange={(e) => setLimit(Number(e.target.value))}
-                >
-                  {[5, 10, 25, 50, 100].map((n) => (
-                    <option key={n}>{n}</option>
-                  ))}
-                </select>
-              </label>
-              <button disabled={busy || searchState.busy || !!searchState.pending || !!searchState.confirmed || !library || serviceInfo?.searchEnabled !== true}>
-                {busy ? "Working…" : "Search PubMed"}
-              </button>
-            </form>
-          </section>
-          {(run || searchState.pending || searchState.confirmed || searchState.busy || searchState.error) && <ContinuationPanel
-            key={`${library}:${sessionGeneration()}:${run?.run_id ?? ""}`} status={continuation} state={searchState} controller={searchController}
-            runID={run?.run_id} visible={records.length} checked={selected.size} />}
-          <SearchHistory runs={history} total={historyTotal} offset={historyOffset}
-            selectedID={run?.run_id ?? ""} busy={busy} onOpen={id => void openSaved(id)}
-            onPage={offset => void refreshHistory(library, offset)} />
-          {(message || error) && (
-            <p className={error ? "error status" : "status"} role="status">
-              {error || message}
-            </p>
-          )}
-          {run && (
-            <section className="summary">
-              <div className="query-snapshot">
-                <span className="muted">Query snapshot</span>
-                <strong>{snapshot}</strong>
-                <span className="small">Search Run ID: {run.run_id}</span>
-              </div>
-              <div>
-                <span className="muted">Provider total</span>
-                <strong>{run.total}</strong>
-              </div>
-              <div>
-                <span className="muted">Retrieved</span>
-                <strong>{run.fetched}</strong>
-              </div>
-              <div>
-                <span className="muted">State</span>
-                <strong>{run.state}</strong>
-              </div>
-            </section>
-          )}
-          {serviceInfo?.searchEnabled === false && <p className="muted">New searches are temporarily disabled by the operator. Saved results remain available.</p>}
-          <section className="selection-toolbar" aria-label="Saved record selection">
-            <p aria-live="polite"><strong>{selected.size} selected of {run?.fetched ?? 0} retrieved records</strong> · Provider total: {run?.total ?? 0} matches</p>
-            <p className="muted small">{selection.pageOnly
-              ? "This run has more than 100 saved records. Select all on this page replaces the checked subset with this visible page only; individual checks may span pages, up to 100 records."
-              : "Select all covers the saved search across pages, up to 100 records. Initial saved records are selected once; continuation never automatically checks new rows."} Your changes remain until you choose another run. Nothing is acquired until you click a download or batch action.</p>
-            <div className="result-actions">
-              <button className="secondary" disabled={!selection.ready} onClick={selection.selectAll}>{selection.pageOnly ? `Select all on this page (${records.length})` : "Select all"}</button>
-              <button className="secondary" disabled={!selection.ready || !selected.size} onClick={selection.deselectAll}>Deselect all</button>
+            <div className="selection-and-pdfs">
+              <section className="selection-toolbar" aria-label="Saved record selection">
+                <p aria-live="polite"><strong>{selected.size} selected of {run?.fetched ?? 0} loaded {(run?.fetched ?? 0) === 1 ? 'record' : 'records'}</strong></p>
+                <div className="result-actions">
+                  <button className="secondary" disabled={!selection.ready || draftChanged || busy} onClick={selection.selectAll}>{selection.pageOnly ? `Select all on this page (${records.length})` : "Select all"}</button>
+                  <button className="secondary" disabled={!selection.ready || !selected.size || draftChanged || busy} onClick={selection.deselectAll}>Deselect all</button>
+                  <details className="selection-scope"><summary>Selection scope</summary><p>{selection.pageOnly
+                    ? "Select all on this page replaces the selection with this page. Individual selections may span pages, up to 100 records."
+                    : "Select all covers loaded records across pages, up to 100. The first loaded records are selected once; retrieving more does not select new records."} Explicit deselections remain until you choose another run. PubMed matches that have not been loaded are not selected.</p></details>
+                </div>
+                {selection.loading && <p role="status">Loading saved selection…</p>}
+                {selection.error && <div role="alert"><p>{selection.error}</p><button onClick={selection.retry}>Retry loading selection</button></div>}
+              </section>
+              <PdfAvailability selectedCount={selected.size} ids={selectedSearchIds(selected)} ready={selection.ready && !busy && !draftChanged}
+                enabled={serviceInfo?.pdfEnabled === true} plansEnabled={serviceInfo?.planEnabled === true}
+                library={library} runID={run?.run_id} generation={sessionGeneration()} scopeSignal={planScope.current.signal}
+                confirmedPlanID={confirmedPdfPlan} policy={serviceInfo?.pdfPolicySummary} onStart={retireChildView} onStatus={setPdfNotice}
+                onBatch={id => openBatch(id, true)} onPlan={id => { setPdfPlan(value => ({ id, sequence: (value?.sequence ?? 0) + 1 })); setView('plans'); }} />
             </div>
-            {selection.loading && <p role="status">Loading the complete saved record selection… Admission is disabled until this finishes.</p>}
-            {selection.error && <div role="alert"><p>{selection.error}</p><button onClick={selection.retry}>Retry loading selection</button></div>}
-          </section>
-          <PdfAvailability selectedCount={selected.size} ids={selectedSearchIds(selected)} ready={selection.ready && !busy}
-            enabled={serviceInfo?.pdfEnabled === true} plansEnabled={serviceInfo?.planEnabled === true}
-            library={library} runID={run?.run_id} generation={sessionGeneration()} scopeSignal={planScope.current.signal}
-            confirmedPlanID={confirmedPdfPlan} policy={serviceInfo?.pdfPolicySummary} onStart={retireChildView}
-            onBatch={id => openBatch(id, true)} onPlan={id => setPdfPlan(value => ({ id, sequence: (value?.sequence ?? 0) + 1 }))} />
+            {(run || searchState.pending || searchState.confirmed || searchState.busy || searchState.error) && <details className="saved-search-detail" open={!!(searchState.pending || searchState.confirmed || searchState.busy || searchState.error || (run && ['queued', 'running', 'error'].includes(run.state)))}>
+              <summary>Search progress and query details{continuation?.canContinue ? ' · More records available' : ''}</summary>
+              {run && <div className="query-snapshot"><span className="muted">Query snapshot</span><strong>{snapshot}</strong><span className="small">Search Run ID: {run.run_id}</span></div>}
+              <ContinuationPanel key={`${library}:${sessionGeneration()}:${run?.run_id ?? ""}`} status={continuation} state={searchState} controller={searchController}
+                runID={run?.run_id} visible={records.length} checked={selected.size} />
+            </details>}
+            <details className="export-options"><summary>Export saved results and other actions</summary>
           <div className="result-head">
-            <h2>
-              Results <span className="count">{records.length}</span>
-            </h2>
             <div className="result-actions">
               <span aria-live="polite">{selected.size} selected across saved record pages (maximum {selectionMaximum})</span>
               <button
@@ -900,6 +908,7 @@ function App() {
                 className="secondary"
                 disabled={
                   selected.size < 1 ||
+                  draftChanged || busy ||
                   !selection.ready ||
                   selected.size > 10 ||
                   batchBusy ||
@@ -916,34 +925,9 @@ function App() {
               </button>
             </div>
           </div>
-          {batchBusy && exportProgress?.operation === batchOperation.current && <div>
-            <p role="status">{exportProgress.label}</p>
-            <button className="secondary" onClick={() => { beginBatchRequest(); batchOperation.current++; setBatchBusy(false); setExportProgress(null); setMessage("Transfer cancelled. No file was saved."); }}>Cancel download</button>
-          </div>}
           <p id="run-structured-scope" className="muted small">CSV, XLSX, JSON / JSONL exports include all saved records in the run, not just selected checkboxes or the current page, up to the existing 1,000-record export limit. Provider matches that were not retrieved are not included. These are metadata files, not full-text downloads.</p>
-          {records.length ? (
-            records.map((a, i) => (
-              <ArticleCard
-                onOpenBatch={id => void openBatch(id)}
-                key={searchId(a) || `${String(a.Pmid)}-${i}`}
-                article={a}
-                selected={selected.has(searchId(a))}
-                disabled={!selection.ready}
-                onSelect={() => {
-                  if (!selected.has(searchId(a)) && selected.size >= selectionMaximum) setError(`Selection limit reached. Clear or deselect a record before choosing another; maximum ${selectionMaximum}.`);
-                  selection.toggle(a);
-                }}
-              />
-            ))
-          ) : (
-            <div className="empty">
-              <h3>{run ? "No records on this page" : "Start with a search"}</h3>
-              <p className="muted">
-                Search results will appear here with separate PMID, PMCID and
-                DOI fields.
-              </p>
-            </div>
-          )}
+
+            </details>
           {run &&
             (recordOffset > 0 ||
               canAdvanceRecords(pageTotal, recordOffset, records.length)) && (
@@ -968,16 +952,54 @@ function App() {
                 </button>
               </div>
             )}
-          {library && <PlanWorkspace
-            key={`${sessionGeneration()}:${library}`}
-            library={library} runID={run?.run_id ?? ""} generation={sessionGeneration()}
-            selectedIDs={selectedSearchIds(selected)} enabled={serviceInfo?.planEnabled === true}
-            selectedArticles={[...selected.values()]} savedSetEnabled={serviceInfo?.savedSetEnabled === true}
-            pdfEnabled={serviceInfo?.pdfEnabled === true}
-            scopeSignal={libraryPlanScope.current.signal} onPlanChange={retireChildView}
-            admissionReady={selection.ready} openRequest={pdfPlan} onOpened={setConfirmedPdfPlan}
-            onChild={id => { retireChildView(); void openBatch(id); }}
-          />}
+
+          {records.length ? (
+            records.map((a, i) => (
+              <ArticleCard
+                onOpenBatch={id => void openBatch(id)}
+                key={searchId(a) || `${String(a.Pmid)}-${i}`}
+                article={a}
+                selected={selected.has(searchId(a))}
+                disabled={!selection.ready || busy || draftChanged}
+                onSelect={() => {
+                  if (!selected.has(searchId(a)) && selected.size >= selectionMaximum) setError(`Selection limit reached. Clear or deselect a record before choosing another; maximum ${selectionMaximum}.`);
+                  selection.toggle(a);
+                }}
+              />
+            ))
+          ) : (
+            <div className="empty">
+              <h3>{run ? "No records on this page" : "Start with a search"}</h3>
+              <p className="muted">
+                Search results will appear here with separate PMID, PMCID and
+                DOI fields.
+              </p>
+            </div>
+          )}
+
+          </section>
+        </div>
+      </div>
+      <div hidden={view !== 'history'}>
+        <SearchHistory runs={history} total={historyTotal} offset={historyOffset} selectedID={run?.run_id ?? ''} busy={busy}
+          onOpen={id => void openSaved(id)} onPage={offset => void refreshHistory(library, offset)} />
+      </div>
+      <div hidden={view !== 'downloads'}>
+          <section className="panel">
+            <h2>Saved batches</h2>
+            <p className="muted small">{batchTotal} saved batches · {savedBatches.length ? batchOffset + 1 : 0}–{batchOffset + savedBatches.length}</p>
+            <select aria-label="Saved batches" value={batch?.batch.batch_id ?? ''}
+              onChange={e => openBatch(e.target.value)}>
+              <option value="">Choose a saved batch</option>
+              {savedBatches.map(x => <option key={x.batch_id} value={x.batch_id}>{x.batch_id} · {x.state}</option>)}
+            </select>
+            <div className="pager">
+              <button className="secondary" disabled={!library || batchOffset === 0} onClick={() => refreshBatches(Math.max(0, batchOffset - 100))}>Previous batches</button>
+              <button className="secondary" disabled={!library || batchOffset + 100 >= batchTotal} onClick={() => refreshBatches(batchOffset + 100)}>Next batches</button>
+            </div>
+            <button className="secondary" disabled={!library} onClick={() => refreshBatches(batchOffset)}>Refresh saved batches</button>
+          </section>
+
           {batch && (
             <section className="panel batch-panel">
               <div className="result-head">
@@ -1100,25 +1122,54 @@ function App() {
               ))}
             </section>
           )}
+
+      </div>
+      <div hidden={view !== 'plans'}>
+          {library && <PlanWorkspace
+            key={`${sessionGeneration()}:${library}`}
+            library={library} runID={run?.run_id ?? ""} generation={sessionGeneration()}
+            selectedIDs={selectedSearchIds(selected)} enabled={serviceInfo?.planEnabled === true}
+            selectedArticles={[...selected.values()]} savedSetEnabled={serviceInfo?.savedSetEnabled === true}
+            pdfEnabled={serviceInfo?.pdfEnabled === true}
+            scopeSignal={libraryPlanScope.current.signal} onPlanChange={retireChildView}
+            admissionReady={selection.ready && !draftChanged && !busy} openRequest={pdfPlan} onOpened={setConfirmedPdfPlan}
+            onChild={id => { retireChildView(); void openBatch(id); }}
+          />}
+
+      </div>
+      <div hidden={view !== 'library'}><section className="panel"><h2>Libraries</h2><p>Create a separate library for a different research collection.</p>
+            <form onSubmit={submitLibrary} className="inline">
+              <label>
+                New library name
+                <input
+                  value={newLibrary}
+                  onChange={(e) => setNewLibrary(e.target.value)}
+                  placeholder="New library name"
+                  maxLength={120}
+                  required
+                />
+              </label>
+              <button disabled={busy}>Create</button>
+            </form>
+
+      </section>
           <section className="capability">
             <strong>Batch, download and export</strong>
             <span>
               Search retrieves at most 100 identities per metadata page. New continuation-enabled runs capture an operational window of up to 1,000 identities; each next page requires an explicit request. Legacy runs keep their original saved scope. Each batch processes up to 10 checked saved records. PDF acquisition requires the current server policy and a permitted repository original; unavailable records retain reasons and source links. Create batch acquires XML, while Download PDFs explicitly requests PDF. Server acquisition is separate from downloads to this device. No publisher account login is provided.
             </span>
           </section>
-        </section>
-      </section>
-      <footer>
+
+      </div>
+      <footer><p>Use public research queries only. Do not enter patient information.</p><details><summary>Privacy, sources and service</summary>
         <p>PubMed queries and article identifiers are sent to NCBI. Public metadata does not establish full-text reuse permission. NCBI does not endorse this service; source records can contain errors and should be checked against the original publication.</p>
         {serviceInfo && <><p>Operator: {serviceInfo.operatorName}. Support: {serviceInfo.contact}.</p><p>Retention: {serviceInfo.retention}</p><p>Invited candidate access ends: {serviceInfo.expiresAt}.</p></>}
         {serviceInfo?.source && /^https:\/\/github\.com\/bestkakkoii\/LitraDock\/tree\/[0-9a-f]{40}$/.test(serviceInfo.source) && <p><a href={serviceInfo.source} target="_blank" rel="noopener noreferrer">Source code for this deployment</a></p>}
         <p>Use public research queries only; do not enter patient information. Account sessions, saved metadata and acquired originals remain in the server library until operator cleanup. Sign out on shared devices.</p>
-      </footer>
+      </details></footer>
+
     </main>
   );
 }
-createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
+const rootElement = document.getElementById("root");
+if (rootElement) createRoot(rootElement).render(<React.StrictMode><App /></React.StrictMode>);

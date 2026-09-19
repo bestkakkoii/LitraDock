@@ -1,3 +1,4 @@
+import { showWorkspace, openDisclosure } from "../../src/literature-web/scripts/workspace-navigation.mjs";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -128,15 +129,16 @@ try {
     for(const [name,want] of webFiles){const r=await page.request.get(target+'/'+(name==='web/index.html'?'':name.slice(4)));assert.equal(r.status(),200);assert.equal(hash(await r.body()),want);}
   });
   await login();
-  await page.getByLabel('New library name',{exact:true}).fill('SYNTHETIC native plans');
+  await showWorkspace(page, "Libraries"); await page.getByLabel('New library name',{exact:true}).fill('SYNTHETIC native plans');
   await page.getByRole('button',{name:'Create',exact:true}).click();
   await until(async()=>!!await page.getByLabel('Choose library',{exact:true}).inputValue(),'library creation');
   libraryId=await page.getByLabel('Choose library',{exact:true}).inputValue();
   await check('100-saved-versus-25001-total-37-cross-page',async()=>{
-    await page.getByLabel('Retrieved limit',{exact:true}).selectOption('100');
-    await page.getByLabel('Query',{exact:true}).fill('SYNTHETIC_PLAN_25001');
+    await showWorkspace(page, "Search & PDFs"); await openDisclosure(page, "Search options"); await page.getByLabel('Retrieved limit',{exact:true}).selectOption('100');
+    await page.getByLabel('Search PubMed',{exact:true}).fill('SYNTHETIC_PLAN_25001');
     await page.getByRole('button',{name:'Search PubMed',exact:true}).click();
-    await until(async()=>(await page.locator('body').innerText()).includes('retrieved 100 of 25001'),'100 of25001 distinction');
+    await until(async()=>{const text=await page.locator('.compact-result-head').innerText();return text.includes('100 loaded')&&text.includes('25,001 matches');},'100 of25001 distinction');
+    await openDisclosure(page, /^Search progress and query details/);
     capturedRunId=(await page.locator(".query-snapshot .small").innerText()).replace("Search Run ID: ", "");
     const r=await (await page.request.get(`${target}/api/libraries/${libraryId}/runs/${capturedRunId}?limit=100`)).json();
     assert.equal(r.total,100);assert.equal(r.run.total,25001);selected=r.records.slice(0,37).map(x=>x.SearchId);assert.equal(new Set(selected).size,37);
@@ -147,9 +149,11 @@ try {
     await page.getByRole('button',{name:'Deselect all',exact:true}).click();
     for(const box of await boxes.all())await box.check();
     await page.getByRole('button',{name:'Next records',exact:true}).click();
-    await until(async()=>(await page.locator('body').innerText()).includes('showing 26–50'),'second saved page');
+    await until(async()=>(await page.locator('body').innerText()).includes('26–50 shown'),'second saved page');
     for(const box of (await boxes.all()).slice(0,12))await box.check();
+    await openDisclosure(page, "Export saved results and other actions");
     assert(await page.getByRole('button',{name:'Create batch (37/10)',exact:true}).isDisabled());
+    await showWorkspace(page, "Research plans");
     assert(await plans.getByRole('button',{name:'Create processing plan (37/100)',exact:true}).isEnabled());
   });
   await check('lost-admission-reply-same-request-single-plan',async()=>{
@@ -260,6 +264,7 @@ try {
     assert.equal(batchPosts,0);assert.equal(planPosts.length,2);
   });
   await check('cancel-confirmation-preserves-prior-completed-plan',async()=>{
+    await showWorkspace(page, "Research plans");
     const originalPlan=planID;
     await plans.getByRole('button',{name:'Create processing plan (37/100)',exact:true}).click();
     await until(async()=>{const text=await plans.getByRole('heading',{name:/^Plan PLN-/}).textContent();return text.trim()!=='Plan '+originalPlan;},'new distinct plan receipt');
@@ -276,13 +281,13 @@ try {
     }
     const cancelled=await getPlan();assert.equal(cancelled.plan.state,'cancelled');assert.equal(Object.values(cancelled.plan.counts).reduce((a,b)=>a+b,0),37);assert(cancelled.plan.counts.cancelled>0);
     planID=originalPlan;assert.equal((await getPlan()).plan.counts.completed,2);
-    await page.getByLabel('Saved plans',{exact:true}).selectOption(planID);
+    await showWorkspace(page, "Research plans"); await page.getByLabel('Saved plans',{exact:true}).selectOption(planID);
   });
   await check('relogin-reopen-get-only-and-tenant-denials',async()=>{
     const mutations=JSON.stringify({planPosts,controls,searchPosts,batchPosts});
     await page.reload();await page.getByLabel('Choose library',{exact:true}).waitFor();
     await page.getByLabel('Choose library',{exact:true}).selectOption(libraryId);
-    await page.getByLabel('Saved plans',{exact:true}).selectOption(planID);
+    await showWorkspace(page, "Research plans"); await page.getByLabel('Saved plans',{exact:true}).selectOption(planID);
     await plans.getByRole('heading',{name:'Plan '+planID,exact:true}).waitFor();
     await page.getByRole('button',{name:'Sign out',exact:true}).click();await page.getByLabel('Login',{exact:true}).waitFor();
     await login(input.accounts[1]);
@@ -290,7 +295,7 @@ try {
     assert.equal(await plans.count(),0);assert(!(await page.locator('body').innerText()).includes(planID));
     await page.getByRole('button',{name:'Sign out',exact:true}).click();await page.getByLabel('Login',{exact:true}).waitFor();
     await login();await page.getByLabel('Choose library',{exact:true}).selectOption(libraryId);
-    await page.getByLabel('Saved plans',{exact:true}).selectOption(planID);
+    await showWorkspace(page, "Research plans"); await page.getByLabel('Saved plans',{exact:true}).selectOption(planID);
     await plans.getByRole('heading',{name:'Plan '+planID,exact:true}).waitFor();
     assert.equal(JSON.stringify({planPosts,controls,searchPosts,batchPosts}),mutations);
   });

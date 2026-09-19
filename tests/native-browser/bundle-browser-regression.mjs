@@ -1,4 +1,5 @@
 // Actual native PostgreSQL and compiled React; isolated synthetic originals only.
+import { showWorkspace } from "../../src/literature-web/scripts/workspace-navigation.mjs";
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,8 +33,9 @@ const login=async(a=input.accounts[0])=>{
 };
 const openPlan=async()=>{
  await page.getByLabel('Choose library',{exact:true}).selectOption(seed.library);
+ await showWorkspace(page, "Research plans");
  await until(async()=>await page.getByLabel('Saved plans',{exact:true}).locator(`option[value="${seed.plan}"]`).count()===1,'saved plan catalog');
- await page.getByLabel('Saved plans',{exact:true}).selectOption(seed.plan);
+ await showWorkspace(page, "Research plans"); await page.getByLabel('Saved plans',{exact:true}).selectOption(seed.plan);
  await panel.waitFor();await until(async()=>await panel.getByRole('button',{name:'Prepare download parts',exact:true}).isEnabled(),'preparation ready');
 };
 try {

@@ -1,0 +1,104 @@
+/* Workspace sections stay mounted so navigation cannot replay a PDF intent. */
+[hidden] { display: none !important; }
+.research-workspace { max-width: 1365px; padding: 1rem 1.5rem; }
+.research-workspace .topbar { gap: 1rem; margin-bottom: .65rem; }
+.research-workspace .brand h1 { font-size: 1.7rem; letter-spacing: -.04em; margin: 0; color: #17486b; }
+.account-controls { display: flex; align-items: center; gap: .5rem; min-width: 0; }
+.account-controls select { width: 210px; }
+.account-controls button { white-space: nowrap; }
+.workspace-nav { display: flex; gap: .35rem; padding: .3rem 0 .75rem; margin-bottom: .6rem; border-bottom: 1px solid #cedbe6; overflow-x: auto; }
+.workspace-nav button { flex: 0 0 auto; white-space: nowrap; padding: .55rem .85rem; border-radius: 6px; }
+.research-workspace .search-panel { padding: .85rem 1rem; margin-bottom: .85rem; }
+.research-workspace .search-panel form { margin: 0; }
+.research-workspace .query { display: grid; gap: .3rem; font-size: .9rem; flex: 1 1 250px !important; }
+.research-workspace .query textarea { min-height: 44px; line-height: 1.4; }
+.search-options { margin-top: .5rem; font-size: .85rem; }
+.search-options label { display: flex; align-items: center; gap: .75rem; }
+.search-options select { width: 100px; }
+.research-grid { display: grid; grid-template-columns: 235px minmax(0, 1fr); gap: 1.15rem; align-items: start; }
+.research-grid > *, .active-results { min-width: 0; }
+.search-filters { padding: .8rem; box-shadow: none; }
+summary { cursor: pointer; }
+.search-filters > summary { font-weight: 700; padding: .25rem 0; }
+.search-filters > summary .small { font-weight: 400; }
+.search-filters fieldset { border: 0; padding: .5rem 0; margin: .65rem 0; min-width: 0; }
+.search-filters legend, .filter-text { font-weight: 650; font-size: .9rem; }
+.year-range { display: flex; gap: .4rem; }
+.year-range label { min-width: 0; font-size: .8rem; }
+.year-range input { padding: .5rem; margin-top: .25rem; }
+.check-label { display: flex; align-items: center; gap: .55rem; min-height: 36px; font-size: .88rem; }
+.check-label input { width: 18px; height: 18px; margin: 0; flex: 0 0 auto; accent-color: #1864ab; }
+.filter-text { display: grid; gap: .4rem; }
+.filter-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.filter-actions button { padding: .55rem .65rem; font-size: .85rem; }
+.filter-help { font-size: .8rem; margin-top: .75rem; }
+.filter-chips { display: flex; flex-wrap: wrap; gap: .35rem; }
+.filter-chips:empty { display: none; }
+.filter-chips button { padding: .3rem .65rem; font-size: .82rem; border: 1px solid #c5d7df; background: #eff8f3; color: #21583e; }
+.filter-state { margin: 0 0 .35rem; color: #21583e; font-size: .82rem; font-weight: 650; }
+.draft-notice { background: #fff4d9; border-left: 3px solid #a87913; padding: .6rem; margin-top: .5rem; font-size: .85rem; }
+.draft-notice button { margin-left: .5rem; padding: .4rem; }
+.research-workspace .compact-result-head { margin: .45rem 0 .65rem; gap: .4rem; }
+.compact-result-head h2 { margin-bottom: .1rem; }
+.compact-result-head p { margin: 0; }
+.result-display { display: flex; gap: .8rem; align-items: center; }
+.result-display label { display: flex; align-items: center; gap: .4rem; font-size: .8rem; }
+.result-display select { width: 70px; padding: .4rem; }
+.selection-and-pdfs { border: 1px solid #b9d1df; border-radius: 8px; background: #fff; overflow-wrap: anywhere; }
+.research-workspace .selection-toolbar { border-radius: 8px 8px 0 0; margin: 0; padding: .6rem .85rem; }
+.selection-toolbar p { margin: 0 0 .45rem; font-size: .9rem; }
+.selection-toolbar button { padding: .4rem .65rem; min-height: 36px; font-size: .82rem; }
+.selection-scope { font-size: .8rem; align-self: center; }
+.selection-scope summary { padding: .4rem; }
+.selection-scope[open] { flex-basis: 100%; }
+.research-workspace .pdf-availability { border: 0; border-radius: 0 0 8px 8px; margin: 0; padding: .65rem .85rem; }
+.pdf-availability > button { margin: 0 .5rem .3rem 0; }
+.pdf-availability .pdf-scope { font-size: .82rem; margin: .25rem 0; color: #455d72; }
+.pdf-progress:empty { min-height: 0; }
+.pdf-view-notice, .search-view-notice { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; background: #e9f2fb; padding: .65rem .8rem; border: 1px solid #b9d1df; border-radius: 6px; margin-bottom: .75rem; }
+.pdf-view-notice p, .search-view-notice p { margin: 0; flex: 1 1 260px; font-size: .9rem; }
+.research-workspace .pdf-availability > details { margin-top: .2rem; font-size: .85rem; }
+.research-workspace .pdf-availability summary { padding: .3rem 0; }
+.saved-search-detail, .export-options { margin: .5rem 0; font-size: .85rem; }
+.saved-search-detail > summary, .export-options > summary { padding: .4rem 0; color: #275777; }
+.query-snapshot { display: grid; gap: .35rem; padding: .65rem; background: #e9f2fb; border-radius: 6px; overflow-wrap: anywhere; }
+.query-snapshot strong { font-size: .95rem; }
+.research-workspace .result-card { box-shadow: none; border-radius: 6px; padding: .85rem 1rem; }
+.result-card h3 { font-size: 1.06rem; line-height: 1.5; color: #154e79; }
+.article-heading { display: flex; align-items: flex-start; gap: .65rem; }
+.article-heading h3 { margin: 0; min-width: 0; }
+.article-heading input { flex: 0 0 18px; width: 18px; height: 18px; margin-top: .25rem; accent-color: #1864ab; }
+.record-identity { font-size: .8rem; margin: .5rem 0; overflow-wrap: anywhere; }
+.article-abstract { margin-top: .7rem; font-size: .9rem; }
+.article-abstract p { white-space: pre-wrap; }
+.research-workspace .plan-workspace { margin-top: 0; }
+.research-workspace .muted { color: #52697b; }
+.research-workspace input:focus-visible, .research-workspace summary:focus-visible { outline: 3px solid #1864ab; outline-offset: 3px; }
+.research-workspace footer { margin-top: 1rem; }
+.research-workspace footer > p { margin: .3rem 0; }
+@media (max-width: 899px) {
+  .research-grid { display: block; }
+  .search-filters { margin-bottom: .7rem; }
+  .search-filters[open] fieldset { max-width: 420px; }
+  .search-filters .filter-text { max-width: 420px; }
+}
+@media (max-width: 600px) {
+  .research-workspace { padding: .6rem .75rem; }
+  .research-workspace .topbar { gap: .4rem; }
+  .research-workspace .brand h1 { font-size: 1.4rem; }
+  .brand > span { display: none; }
+  .account-controls select { width: 120px; font-size: .8rem; padding: .5rem .3rem; }
+  .account-controls button { padding: .6rem; font-size: .8rem; }
+  .workspace-nav { margin-bottom: .35rem; padding-bottom: .5rem; }
+  .workspace-nav button { font-size: .82rem; padding: .6rem .7rem; }
+  .research-workspace .search-panel { padding: .65rem; margin-bottom: .65rem; }
+  .research-workspace .query { min-width: 0; flex-basis: 0 !important; }
+  .search-panel form > button { width: auto; align-self: end; padding-left: .85rem; padding-right: .85rem; }
+  .research-workspace .compact-result-head { flex-direction: row; align-items: center; }
+  .result-display { gap: .3rem; flex-wrap: wrap; justify-content: flex-end; max-width: 155px; }
+  .result-display > span { font-size: .75rem; }
+  .compact-result-head h2 { font-size: 1rem; }
+  .research-workspace .selection-toolbar, .research-workspace .pdf-availability { padding: .55rem .7rem; }
+  .selection-toolbar .result-actions { gap: .35rem; }
+  .research-workspace .result-card { padding: .75rem; }
+}

@@ -1,4 +1,5 @@
 // SYNTHETIC isolated HTTP schedules and metadata; no native/source qualification.
+import { showWorkspace, openDisclosure } from "./workspace-navigation.mjs";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
@@ -88,25 +89,37 @@ try {
   const button = name => page.getByRole("button", { name, exact: true });
   const panel = () => page.getByRole("region", { name: "Search continuation" });
   const login = async who => { await page.getByLabel("Login", { exact: true }).fill(who); await page.getByLabel("Password", { exact: true }).fill("SYNTHETIC"); await button("Sign in").click(); await expect(page.getByLabel("Choose library", { exact: true })).toHaveValue(who === "B" ? "LB" : "L1"); };
-  const open = async runID => { await page.locator(".history-entry").filter({ has: page.locator(".history-id", { hasText: new RegExp(`${runID}$`) }) }).click(); await expect(page.locator(".query-snapshot")).toContainText(runID); };
-  const refresh = async () => { await button("Refresh saved search status").click(); await expect(panel().getByRole("status").first()).toContainText(state.replaceAll("_", " ")); };
-  await page.goto(origin); await login("A"); await page.getByLabel("Query", { exact: true }).fill(query);
-  await page.getByLabel("Retrieved limit", { exact: true }).selectOption("5"); await expect(page.getByLabel("Retrieved limit", { exact: true })).toHaveValue("5");
-  await page.getByLabel("Retrieved limit", { exact: true }).selectOption("100"); await button("Search PubMed").click();
-  await expect(button("Retry same search request")).toBeVisible(); await page.getByLabel("Query", { exact: true }).fill("SYNTHETIC changed query"); await expect(button("Search PubMed")).toBeDisabled();
+  const open = async runID => { await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").filter({ has: page.locator(".history-id", { hasText: new RegExp(`${runID}$`) }) }).click(); await openDisclosure(page, /^Search progress and query details/); await expect(page.locator(".query-snapshot")).toContainText(runID); };
+  const revealSettledProgress = async () => {
+    // The disclosure may close when the pending request settles. Wait for the
+    // actual read control, then reopen its visible summary before inspecting it.
+    await expect(page.locator(".continuation button").filter({ hasText: /^Refresh saved search status$/ })).toBeEnabled();
+    await openDisclosure(page, /^Search progress and query details/);
+  };
+  const refresh = async () => {
+    await openDisclosure(page, /^Search progress and query details/);
+    await button("Refresh saved search status").click();
+    await revealSettledProgress();
+    await expect(panel().getByRole("status").first()).toContainText(state.replaceAll("_", " "));
+  };
+  await page.goto(origin); await login("A"); await page.getByLabel("Search PubMed", { exact: true }).fill(query);
+  await openDisclosure(page, "Search options"); await page.getByLabel("Retrieved limit", { exact: true }).selectOption("5"); await expect(page.getByLabel("Retrieved limit", { exact: true })).toHaveValue("5");
+  await openDisclosure(page, "Search options"); await page.getByLabel("Retrieved limit", { exact: true }).selectOption("100"); await button("Search PubMed").click();
+  await expect(button("Retry same search request")).toBeVisible(); await page.getByLabel("Search PubMed", { exact: true }).fill("SYNTHETIC changed query"); await expect(page.getByRole("region", { name: "PubMed search", exact: true }).getByRole("button", { name: "Working…", exact: true })).toBeDisabled();
   await button("Retry same search request").click(); await expect(button("Retry same search request")).toBeVisible();
   await button("Retry same search request").click(); await expect(button(`Reopen confirmed search ${id}`)).toBeVisible();
   failGet = false; await button(`Reopen confirmed search ${id}`).click(); await expect(button("Select all")).toBeEnabled();
   const searches = posts.filter(p => p.route.endsWith("/search")); assert.equal(searches.length, 3); searches.forEach(post => assert.deepEqual(post.body, searches[0].body)); assert.equal(searches[0].body.limit, 100);
+  await openDisclosure(page, /^Search progress and query details/);
   await panel().getByText("Missing metadata identities (1)", { exact: true }).click(); await expect(panel().getByRole("link", { name: "PMID 99999999" })).toHaveAttribute("href", "https://pubmed.ncbi.nlm.nih.gov/99999999/");
   result.cases.push("Malformed source200 and actual truncated closed HTTP body preserve exact UUID/query/limit across three explicit application attempts despite edited draft; confirmed receipt+detail503 uses GET-only recovery");
-  await expect(page.locator(".selection-toolbar")).toContainText("1 selected of 1"); await button("Add checked records to basket (1)").click(); await button("Deselect all").click();
+  await expect(page.locator(".selection-toolbar")).toContainText("1 selected of 1"); await showWorkspace(page, "Research plans"); await button("Add checked records to basket (1)").click(); await showWorkspace(page, "Search & PDFs"); await button("Deselect all").click();
   await button("Retrieve next metadata page").focus(); await page.keyboard.press("Enter"); await expect(button("Retry same search request")).toBeVisible();
   await open(legacy); await expect(panel()).toContainText("no continuation window"); await button("Retry same search request").click();
   await expect(page.locator(".selection-toolbar")).toContainText("0 selected of 101");
   const actions = posts.filter(p => p.route.endsWith("/continuation")); assert.equal(actions.length, 2); assert.deepEqual(actions[0].body, actions[1].body);
   // A real run change resets selection; reopening a >100 set never defaults to an unseen subset.
-  await expect(page.locator(".saved-basket")).toContainText("1 records in basket"); await expect(button("Select all on this page (25)")).toBeEnabled();
+  await showWorkspace(page, "Research plans"); await expect(page.locator(".saved-basket")).toContainText("1 records in basket"); await showWorkspace(page, "Search & PDFs"); await expect(button("Select all on this page (25)")).toBeEnabled();
   await button("Select all on this page (25)").click(); await button("Next records").click(); await expect(page.locator(".selection-toolbar")).toContainText("25 selected of 101");
   await button("Deselect all").click(); await refresh(); await expect(page.locator(".selection-toolbar")).toContainText("0 selected of 101");
   assert.equal(posts.filter(p => p.route.endsWith("/search")).length, 3);
@@ -119,8 +132,8 @@ try {
     await expect(button("Cancel metadata page")).toBeEnabled({ enabled: ["queued", "running"].includes(value) });
   }
   state = "rate_wait"; attempts = 3; await refresh(); await expect(button("Retry metadata page")).toBeDisabled();
-  attempts = 2; state = "failed"; await refresh(); await button("Retry metadata page").click(); await expect(panel().getByRole("status").first()).toContainText("ready");
-  state = "running"; await refresh(); await button("Cancel metadata page").click(); await button("Confirm metadata cancellation").click(); await expect(panel().getByRole("status").first()).toContainText("cancelled");
+  attempts = 2; state = "failed"; await refresh(); await button("Retry metadata page").click(); await revealSettledProgress(); await expect(panel().getByRole("status").first()).toContainText("ready");
+  state = "running"; await refresh(); await button("Cancel metadata page").click(); await button("Confirm metadata cancellation").click(); await revealSettledProgress(); await expect(panel().getByRole("status").first()).toContainText("cancelled");
   result.cases.push("All ten actual states, attempts3 denial, explicit retry and confirmed cancel; reads never admit pages");
   state = "ready"; count = 101; await refresh(); await button("Select all on this page (25)").click();
   await page.evaluate(() => { window.__ignoreAbort = true; });
@@ -152,6 +165,7 @@ try {
     await page.screenshot({ path: path.join(out, `continuation-${width}.png`), fullPage: true });
     await panel().screenshot({ path: path.join(out, `continuation-panel-${width}.png`) });
   }
+  await openDisclosure(page, "Export saved results and other actions");
   const fileEvent = page.waitForEvent("download"); await button("Export CSV").click(); const file = await fileEvent, bytes = fs.readFileSync(await file.path());
   assert.deepEqual(bytes, csv); const filename = file.suggestedFilename(); fs.writeFileSync(path.join(out, filename), bytes); result.downloads.push({ filename, bytes: bytes.length, sha256: hash(bytes) });
   result.cases.push("0/1/100/101/1000 saved versus10000/25001 provider totals; populated390/1280 keyboard/readability/overflow; exact UTF8 CSV device bytes");

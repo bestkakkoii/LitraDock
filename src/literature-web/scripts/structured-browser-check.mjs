@@ -1,4 +1,5 @@
 // Isolated SYNTHETIC transport. Tests the compiled frontend, not native Go/source provenance.
+import { showWorkspace, openDisclosure } from "./workspace-navigation.mjs";
 import assert from "node:assert/strict";
 import { installBodyGates } from "./body-gates.mjs";
 import fs from "node:fs";
@@ -84,8 +85,9 @@ try {
     await expect(page.getByLabel("Choose library", { exact: true })).toHaveValue(who === "B" ? "LB" : "L1");
   };
   const open = async id => {
-    await page.locator(".history-entry").filter({ has: page.locator(".history-id", { hasText: new RegExp(`${id}$`) }) }).click();
+    await showWorkspace(page, "Saved searches"); await page.locator(".history-entry").filter({ has: page.locator(".history-id", { hasText: new RegExp(`${id}$`) }) }).click();
     await expect(button("Select all")).toBeEnabled();
+    await openDisclosure(page, "Export saved results and other actions");
     await expect(button("Export saved run JSON")).toBeEnabled();
   };
   const settle = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -116,16 +118,19 @@ try {
   await button("Deselect all").click(); await page.locator(".result-card input").first().check();
   await button("Next records").click(); await expect(page.locator(".result-card")).toHaveCount(2);
   for (const format of ["json", "jsonl"]) await download({ runID: "R1" }, format);
-  await page.getByLabel("Saved batches", { exact: true }).selectOption("B1");
+  await showWorkspace(page, "Downloads"); await page.getByLabel("Saved batches", { exact: true }).selectOption("B1");
   for (const format of ["json", "jsonl"]) await download({ batchID: "B1" }, format);
   result.cases.push("Both formats × run/batch: exact POST CSRF, full saved scope independent of one selected checkbox and last page; actual UTF8 device bytes, IDs/null/escaped newlines preserved");
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 1000 });
-    assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
     for (const name of ["Export saved run JSON", "Export saved run JSONL", "Export batch JSON", "Export batch JSONL"]) {
+      await showWorkspace(page, name.includes("saved run") ? "Search & PDFs" : "Downloads");
+      assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
       await expect(button(name)).toBeVisible(); const box = await button(name).boundingBox(); assert(box.width > 120 && box.height >= 36);
     }
+    await showWorkspace(page, "Search & PDFs");
     await expect(page.locator("#run-structured-scope")).toContainText("all saved records");
+    await showWorkspace(page, "Downloads");
     await expect(page.locator("#batch-structured-scope")).toContainText("including held outcomes");
     await page.screenshot({ path: path.join(out, `exports-${width}.png`), fullPage: true });
   }
@@ -155,16 +160,16 @@ try {
   }
   result.cases.push("Held old-run HTTP200/401/503 cannot save/expire/error/clear newer busy; each newer held JSONL completes with exact bytes");
   for (const format of ["json", "jsonl"]) {
-    await page.getByLabel("Saved batches", { exact: true }).selectOption("B1");
+    await showWorkspace(page, "Downloads"); await page.getByLabel("Saved batches", { exact: true }).selectOption("B1");
     const beforeCount = downloads.length; await hold(`library-${format}`, `Export batch ${format.toUpperCase()}`);
     const target = await page.getByLabel("Choose library", { exact: true }).inputValue() === "L1" ? "L2" : "L1";
     await page.getByLabel("Choose library", { exact: true }).selectOption(target); await release(`library-${format}`);
     await open("R1"); assert.equal(downloads.length, beforeCount); await download({ runID: "R1" }, format);
   }
   result.cases.push("Both held batch formats discarded across library changes; new library exports work");
-  await page.getByLabel("Saved batches", { exact: true }).selectOption("B1");
+  await showWorkspace(page, "Downloads"); await page.getByLabel("Saved batches", { exact: true }).selectOption("B1");
   const beforeBatch = downloads.length; await hold("old-batch", "Export batch JSON");
-  await page.getByLabel("Saved batches", { exact: true }).selectOption("B2"); await release("old-batch");
+  await showWorkspace(page, "Downloads"); await page.getByLabel("Saved batches", { exact: true }).selectOption("B2"); await release("old-batch");
   await expect(button("Export batch JSON")).toBeEnabled(); assert.equal(downloads.length, beforeBatch); await download({ batchID: "B2" }, "json");
   const beforeAccount = downloads.length; await hold("old-account", "Export batch JSONL", "401");
   await button("Sign out").click(); await login("B"); await release("old-account"); await open("R1");
