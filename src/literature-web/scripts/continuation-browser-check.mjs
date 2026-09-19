@@ -137,7 +137,7 @@ try {
   await expect(page.locator(".selection-toolbar")).toContainText("0 selected of 101");
   const actions = posts.filter(p => p.route.endsWith("/continuation")); assert.equal(actions.length, 2); assert.deepEqual(actions[0].body, actions[1].body);
   // A real run change resets selection; reopening a >100 set never defaults to an unseen subset.
-  await showWorkspace(page, "Research plans"); await expect(page.locator(".saved-basket")).toContainText("1 records in basket"); await showWorkspace(page, "Search & PDFs"); await expect(button("Select page")).toBeEnabled();
+  await showWorkspace(page, "Research plans"); await expect(page.locator(".saved-basket")).toContainText("1 records in basket"); await showWorkspace(page, "Search & PDFs"); await openDisclosure(page.getByRole("region", { name: "Saved record selection" }), "Selection scope"); await expect(button("Select page")).toBeEnabled();
   await button("Select page").click(); await button("Next records").click(); await expect(page.locator(".selection-toolbar")).toContainText("25 selected of 101");
   await button("Deselect all").click(); await refresh(); await expect(page.locator(".selection-toolbar")).toContainText("0 selected of 101");
   assert.equal(posts.filter(p => p.route.endsWith("/search")).length, 3);
@@ -153,7 +153,7 @@ try {
   attempts = 2; state = "failed"; await refresh(); await button("Retry metadata page").click(); await revealSettledProgress(); await expect(panel().getByRole("status").first()).toContainText("ready");
   state = "running"; await refresh(); await button("Cancel metadata page").click(); await button("Confirm metadata cancellation").click(); await revealSettledProgress(); await expect(panel().getByRole("status").first()).toContainText("cancelled");
   result.cases.push("All ten actual states, attempts3 denial, explicit retry and confirmed cancel; reads never admit pages");
-  state = "ready"; count = 101; await refresh(); await button("Select page").click();
+  state = "ready"; count = 101; await refresh(); await openDisclosure(page.getByRole("region", { name: "Saved record selection" }), "Selection scope"); await button("Select page").click();
   await page.evaluate(() => { window.__ignoreAbort = true; });
   for (const order of ["published", "pending"]) for (const status of [200, 401, 503]) {
     count = 101; await refresh();
@@ -172,7 +172,7 @@ try {
   }
   holdRecordRead = { key: "old-enumeration", offset: 0, limit: 100 }; count = 100; await refresh(); await expect.poll(() => held.has("old-enumeration")).toBe(true);
   count = 101; await refresh(); held.get("old-enumeration")(); held.delete("old-enumeration");
-  await expect(page.locator(".selection-toolbar")).toContainText("25 selected of 101"); await expect(button("Select page")).toBeEnabled();
+  await expect(page.locator(".selection-toolbar")).toContainText("25 selected of 101"); await openDisclosure(page.getByRole("region", { name: "Saved record selection" }), "Selection scope"); await expect(button("Select page")).toBeEnabled();
   await page.evaluate(() => { window.__ignoreAbort = false; });
   result.cases.push("Actual same-run delayed page and selection snapshot bodies cannot regress newer saved membership or widen the established checked subset");
   for (const n of [0, 1, 100, 101, 1000]) { count = n; provider = n === 100 ? 10000 : 25001; state = n === 1000 ? "window_limited" : "ready"; await refresh(); await expect(panel()).toContainText(`${n} saved`); await expect(panel()).toContainText(`${provider.toLocaleString()} provider matches`); }

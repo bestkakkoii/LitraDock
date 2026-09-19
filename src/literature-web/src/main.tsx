@@ -871,11 +871,15 @@ export function App() {
               <section className="selection-toolbar" aria-label="Saved record selection">
                 <p aria-live="polite" style={{ lineHeight: 1.35, marginBottom: ".3rem" }}><strong>{selection.snapshot ? `${selection.count} selected of ${selection.total} saved ${selection.total === 1 ? 'record' : 'records'}` : run ? 'Selection not loaded' : 'No saved selection'}</strong></p>
                 <div className="result-actions">
-                  <button className="secondary" disabled={!selection.canEdit || draftChanged || busy} onClick={selection.selectAll}>Select all saved</button>
+                  <button className="secondary" aria-label="Select all saved" disabled={!selection.canEdit || draftChanged || busy} onClick={selection.selectAll}>All saved</button>
                   <button className="secondary" disabled={!selection.canEdit || draftChanged || busy} onClick={selection.deselectAll}>Deselect all</button>
-                  <button className="secondary" disabled={!selection.canEdit || !records.length || draftChanged || busy} onClick={selection.selectPage}>Select page</button>
-                  <button className="secondary" disabled={!selection.canEdit || !records.length || draftChanged || busy} onClick={selection.deselectPage}>Deselect page</button>
-                  <details className="selection-scope"><summary>Selection scope</summary><p>All saved covers this run across pages, up to 1,000 records. Page controls add or remove only this page. Choices are saved to your library and restored when you reopen the run. All / none also applies to newly retrieved records; individual exceptions remain. PubMed matches not yet saved are excluded.</p>{run && !selection.unavailable && !selection.pending && !selection.error && <button className="secondary" disabled={selection.loading || busy} onClick={() => void selection.reload()}>Reload saved selection</button>}</details>
+                  <details className="selection-scope"><summary>Selection scope</summary>
+                    <div className="result-actions">
+                      <button className="secondary" disabled={!selection.canEdit || !records.length || draftChanged || busy} onClick={selection.selectPage}>Select page</button>
+                      <button className="secondary" disabled={!selection.canEdit || !records.length || draftChanged || busy} onClick={selection.deselectPage}>Deselect page</button>
+                    </div>
+                    <p>All saved covers this run across pages, up to 1,000 records. Page controls add or remove only this page. Choices are saved to your library and restored when you reopen the run. All / none also applies to newly retrieved records; individual exceptions remain. PubMed matches not yet saved are excluded.</p>{run && !selection.unavailable && !selection.pending && !selection.error && <button className="secondary" disabled={selection.loading || busy} onClick={() => void selection.reload()}>Reload saved selection</button>}
+                  </details>
                 </div>
                 {selection.loading && <p role="status">Loading saved selection…</p>}
                 {selection.saving && <p role="status">Saving selection…</p>}

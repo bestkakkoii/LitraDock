@@ -31,9 +31,12 @@ export async function selectionReady(page) {
 
 export async function selectionControl(page, name) {
   await selectionReady(page);
+  const area = page.getByRole('region', {name: 'Saved record selection', exact: true});
+  if (['Select page', 'Deselect page'].includes(name) && !await area.getByRole('button', {name, exact: true}).isVisible()) {
+    await area.locator('.selection-scope > summary').click();
+  }
   const receipt = page.waitForResponse(r => r.request().method() === 'POST' && r.url().endsWith('/selection'));
-  await page.getByRole('region', {name: 'Saved record selection', exact: true})
-    .getByRole('button', {name, exact: true}).click();
+  await area.getByRole('button', {name, exact: true}).click();
   assert.equal((await receipt).status(), 200);
   await selectionReady(page);
 }

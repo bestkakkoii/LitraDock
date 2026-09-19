@@ -144,7 +144,7 @@ try {
     const ready = () => expect(button("Select all saved")).toBeEnabled();
     const count = (n, total) => expect(area).toContainText(`${n} selected of ${total} saved`);
     const action = async name => {
-      if (name === "Reload saved selection" && !await button(name).isVisible()) await openDisclosure(area, "Selection scope");
+      if (["Reload saved selection", "Select page", "Deselect page"].includes(name) && !await button(name).isVisible()) await openDisclosure(area, "Selection scope");
       await button(name).click(); await ready();
       if (await area.locator("details").evaluate(e => e.open)) await area.locator("summary").click();
     };
