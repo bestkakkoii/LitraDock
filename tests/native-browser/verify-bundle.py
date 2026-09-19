@@ -20,7 +20,7 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def validate(document, archives):
+def validate(document, archives, require_source_outcomes=False):
     d = document
     assert set(d) == {"schema", "schemaVersion", "snapshotID", "createdAt", "expiresAt", "planID", "manifest", "parts"}
     assert d["schema"] == "litradock.bundle" and type(d["schemaVersion"]) is int and d["schemaVersion"] == 1
@@ -72,14 +72,35 @@ def validate(document, archives):
     combined = dict(all_files)
     combined["manifest.json"] = json.dumps(d["manifest"]).encode()
     combined["records.json"] = json.dumps(d["manifest"]["research"]).encode()
-    plan.validate(d["manifest"], combined, original_limit=128 * 1024 * 1024)
+    plan.validate(d["manifest"], combined, original_limit=128 * 1024 * 1024, require_source_outcomes=require_source_outcomes)
     return all_files
 
 
-def negatives(d, archives):
+def negatives(d, archives, require_source_outcomes=False):
     mutations = []
     x = copy.deepcopy(d); x["manifest"]["items"].pop(); mutations.append((x, archives))
     x = copy.deepcopy(d); x["manifest"]["research"]["records"][0]["password"] = "private"; mutations.append((x, archives))
+    if "sourceOutcome" in d["manifest"]["items"][0]:
+        legacy = copy.deepcopy(d)
+        for item, record in zip(legacy["manifest"]["items"], legacy["manifest"]["research"]["records"]):
+            item.pop("sourceOutcome", None); record.pop("sourceOutcome", None)
+        legacy_archives = {}
+        for part in legacy["parts"]:
+            name = part["filename"]
+            output = io.BytesIO()
+            with zipfile.ZipFile(io.BytesIO(archives[name])) as source, zipfile.ZipFile(output, "w") as target:
+                for entry in source.infolist():
+                    body = source.read(entry.filename)
+                    if entry.filename == "manifest.json":
+                        local = plan.decode(body)
+                        for item in local["members"]: item.pop("sourceOutcome", None)
+                        body = json.dumps(local).encode()
+                    target.writestr(entry, body)
+            body = legacy_archives[name] = output.getvalue()
+            part.update(bytes=len(body), sha256=sha(body))
+        validate(legacy, legacy_archives)  # Legacy metadata, same original bytes.
+        if require_source_outcomes:
+            mutations.append((legacy, legacy_archives))
     if d["parts"]:
         x = copy.deepcopy(d); x["parts"][0]["sha256"] = "0" * 64; mutations.append((x, archives))
         x = copy.deepcopy(d); x["parts"][0]["files"][0]["searchIDs"] = []; mutations.append((x, archives))
@@ -88,7 +109,7 @@ def negatives(d, archives):
         changed = dict(archives); name = d["parts"][0]["filename"]; changed[name] = changed[name][:-1]; mutations.append((d, changed))
     for doc, blobs in mutations:
         try:
-            validate(doc, blobs)
+            validate(doc, blobs, require_source_outcomes)
         except (AssertionError, KeyError, TypeError, zipfile.BadZipFile):
             continue
         raise AssertionError("Consequential bundle mutation was accepted")
@@ -100,13 +121,14 @@ if __name__ == "__main__":
     parser.add_argument("manifest", type=pathlib.Path)
     parser.add_argument("parts", nargs="*", type=pathlib.Path)
     parser.add_argument("--negative-controls", action="store_true")
+    parser.add_argument("--require-source-outcomes", action="store_true")
     parser.add_argument("--synthetic", action="store_true")
     parser.add_argument("--pdf", action="store_true")
     args = parser.parse_args()
     d = plan.decode(args.manifest.read_bytes())
     archives = {p.name: p.read_bytes() for p in args.parts}
     assert len(archives) == len(args.parts)
-    files = validate(d, archives)
+    files = validate(d, archives, args.require_source_outcomes)
     media = []
     if args.pdf:
         from pypdf import PdfReader
@@ -115,8 +137,8 @@ if __name__ == "__main__":
                 pdf = PdfReader(io.BytesIO(data), strict=True)
                 assert not pdf.is_encrypted and len(pdf.pages) > 0
                 media.append({"file": name, "sha256": sha(data), "bytes": len(data), "pages": len(pdf.pages)})
-    print(json.dumps({"pass": True, "synthetic": args.synthetic, "sourceCalls": 0,
+    print(json.dumps({"pass": True, "synthetic": args.synthetic, "sourceCalls": 0, "require_source_outcomes": args.require_source_outcomes,
                       "parts": len(d["parts"]), "members": len(d["manifest"]["items"]),
                       "uniqueOriginals": len(files), "originalBytes": sum(map(len, files.values())),
                       "manifestSHA256": sha(args.manifest.read_bytes()), "pdf": media,
-                      "negativeControls": negatives(d, archives) if args.negative_controls else 0}, indent=2))
+                      "negativeControls": negatives(d, archives, args.require_source_outcomes) if args.negative_controls else 0}, indent=2))

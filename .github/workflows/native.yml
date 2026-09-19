@@ -56,14 +56,14 @@ jobs:
           go vet ./...
       - name: Independent structured UTF-8 reader and mutation controls
         run: |
-          python3 tests/native-browser/verify-structured.py "$RUNNER_TEMP/native-structured/synthetic.json" "$RUNNER_TEMP/native-structured/synthetic.jsonl" --synthetic --negative-controls
-          python3 tests/native-browser/verify-structured.py "$RUNNER_TEMP/native-structured/postgres-synthetic.json" "$RUNNER_TEMP/native-structured/postgres-synthetic.jsonl" --negative-controls
+          python3 tests/native-browser/verify-structured.py "$RUNNER_TEMP/native-structured/synthetic.json" "$RUNNER_TEMP/native-structured/synthetic.jsonl" --synthetic --negative-controls --require-source-outcomes
+          python3 tests/native-browser/verify-structured.py "$RUNNER_TEMP/native-structured/postgres-synthetic.json" "$RUNNER_TEMP/native-structured/postgres-synthetic.jsonl" --negative-controls --require-source-outcomes
       - name: Independent partitioned originals reader
-        run: python3 tests/native-browser/verify-bundle.py "$RUNNER_TEMP/native-bundle/bundle.json" "$RUNNER_TEMP"/native-bundle/*.zip --synthetic --negative-controls
+        run: python3 tests/native-browser/verify-bundle.py "$RUNNER_TEMP/native-bundle/bundle.json" "$RUNNER_TEMP"/native-bundle/*.zip --synthetic --negative-controls --require-source-outcomes
       - name: Independent whole-plan ZIP and typed metadata controls
-        run: python3 tests/native-browser/verify-plan-export.py "$RUNNER_TEMP/native-plan-export/plan-synthetic.json" "$RUNNER_TEMP/native-plan-export/plan-synthetic.zip" --synthetic --negative-controls
+        run: python3 tests/native-browser/verify-plan-export.py "$RUNNER_TEMP/native-plan-export/plan-synthetic.json" "$RUNNER_TEMP/native-plan-export/plan-synthetic.zip" --synthetic --negative-controls --require-source-outcomes
       - name: Independent frozen multi-run saved-set reader
-        run: python3 tests/native-browser/verify-plan-export.py "$RUNNER_TEMP/native-multirun/saved-set.json" "$RUNNER_TEMP/native-multirun/saved-set.zip" --expected-saved-set "$RUNNER_TEMP/native-multirun/intent.json" --negative-controls --synthetic-transport
+        run: python3 tests/native-browser/verify-plan-export.py "$RUNNER_TEMP/native-multirun/saved-set.json" "$RUNNER_TEMP/native-multirun/saved-set.zip" --expected-saved-set "$RUNNER_TEMP/native-multirun/intent.json" --negative-controls --synthetic-transport --require-source-outcomes
       - name: Independent workbook reader and mutation controls
         run: |
           python3 -m venv "$RUNNER_TEMP/workbook-reader"

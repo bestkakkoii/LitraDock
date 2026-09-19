@@ -27,11 +27,11 @@ def decode(raw):
     return json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=structured.pairs)
 
 
-def validate(d, members=None, original_limit=32 * 1024 * 1024):
+def validate(d, members=None, original_limit=32 * 1024 * 1024, require_source_outcomes=False):
     assert set(d) == {"schema", "schemaVersion", "type", "generatedAt", "plan", "research", "items", "originalsRevalidated", "counts"}
     assert d["schema"] == "litradock.plan-export" and type(d["schemaVersion"]) is int and d["schemaVersion"] == 1
     assert d["type"] == "document" and type(d["originalsRevalidated"]) is bool
-    structured.validate(d["research"])
+    structured.validate(d["research"], require_source_outcomes, originals_revalidated=d["originalsRevalidated"])
     scope = d["research"]["scope"]
     assert scope == {"planId": d["plan"]["planID"], "kind": "plan", "runId": None, "batchId": None, "selection": "all_saved_scope"}
     records, items = d["research"]["records"], d["items"]
@@ -47,7 +47,17 @@ def validate(d, members=None, original_limit=32 * 1024 * 1024):
     for phase in phases:
         assert sum(i["phase"] == phase for i in items) == d["plan"]["counts"][phase]
     for item, record in zip(items, records):
-        assert set(item) == {"searchId", "rank", "childBatchId", "acquisitionState", "phase", "reason", "originalHash", "availability", "availabilityReason", "file", "original"}
+        allowed = {"searchId", "rank", "childBatchId", "acquisitionState", "phase", "reason", "originalHash", "availability", "availabilityReason", "file", "original"}
+        assert set(item) in (allowed, allowed | {"sourceOutcome"})
+        assert ("sourceOutcome" in item) == ("sourceOutcome" in record)
+        if "sourceOutcome" in item:
+            outcome = item["sourceOutcome"]
+            assert outcome == record["sourceOutcome"] and not outcome["retryEligible"]
+            assert outcome["requestedFormat"] == record["acquisition"]["requestedFormat"]
+            assert (outcome["status"] == "ready") == (item["availability"] == "included")
+            if item["acquisitionState"] == "acquired":
+                expected = "ready" if item["availability"] == "included" else "restricted" if d["originalsRevalidated"] else "stored"
+                assert outcome["status"] == expected
         assert item["phase"] in phases and isinstance(item["reason"], str)
         assert record["acquisition"]["state"] == item["acquisitionState"]
         assert record["acquisition"]["reason"] == (item["reason"] or None)
@@ -79,7 +89,7 @@ def validate(d, members=None, original_limit=32 * 1024 * 1024):
     return files
 
 
-def load(path):
+def load(path, require_source_outcomes=False):
     raw = pathlib.Path(path).read_bytes()
     if path.endswith(".zip"):
         assert len(raw) <= 37 * 1024 * 1024
@@ -92,7 +102,7 @@ def load(path):
         d = decode(members["manifest.json"])
     else:
         d, members = decode(raw), None
-    files = validate(d, members)
+    files = validate(d, members, require_source_outcomes=require_source_outcomes)
     return d, members, files
 
 
@@ -136,13 +146,38 @@ def saved_set_negatives(d, expected):
     return len(mutations)
 
 
-def negatives(d, members):
+def metadata_members(d, members):
+    """Keep original bytes intact while changing both embedded metadata copies."""
+    if members is None:
+        return None
+    return dict(members, **{"manifest.json": json.dumps(d).encode(), "records.json": json.dumps(d["research"]).encode()})
+
+
+def negatives(d, members, require_source_outcomes=False):
     mutations = []
     x = copy.deepcopy(d); x["items"].pop(); mutations.append((x, members))
     x = copy.deepcopy(d); x["items"][0]["searchId"] = "foreign"; mutations.append((x, members))
     x = copy.deepcopy(d); x["research"]["records"][0]["identifiers"]["pmid"] = 123; mutations.append((x, members))
     x = copy.deepcopy(d); x["research"]["records"][0]["password"] = "forbidden"; mutations.append((x, members))
     x = copy.deepcopy(d); x["plan"]["counts"]["waiting"] += 1; mutations.append((x, members))
+    if "sourceOutcome" in d["items"][0]:
+        legacy = copy.deepcopy(d)
+        for item, record in zip(legacy["items"], legacy["research"]["records"]):
+            item.pop("sourceOutcome", None); record.pop("sourceOutcome", None)
+        legacy_members = metadata_members(legacy, members)
+        validate(legacy, legacy_members)  # Explicit legacy mode still reads frozen snapshots.
+        if require_source_outcomes:
+            mutations.append((legacy, legacy_members))
+        x = copy.deepcopy(d); x["items"][0]["sourceOutcome"]["status"] = "invented_success"; mutations.append((x, members))
+        x = copy.deepcopy(d); x["items"][0].pop("sourceOutcome"); mutations.append((x, members))
+        x = copy.deepcopy(d)
+        for outcome in (x["items"][0]["sourceOutcome"], x["research"]["records"][0]["sourceOutcome"]): outcome["retryEligible"] = True
+        mutations.append((x, members))
+        held = next((n for n, item in enumerate(d["items"]) if item["acquisitionState"] in {"unavailable", "unsupported", "held"}), None)
+        if held is not None:
+            x = copy.deepcopy(d)
+            for outcome in (x["items"][held]["sourceOutcome"], x["research"]["records"][held]["sourceOutcome"]): outcome["status"] = "stored"
+            mutations.append((x, metadata_members(x, members)))
     if members is not None:
         x = copy.deepcopy(d); x["counts"]["uniqueOriginals"] += 1; mutations.append((x, members))
         x = copy.deepcopy(members); x["unexpected.txt"] = b"x"; mutations.append((d, x))
@@ -152,8 +187,8 @@ def negatives(d, members):
             x = copy.deepcopy(members); x[name] += b"modified"; mutations.append((d, x))
     for value, files in mutations:
         try:
-            validate(value, files)
-        except (AssertionError, KeyError, TypeError):
+            validate(value, files, require_source_outcomes=require_source_outcomes)
+        except (AssertionError, KeyError, TypeError, ValueError):
             continue
         raise AssertionError("Consequential malformed plan export accepted")
     return len(mutations)
@@ -163,6 +198,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("files", nargs="+")
     parser.add_argument("--negative-controls", action="store_true")
+    parser.add_argument("--require-source-outcomes", action="store_true")
     parser.add_argument("--pdf", action="store_true")
     parser.add_argument("--synthetic", action="store_true")
     parser.add_argument("--synthetic-transport", action="store_true", help="Label isolated synthetic data without imposing the legacy 100-record fixture")
@@ -170,7 +206,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     result = []
     for path in args.files:
-        d, members, originals = load(path)
+        d, members, originals = load(path, args.require_source_outcomes)
         saved_controls = 0
         if args.expected_saved_set:
             expected = decode(args.expected_saved_set.read_bytes())
@@ -193,5 +229,5 @@ if __name__ == "__main__":
                 assert d["counts"]["includedRecords"] == 3 and d["counts"]["uniqueOriginals"] == 2
                 assert d["items"][0]["file"] == d["items"][1]["file"] != d["items"][2]["file"]
                 assert d["items"][2]["original"]["depositVersion"] == "2"
-        result.append({"file": pathlib.Path(path).name, "members": len(d["items"]), "counts": d["counts"], "pdfs": pages, "savedSetNegativeControls": saved_controls, "negativeControls": negatives(d, members) if args.negative_controls else 0})
-    print(json.dumps({"pass": True, "synthetic": args.synthetic or args.synthetic_transport, "files": result}))
+        result.append({"file": pathlib.Path(path).name, "members": len(d["items"]), "counts": d["counts"], "pdfs": pages, "savedSetNegativeControls": saved_controls, "negativeControls": negatives(d, members, args.require_source_outcomes) if args.negative_controls else 0})
+    print(json.dumps({"pass": True, "synthetic": args.synthetic or args.synthetic_transport, "require_source_outcomes": args.require_source_outcomes, "files": result}))

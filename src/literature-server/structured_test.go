@@ -23,6 +23,8 @@ func TestStructuredEncoding(t *testing.T) {
 	if record.SearchID != id || record.Publication.Title == nil || *record.Publication.Title != title || record.Publication.Authors != nil || *record.IDs.PMID != "0000123" {
 		t.Fatal("text or missing-value fidelity")
 	}
+	outcome := describeSource("pdf", "", "", false, false, false, sourceArticle(record))
+	record.SourceOutcome = &outcome
 	d := structuredDocument{Schema: structuredSchema, Version: 1, Type: "document", GeneratedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), Scope: structuredScope{Kind: "run", RunID: optionalText("RUN-SYNTHETIC"), Selection: "all_saved_scope"}, Counts: structuredCounts{Exported: 1000, Scope: 1000}, Queries: []structuredQuery{{RunID: "RUN-SYNTHETIC", Query: "SYNTHETIC Boolean AND 醫學", State: "partial", Provider: 25001, Retrieved: 1000, Limit: 1000}}, Records: make([]structuredRecord, 1000)}
 	for i := range d.Records {
 		r := record
