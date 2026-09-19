@@ -314,6 +314,68 @@ func TestRunSelectionActualPostgres(t *testing.T) {
 		service.ServeHTTP(w, r)
 		return w
 	}
+	t.Run("schema9-saved-set-compatibility", func(t *testing.T) {
+		service.cfg.SavedSetEnabled = true
+		defer func() { service.cfg.SavedSetEnabled = false }()
+		firstRun, secondRun := newRun(3), newRun(2)
+		selected := read(firstRun)
+		members := []savedSetMember{}
+		for n, id := range selected.SelectedIDs {
+			runs := []string{firstRun}
+			if n < 2 {
+				runs = append(runs, secondRun)
+			}
+			members = append(members, savedSetMember{id, runs})
+		}
+		_, intent, err := canonicalSavedSet(members)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = db.QueryRow(ctx, "SELECT max(version) FROM native_schema").Scan(&version); err != nil || version != 9 {
+			t.Fatal("selection migration must precede saved-set compatibility", version, err)
+		}
+		endpoint := "/api/libraries/" + library + "/plans"
+		for _, format := range []string{"xml", "pdf"} {
+			body := map[string]any{"requestID": newUUID(), "scopeKind": "saved_set", "members": members, "format": format}
+			got := request("POST", endpoint, body, token, csrf)
+			if got.Code != 200 {
+				t.Fatalf("schema9 saved-set %s admission status=%d response=%s", format, got.Code, got.Body.String())
+			}
+			var admitted planReceipt
+			if json.Unmarshal(got.Body.Bytes(), &admitted) != nil || admitted.SelectedCount != 3 {
+				t.Fatal("saved-set admission receipt lost its exact three records")
+			}
+			if format == "xml" {
+				change(firstRun, runSelectionAction{RequestID: newUUID(), Revision: selected.Revision, Action: "none"})
+			}
+			// 已提交籃子是獨立意圖；之後的勾選與停用新計畫都不能改寫或重複原計畫。
+			service.cfg.SavedSetEnabled = false
+			replayed := request("POST", endpoint, body, token, csrf)
+			service.cfg.SavedSetEnabled = true
+			if replayed.Code != 200 || !bytes.Equal(got.Body.Bytes(), replayed.Body.Bytes()) {
+				t.Fatal("disabled saved-set replay changed the original receipt", replayed.Code)
+			}
+			var retained, storedFormat string
+			var itemCount, associationCount, receiptCount int
+			if err = db.QueryRow(ctx, `SELECT selection,requested_format,
+ (SELECT count(*) FROM native_plan_items WHERE library_id=$1 AND plan_id=$2),
+ (SELECT count(*) FROM native_plan_sources WHERE library_id=$1 AND plan_id=$2),
+ (SELECT count(*) FROM native_plans WHERE library_id=$1 AND request_id=$3)
+ FROM native_plans WHERE library_id=$1 AND plan_id=$2`, library, admitted.PlanID, body["requestID"]).Scan(&retained, &storedFormat, &itemCount, &associationCount, &receiptCount); err != nil || retained != intent || storedFormat != format || itemCount != 3 || associationCount != 5 || receiptCount != 1 {
+				t.Fatal("selection change/replay changed saved-set membership, provenance or receipt", err)
+			}
+		}
+		// 僅接受已知相容版本；未知後續結構仍須拒絕，且不得先寫入計畫。
+		must("INSERT INTO native_schema(version) VALUES(10)")
+		defer must("DELETE FROM native_schema WHERE version=10")
+		requestID := newUUID()
+		got := request("POST", endpoint, map[string]any{"requestID": requestID, "scopeKind": "saved_set", "members": members, "format": "xml"}, token, csrf)
+		var refusedCount int
+		if err = db.QueryRow(ctx, "SELECT count(*) FROM native_plans WHERE library_id=$1 AND request_id=$2", library, requestID).Scan(&refusedCount); err != nil || got.Code != 409 || !strings.Contains(got.Body.String(), "supported operator migration") || refusedCount != 0 {
+			t.Fatal("unknown schema was admitted or wrote a partial plan", got.Code, err)
+		}
+		t.Log("SYNTHETIC schema9 XML/PDF saved sets admitted; three records/five associations and disabled replay preserved; unknown schema10 refused before writes")
+	})
 	selectionPath := "/api/libraries/" + library + "/runs/" + run + "/selection"
 	if got := request("GET", selectionPath, nil, token, csrf); got.Code != 200 {
 		t.Fatal("authorized selection read", got.Code, got.Body.String())

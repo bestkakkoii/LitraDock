@@ -83,7 +83,9 @@ try {
     await page.route(endpoint,async route=>{
       if(route.request().method()!=='POST'||lost)return route.continue();
       // A malformed committed receipt avoids Chromium transparently retrying a socket reset.
-      lost=true;const response=await route.fetch();assert.equal(response.status(),200);plan=(await response.json()).planID;
+      lost=true;const response=await route.fetch();
+      assert.equal(response.status(),200,`Saved-set admission: ${(await response.text()).slice(0,2048)}`);
+      plan=(await response.json()).planID;
       await route.fulfill({status:200,contentType:'application/json',body:'{"unconfirmed":true}'});
     });
     await basket.getByRole('button',{name:'Download basket XMLs (3)',exact:true}).click();

@@ -126,7 +126,7 @@ func (s *server) queueSavedSet(ctx context.Context, library, requestID, format s
 	if err = tx.QueryRow(ctx, "SELECT max(version) FROM native_schema").Scan(&version); err != nil {
 		return receipt, err
 	}
-	if version != 4 && version != 5 && version != 6 && version != 8 {
+	if version != 4 && version != 5 && version != 6 && version != 8 && version != 9 {
 		return receipt, planConflict("Saved-set plans require the supported operator migration; existing single-run plans remain available.")
 	}
 	ids, runs := []string{}, []string{}
