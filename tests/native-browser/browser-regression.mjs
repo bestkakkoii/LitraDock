@@ -209,7 +209,8 @@ try {
         if (scope === 'run') await openDisclosure(page, "Export saved results and other actions");
         const label=scope==='run'?`Export saved run ${format.toUpperCase()}`:`Export batch ${format.toUpperCase()}`;
         const waiting=page.waitForEvent('download'); await page.getByRole('button',{name:label,exact:true}).click();
-        const file=await waiting; assert.equal(file.suggestedFilename(),`litradock-research.${format}`);
+        const file=await waiting;
+        assert.equal(file.suggestedFilename(),scope==='run'?`litradock-saved-${capturedRunId}.${format}`:`batch-${capturedBatchId}.${format}`);
         const destination=path.join(directory,`${scope}.${format}`);await file.saveAs(destination);
         const parsed=JSON.parse(execFileSync(process.env.NATIVE_STRUCTURED_PYTHON||'python3',[fileURLToPath(new URL('./verify-structured.py',import.meta.url)),destination],{encoding:'utf8',windowsHide:true}));
         assert.deepEqual(parsed.records,[3]);
@@ -298,7 +299,9 @@ try {
     await page.getByRole('button',{name:'Previous records',exact:true}).click();
     await until(async()=>(await page.locator('body').innerText()).includes('1–5 shown'),'first saved page');
     await setSavedCheckbox(page, boxes.first(), true);
-    const selectedIds=[pages[5],pages[0]];
+    // Durable choices retain saved relevance/rank order, including when the
+    // researcher selected page two before returning to page one.
+    const selectedIds=[pages[0],pages[5]];
     const post=page.waitForRequest(r=>r.method()==='POST'&&r.url().endsWith('/batches'));
     await page.getByRole('button',{name:'Create batch (2/10)',exact:true}).click();
     assert.deepEqual((await post).postDataJSON().searchIDs,selectedIds);
