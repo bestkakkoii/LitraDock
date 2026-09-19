@@ -77,11 +77,11 @@ try {
         const box = selector => { const e = document.querySelector(selector), r = e.getBoundingClientRect(); return { y: r.y, bottom: r.bottom, width: r.width }; };
         return { width: innerWidth, height: innerHeight, documentWidth: document.documentElement.scrollWidth, query: box('#pubmed-query'), results: box('#results-heading'), selection: box('.selection-toolbar'), pdf: box('.pdf-availability > button'), ...(document.querySelector('.result-card h3') ? { firstTitle: box('.result-card h3') } : {}) };
       });
+      result.geometry.push({ name, ...geometry });
+      await page.screenshot({ path: path.join(out, `${viewport.width}-${name}.png`) });
       assert(geometry.documentWidth <= viewport.width, `${name}: horizontal overflow`);
       for (const key of ['query', 'results', 'selection', 'pdf']) assert(geometry[key].y >= 0 && geometry[key].bottom < viewport.height, `${name}: essential ${key} is below viewport: ${JSON.stringify(geometry[key])}`);
       if (geometry.firstTitle) assert(geometry.firstTitle.y < viewport.height - 20, `${name}: first result title is not discoverable in the initial view`);
-      result.geometry.push({ name, ...geometry });
-      await page.screenshot({ path: path.join(out, `${viewport.width}-${name}.png`) });
     };
     await page.goto(origin);
     await page.getByLabel("Login", { exact: true }).fill("SYNTHETIC"); await page.getByLabel("Password", { exact: true }).fill("SYNTHETIC"); await button("Sign in").click();

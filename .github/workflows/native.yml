@@ -186,6 +186,8 @@ jobs:
         with:
           name: native-browser-synthetic-evidence
           path: |
+            src/literature-web/.litradock/runtime/native022/**/result.json
+            src/literature-web/.litradock/runtime/native022/**/*.png
             src/literature-web/.litradock/runtime/frontend018/**/result.json
             ${{ runner.temp }}/native-bundle-browser/receipt.json
             ${{ runner.temp }}/native-bundle-browser/browser.log

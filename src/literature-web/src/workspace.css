@@ -94,8 +94,9 @@ summary { cursor: pointer; }
   .research-workspace .search-panel { padding: .65rem; margin-bottom: .65rem; }
   .research-workspace .query { min-width: 0; flex-basis: 0 !important; }
   .search-panel form > button { width: auto; align-self: end; padding-left: .85rem; padding-right: .85rem; }
-  .research-workspace .compact-result-head { flex-direction: row; align-items: center; }
-  .result-display { gap: .3rem; flex-wrap: wrap; justify-content: flex-end; max-width: 155px; }
+  /* 固定兩欄的分配，避免系統字型較寬時將排序整組推到下一列。 */
+  .research-workspace .compact-result-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 140px); align-items: center; }
+  .result-display { gap: .3rem; flex-wrap: wrap; justify-content: flex-end; max-width: 140px; }
   .result-display > span { font-size: .75rem; }
   .compact-result-head h2 { font-size: 1rem; }
   .research-workspace .selection-toolbar, .research-workspace .pdf-availability { padding: .55rem .7rem; }
