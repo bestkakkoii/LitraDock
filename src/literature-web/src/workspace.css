@@ -120,5 +120,5 @@ summary { cursor: pointer; }
 .research-workspace .active-results > .pager { margin: .4rem 0; gap: .4rem; }
 .research-workspace .active-results > .pager button { min-height: 36px; padding: .35rem .65rem; font-size: .85rem; }
 .result-secondary-options { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 .65rem; }
-.result-secondary-options > details { flex: 1 1 160px; min-width: 0; margin: .25rem 0; }
+.result-secondary-options > details { flex: 1 1 160px; min-width: 0; margin: 0; }
 .result-secondary-options > details[open] { flex-basis: 100%; }

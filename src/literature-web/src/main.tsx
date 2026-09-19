@@ -891,7 +891,7 @@ export function App() {
               <div><h2 id="results-heading" tabIndex={-1}>Results <span className="count">{countLabel(run?.total ?? 0, continuation?.capture ? "initial match" : "match", continuation?.capture ? "initial matches" : "matches")}</span></h2>
                 <p className="muted small">{continuation?.capture ? `${countLabel(continuation.windowCount, "ID captured", "IDs captured")} · ${continuation.savedCount.toLocaleString()} saved` : `${run?.fetched ?? 0} loaded`} · {records.length ? recordOffset + 1 : 0}–{recordOffset + records.length} shown{run && !continuation?.capture ? ` · ${run.state}` : ''}</p>
               </div>
-              <div className="result-display"><span className="small">{continuation?.capture && continuation.capture.state !== "not_started" ? "Order: initial, then captured" : "Sort: PubMed relevance"}</span>
+              <div className="result-display"><span className="small">{continuation?.capture && continuation.capture.state !== "not_started" ? "Order: saved sequence" : "Sort: PubMed relevance"}</span>
                 <label>Per page <select aria-label="Page size" value={pageSize} disabled={busy} onChange={e => { const size = Number(e.target.value); setPageSize(size); if (run) void openSaved(run.run_id, 0, size); }}>
                   {[5, 25, 50, 100].map(n => <option key={n}>{n}</option>)}
                 </select></label>
