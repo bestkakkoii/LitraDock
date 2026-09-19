@@ -9,6 +9,8 @@ jobs:
   qualify:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
     services:
       postgres:
         image: postgres:18
