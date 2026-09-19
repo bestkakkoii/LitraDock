@@ -572,6 +572,21 @@ func (s *server) savedRunPage(ctx context.Context, library, run string, offset, 
 	if e != nil {
 		return nil, e
 	}
+	if s.native {
+		ids := make([]string, 0, len(articles))
+		for _, value := range articles {
+			ids = append(ids, articleString(value.(map[string]any), "SearchId"))
+		}
+		outcomes, err := sourceHistory(ctx, tx, library, ids, "pdf")
+		if err != nil {
+			return nil, err
+		}
+		for _, value := range articles {
+			a := value.(map[string]any)
+			links(a)
+			a["SourceOutcome"] = outcomes[articleString(a, "SearchId")]
+		}
+	}
 	continuation, e := s.continuationStatusFrom(ctx, tx, library, run)
 	if e != nil {
 		return nil, e

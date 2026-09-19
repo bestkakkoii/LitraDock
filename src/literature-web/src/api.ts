@@ -1,6 +1,12 @@
 import { readTransfer, TransferOptions } from "./transfer";
 import { Continuation, validateContinuation } from "./continuation/api";
 export type Session = { csrf: string };
+export type SourceOutcome = {
+  status: string; label: string; detail: string; nextAction: string;
+  requestedFormat: string; evidence: string; observedAt: string | null;
+  retryEligible: boolean; batchId: string | null;
+  sourceLinks: { pubmed: string | null; pmc: string | null; doi: string | null; doiLinkState: string | null };
+};
 export type Library = { library_id: string; name: string };
 export type Run = {
   run_id: string;
@@ -11,6 +17,7 @@ export type Run = {
   reason?: string;
 };
 export type Article = Record<string, unknown> & {
+  SourceOutcome?: SourceOutcome;
   SearchId?: string;
   Title?: string;
   Authors?: string;
@@ -59,6 +66,7 @@ export type ServiceInfo = {
   retention?: string;
 };
 export type BatchItem = {
+  sourceOutcome?: SourceOutcome;
   mediaType?: string;
   depositVersion?: string;
   depositType?: string;

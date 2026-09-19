@@ -1,0 +1,8 @@
+[Unit]
+Description=Daily native literature paired recovery
+[Timer]
+OnCalendar=*-*-* 04:25:00 UTC
+Persistent=true
+RandomizedDelaySec=60
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,20 @@
+name: Native operations contracts
+on:
+  workflow_dispatch:
+  push:
+    branches: [native-ops-020]
+permissions:
+  contents: read
+jobs:
+  isolated-contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Synthetic filesystem and lifecycle controls
+        run: python deployment/native-operations/test_native_ops.py
+      - name: Syntax check
+        run: python -m py_compile deployment/native-operations/native_ops.py

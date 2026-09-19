@@ -55,6 +55,7 @@ type planSummary struct {
 	RetryEligibleCount int            `json:"retryEligibleCount"`
 }
 type planItem struct {
+	SourceOutcome     *sourceOutcome `json:"sourceOutcome,omitempty"`
 	RunIDs            []string       `json:"runIDs,omitempty"`
 	MediaType         string         `json:"mediaType"`
 	DepositVersion    string         `json:"depositVersion"`
@@ -413,6 +414,12 @@ func (s *server) planDetail(ctx context.Context, library, id string, offset, lim
 				i.Reason = "Historical original retained; current policy or integrity prevents Save. Open source links."
 			}
 		}
+		state := sourceText(i.AcquisitionState)
+		if state == "" && p.State != "saved_snapshot" {
+			state = i.Phase
+		}
+		outcome := describeSource(p.RequestedFormat, state, i.Reason, i.RetryEligible && p.State != "saved_snapshot", true, i.DownloadAvailable, i.Article)
+		i.SourceOutcome = &outcome
 	}
 	return map[string]any{"plan": p, "items": page, "total": len(items), "offset": offset, "limit": limit, "nextPollAfterMs": 2000, "policy": formatPolicy(p.RequestedFormat)}, tx.Commit(ctx)
 }

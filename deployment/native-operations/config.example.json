@@ -1,0 +1,12 @@
+{
+  "database": "litradock_native_example",
+  "application_config": "/etc/litradock-native/application.json",
+  "runtime_directory": "/opt/litradock-native/current",
+  "runtime_archive": "/var/lib/litradock-native-recovery/runtime.tar",
+  "runtime_sha256": "REPLACE_WITH_VERIFIED_RUNTIME_SHA256",
+  "expected_source": "REPLACE_WITH_EXACT_SOURCE_REVISION",
+  "expected_application_revision": "REPLACE_WITH_EXACT_DEPLOYED_REVISION_OR_SOURCE_URL",
+  "expected_schema": 8,
+  "backup_root": "/var/backups/litradock-native-pairs",
+  "expiry_command": ["/usr/bin/python3.13", "/opt/litradock-native/expire.py"]
+}

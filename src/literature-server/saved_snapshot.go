@@ -223,6 +223,9 @@ func (s *server) saveResearchSnapshotOnce(ctx context.Context, library, request,
 			}
 		}
 		frozen.Research.Records[rank].Acquisition = structuredAcquisition{i.AcquisitionState, optionalText(i.Reason), optionalText(format)}
+		outcome := describeSource(format, sourceText(i.AcquisitionState), i.Reason, false, false, false, sourceArticle(frozen.Research.Records[rank]))
+		i.SourceOutcome = &outcome
+		frozen.Research.Records[rank].SourceOutcome = &outcome
 		frozen.Observations = append(frozen.Observations, savedSnapshotObservation{i, i.raw})
 	}
 	raw, e = json.Marshal(frozen)

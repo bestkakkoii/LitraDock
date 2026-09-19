@@ -1,0 +1,12 @@
+[Unit]
+Description=Recheck native literature operational expiry
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/usr/bin/python3 /opt/litradock-native-operations/native_ops.py expiry --config /etc/litradock-native/operations.json
+TimeoutStartSec=55
+KillMode=control-group
+MemoryMax=96M
+CPUQuota=25%
+TasksMax=16
+PrivateTmp=true

@@ -1,4 +1,4 @@
-import { Article, request } from "../api";
+import { Article, SourceOutcome, request } from "../api";
 import { SavedMember } from "./basket";
 
 export const phases = ["waiting", "queued", "running", "completed", "held", "retry", "paused", "cancelled"] as const;
@@ -15,6 +15,7 @@ export type PlanSummary = {
   retryEligibleCount: number;
 };
 export type PlanItem = {
+  sourceOutcome?: SourceOutcome;
   runIDs?: string[];
   mediaType?: string; depositVersion?: string; depositType?: string;
   searchID: string; rank: number; childBatchID: string | null; phase: Phase;

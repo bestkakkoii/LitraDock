@@ -52,7 +52,7 @@ type cloudMetadata struct {
 }
 
 func pdfHeld(reason string) error {
-	return &sourceError{"unavailable", reason + " No PDF accepted; open the article source links."}
+	return &sourceError{"unavailable", reason + pdfSuffix}
 }
 
 func cloudVersion(b []byte, pmcid string) (string, error) {
@@ -66,20 +66,45 @@ func cloudVersion(b []byte, pmcid string) (string, error) {
 	if n.Name != "ListBucketResult" || n.Namespace != "http://s3.amazonaws.com/doc/2006-03-01/" {
 		return "", pdfHeld("Unexpected version listing.")
 	}
-	for key, want := range map[string]string{"Name": "pmc-oa-opendata", "Prefix": pmcid + ".", "Delimiter": "/", "IsTruncated": "false", "MaxKeys": "3", "KeyCount": "1"} {
+	for key, want := range map[string]string{"Name": "pmc-oa-opendata", "Prefix": pmcid + ".", "Delimiter": "/", "MaxKeys": "3"} {
 		v := n.direct(key)
 		if len(v) != 1 || len(v[0].Children) != 0 || v[0].Namespace != n.Namespace || v[0].Text != want {
 			return "", pdfHeld("No single complete, unambiguous deposit version was listed.")
 		}
 	}
 	versions := n.direct("CommonPrefixes")
-	if len(versions) != 1 || len(n.direct("Contents")) != 0 || len(versions[0].direct("Prefix")) != 1 {
-		return "", pdfHeld("Missing or multiple deposit versions require review.")
+	for _, key := range []string{"KeyCount", "IsTruncated"} {
+		v := n.direct(key)
+		if len(v) != 1 || len(v[0].Children) != 0 || v[0].Namespace != n.Namespace {
+			return "", pdfHeld("Invalid deposit listing counts or completeness.")
+		}
 	}
-	prefix := versions[0].child("Prefix")
-	version := strings.TrimSuffix(prefix.Text, "/")
-	if prefix.Namespace != n.Namespace || len(prefix.Children) != 0 || prefix.Text != version+"/" || !depositPattern.MatchString(version) || !strings.HasPrefix(version, pmcid+".") {
-		return "", pdfHeld("Deposit identity mismatch.")
+	count, e := strconv.Atoi(n.child("KeyCount").Text)
+	truncated := n.child("IsTruncated").Text
+	if e != nil || count < 0 || count > 3 || strconv.Itoa(count) != n.child("KeyCount").Text || count != len(versions) || len(n.direct("Contents")) != 0 || truncated != "true" && truncated != "false" {
+		return "", pdfHeld("Invalid deposit listing counts or completeness.")
+	}
+	seen := map[string]bool{}
+	version := ""
+	for _, listed := range versions {
+		if listed.Namespace != n.Namespace || len(listed.Children) != 1 || len(listed.direct("Prefix")) != 1 {
+			return "", pdfHeld("Deposit identity mismatch.")
+		}
+		prefix := listed.child("Prefix")
+		version = strings.TrimSuffix(prefix.Text, "/")
+		if prefix.Namespace != n.Namespace || len(prefix.Children) != 0 || prefix.Text != version+"/" || !depositPattern.MatchString(version) || !strings.HasPrefix(version, pmcid+".") || seen[version] {
+			return "", pdfHeld("Deposit identity mismatch.")
+		}
+		seen[version] = true
+	}
+	if truncated == "true" {
+		return "", pdfHeld(pdfIncompleteListing)
+	}
+	if count == 0 {
+		return "", pdfHeld(pdfNoDeposit)
+	}
+	if count > 1 {
+		return "", pdfHeld(pdfManyVersions)
 	}
 	return version, nil
 }
@@ -157,11 +182,20 @@ func parseCloudMetadata(b []byte, version string, a map[string]any) (cloudMetada
 	if m.PMCID+"."+strconv.Itoa(m.Version) != version || m.PMCID != articleString(a, "Pmcid") || strconv.FormatInt(m.PMID, 10) != articleString(a, "Pmid") || m.DOI == "" || normalizeDoi(m.DOI) != articleString(a, "Doi") {
 		return m, pdfHeld("Article identifiers or deposit version disagree.")
 	}
+	if m.Manuscript != nil && *m.Manuscript {
+		if m.License == "TDM" {
+			return m, pdfHeld(pdfManuscriptTDM)
+		}
+		return m, pdfHeld(pdfManuscript)
+	}
+	if m.License == "TDM" {
+		return m, pdfHeld(pdfTDM)
+	}
 	if m.Open == nil || !*m.Open || m.Manuscript == nil || *m.Manuscript || m.OCR == nil || *m.OCR || m.Retracted == nil || *m.Retracted || m.License != "CC BY" {
 		return m, pdfHeld("Deposit rights, type or retraction status is unsupported or unknown.")
 	}
 	if m.PDF == "" {
-		return m, pdfHeld("PMC advertises no original PDF for this deposit; rendering is not available.")
+		return m, pdfHeld(pdfMissing)
 	}
 	if _, _, e := cloudObject(m.PDF, version, "pdf"); e != nil {
 		return m, e

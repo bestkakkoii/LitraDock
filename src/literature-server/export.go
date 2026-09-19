@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func csvSafe(s string) string {
@@ -56,6 +58,59 @@ func (s *server) exportRows(ctx context.Context, library, run, batch string) ([]
 	if len(rows) != count {
 		return nil, errors.New("Saved records changed during export; retry without a partial export.")
 	}
+	for _, row := range rows {
+		row["run_ids"] = run
+		row["batch_id"] = batch
+	}
+	if batch != "" {
+		ids := []string{}
+		byID := map[string]map[string]any{}
+		for _, row := range rows {
+			id := row["search_id"].(string)
+			ids = append(ids, id)
+			byID[id] = row
+		}
+		links, e := s.rows(ctx, "SELECT search_id,run_id FROM ld_results WHERE library_id=$1 AND search_id=ANY($2) ORDER BY search_id,run_id LIMIT 10001", library, ids)
+		if e != nil {
+			return nil, e
+		}
+		if len(links) > 10000 {
+			return nil, errors.New("Saved query association bound exceeded; no partial export")
+		}
+		for _, link := range links {
+			row := byID[link["search_id"].(string)]
+			previous := row["run_ids"].(string)
+			if previous != "" {
+				previous += "; "
+			}
+			row["run_ids"] = previous + link["run_id"].(string)
+		}
+	}
+	if run != "" {
+		tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback(context.Background())
+		ids := []string{}
+		for _, row := range rows {
+			var a map[string]any
+			if json.Unmarshal([]byte(row["metadata"].(string)), &a) != nil {
+				return nil, errors.New("Invalid saved metadata")
+			}
+			ids = append(ids, articleString(a, "SearchId"))
+		}
+		outcomes, err := sourceHistory(ctx, tx, library, ids, "pdf")
+		if err != nil {
+			return nil, err
+		}
+		for n, row := range rows {
+			row["sourceOutcome"] = outcomes[ids[n]]
+		}
+		if err = tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+	}
 	return rows, nil
 }
 func (s *server) exportCSV(ctx context.Context, library, run, batch string) ([]byte, error) {
@@ -65,7 +120,7 @@ func (s *server) exportCSV(ctx context.Context, library, run, batch string) ([]b
 	}
 	var b bytes.Buffer
 	w := csv.NewWriter(&b)
-	_ = w.Write([]string{"Search ID", "Title", "Authors", "Year", "PMID", "PMCID", "DOI", "PubMed URL", "PMC URL", "DOI URL", "Current item state", "Reason", "Rights URI", "Original SHA256"})
+	_ = w.Write(append(append([]string{"Search ID", "Title", "Authors", "Year", "PMID", "PMCID", "DOI", "PubMed URL", "PMC URL", "DOI URL", "Current item state", "Reason", "Rights URI", "Original SHA256"}, sourceOutcomeColumns...), "Search Run ID", "Batch ID"))
 	for _, row := range rows {
 		var a map[string]any
 		if json.Unmarshal([]byte(row["metadata"].(string)), &a) != nil {
@@ -80,6 +135,10 @@ func (s *server) exportCSV(ctx context.Context, library, run, batch string) ([]b
 			v, _ := row[key].(string)
 			out = append(out, csvSafe(v))
 		}
+		for _, value := range outcomeValues(row) {
+			out = append(out, csvSafe(value))
+		}
+		out = append(out, csvSafe(row["run_ids"].(string)), csvSafe(row["batch_id"].(string)))
 		_ = w.Write(out)
 		if b.Len() > 4*1024*1024 {
 			return nil, errors.New("export byte limit reached; no partial export returned")
@@ -161,14 +220,25 @@ func (s *server) nativeRoutes(w http.ResponseWriter, r *http.Request, ctx contex
 			}
 			return true
 		}
-		if input.Format == "zip" && input.BatchID != "" && input.RunID == "" {
+		if (input.Format == "zip" || input.Format == "pdf-download") && input.BatchID != "" && input.RunID == "" {
 			if !s.admitBundle(w) {
 				return true
 			}
 			defer s.bundleBusy.Store(false)
 			b, e := s.exportBundle(ctx, library, input.BatchID)
+			var report []byte
+			if e == nil && input.Format == "pdf-download" {
+				report, b, e = pdfDownloadPackage(b, "batch", input.BatchID)
+			}
 			if e != nil {
 				reply(w, 409, map[string]string{"error": e.Error()})
+			} else if input.Format == "pdf-download" {
+				release, ok := s.snapshotResponseAdmission(w, r, ctx, library)
+				if !ok {
+					return true
+				}
+				defer release()
+				writePDFDownload(w, report, b)
 			} else {
 				w.Header().Set("Content-Type", "application/zip")
 				w.Header().Set("Content-Disposition", "attachment; filename=\"litradock-originals.zip\"")
@@ -224,12 +294,14 @@ func (s *server) exportBundle(ctx context.Context, library, batch string) ([]byt
 	for _, row := range detail["items"].([]map[string]any) {
 		a := row["article"].(map[string]any)
 		entry := map[string]any{"searchId": row["search_id"], "pmid": a["Pmid"], "pmcid": a["Pmcid"], "doi": a["Doi"], "sourceLinks": []any{a["OriginalUri"], a["PmcUri"], a["DoiUri"]}, "state": row["state"], "reason": row["reason"]}
+		entry["sourceOutcome"] = row["sourceOutcome"]
 		if row["downloadAvailable"] == true {
 			hash, _ := row["original_hash"].(string)
 			b, info, err := s.original(ctx, library, row["search_id"].(string), hash)
 			if err != nil {
 				entry["state"] = "unavailable"
 				entry["reason"] = "Original failed current policy/integrity check; open source links."
+				entry["sourceOutcome"] = describeSource(detail["requestedFormat"].(string), "acquired", "", false, true, false, a)
 			} else {
 				filename := "originals/" + row["search_id"].(string) + "-" + hash + "." + strings.ToLower(info.Format)
 				w, err := z.CreateHeader(&zip.FileHeader{Name: filename, Method: zip.Store})
@@ -254,7 +326,7 @@ func (s *server) exportBundle(ctx context.Context, library, batch string) ([]byt
 		}
 		manifest = append(manifest, entry)
 	}
-	m, _ := json.MarshalIndent(map[string]any{"batchId": batch, "generatedAt": time.Now().UTC(), "policy": detail["policy"], "items": manifest, "scope": "Exact permitted repository originals in their stated format; unresolved items retain source links. Archival snapshots may not reflect current NLM data."}, "", "  ")
+	m, _ := json.MarshalIndent(map[string]any{"batchId": batch, "requestedFormat": detail["requestedFormat"], "generatedAt": time.Now().UTC(), "policy": detail["policy"], "items": manifest, "scope": "Exact permitted repository originals in their stated format; unresolved items retain source links. Archival snapshots may not reflect current NLM data."}, "", "  ")
 	for name, b := range map[string][]byte{"manifest.json": m} {
 		w, e := z.Create(name)
 		if e != nil {

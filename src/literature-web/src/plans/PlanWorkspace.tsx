@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { Article, request, sessionGeneration } from "../api";
 import { addToBasket, associationCount, BasketMember } from "./basket";
 import { SourceLinks } from "../components/ArticleCard";
+import { SourceOutcomeView } from "../components/SourceOutcome";
 import { Phase, PlanAction, phases } from "./api";
 import { emptyPlanState, PlanController } from "./controller";
 import { PlanExports } from "./PlanExports";
@@ -192,6 +193,7 @@ export function PlanWorkspace(props: Props) {
         {item.runIDs && <details><summary>Record search provenance</summary><p>{item.runIDs.join(", ")}</p></details>}
         <p className="muted">PMID {String(item.article.Pmid ?? "—")} · PMCID {String(item.article.Pmcid ?? "—")} · DOI {String(item.article.Doi ?? "—")}</p>
         <SourceLinks article={item.article} />
+        <SourceOutcomeView outcome={item.sourceOutcome} />
         <p>{item.downloadAvailable ? `${item.format} available to save · ${item.bytes} bytes · SHA-256 ${item.original_hash}` : "Original currently unavailable to save; use the source links for details."}</p>
         {item.childBatchID && <button className="secondary" onClick={() => {
           if (current()) props.onChild(item.childBatchID!);

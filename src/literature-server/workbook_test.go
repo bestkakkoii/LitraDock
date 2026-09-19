@@ -115,7 +115,7 @@ func TestWorkbookFidelityAndBounds(t *testing.T) {
 			}
 		}
 	}
-	if cells != 66 || linksCount != 7 {
+	if cells != 84 || linksCount != 7 {
 		t.Fatalf("unexpected cells/links %d/%d", cells, linksCount)
 	}
 	if output := os.Getenv("NATIVE_WORKBOOK_TEST_OUTPUT"); output != "" {

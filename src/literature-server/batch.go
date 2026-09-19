@@ -172,6 +172,7 @@ func (s *server) batchDetail(ctx context.Context, library, batch string) (any, e
 			}
 		}
 		item["state"] = state
+		item["sourceOutcome"] = describeSource(batches[0]["requested_format"].(string), item["acquisitionState"].(string), item["reason"].(string), item["attempts"].(int32) < 3 && batches[0]["state"] != "paused" && batches[0]["state"] != "cancelled" && batches[0]["plan_id"] == nil, true, item["downloadAvailable"].(bool), a)
 		counts[state]++
 	}
 	return map[string]any{"requestedFormat": batches[0]["requested_format"], "batch": batches[0], "items": items, "total": len(items), "counts": counts, "policy": formatPolicy(batches[0]["requested_format"].(string))}, nil

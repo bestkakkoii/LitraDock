@@ -355,6 +355,9 @@ func (s *server) prepareBundle(ctx context.Context, library, plan, request strin
 		if entry.Availability != "included" && entry.AvailabilityReason == nil {
 			entry.AvailabilityReason = optionalText("No original acquired in this snapshot. Review the saved state and source links.")
 		}
+		outcome := describeSource(p.RequestedFormat, sourceText(i.AcquisitionState), i.Reason, false, true, entry.Availability == "included", sourceArticle(research.Records[n]))
+		entry.SourceOutcome = &outcome
+		d.Manifest.Research.Records[n].SourceOutcome = &outcome
 		d.Manifest.Items = append(d.Manifest.Items, entry)
 	}
 	unresolved, unique := count-included, len(files)

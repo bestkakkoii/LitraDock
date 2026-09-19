@@ -5,7 +5,7 @@ export class PdfRequest {
   readonly body: { requestID: string; searchIDs: string[]; format: "pdf"; runID?: string };
   readonly kind: "batch" | "plan";
   private receipt: string | null = null;
-  constructor(readonly library: string, runID: string, ids: string[], readonly generation: number, plansEnabled: boolean) {
+  constructor(readonly library: string, readonly runID: string, ids: string[], readonly generation: number, plansEnabled: boolean) {
     if (!runID || !library || ids.length < 1 || ids.length > 100 || new Set(ids).size !== ids.length || ids.some(id => !id))
       throw new Error("Choose 1 to 100 distinct saved records.");
     this.kind = ids.length <= 10 ? "batch" : "plan";

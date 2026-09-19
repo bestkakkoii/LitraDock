@@ -89,13 +89,14 @@ type structuredOriginal struct {
 	Availability string    `json:"availability"`
 }
 type structuredRecord struct {
-	SearchID    string                `json:"searchId"`
-	RunIDs      []string              `json:"runIds"`
-	IDs         structuredIDs         `json:"identifiers"`
-	Publication structuredPublication `json:"publication"`
-	Links       structuredLinks       `json:"sourceLinks"`
-	Acquisition structuredAcquisition `json:"acquisition"`
-	Originals   []structuredOriginal  `json:"originals"`
+	SourceOutcome *sourceOutcome        `json:"sourceOutcome,omitempty"`
+	SearchID      string                `json:"searchId"`
+	RunIDs        []string              `json:"runIds"`
+	IDs           structuredIDs         `json:"identifiers"`
+	Publication   structuredPublication `json:"publication"`
+	Links         structuredLinks       `json:"sourceLinks"`
+	Acquisition   structuredAcquisition `json:"acquisition"`
+	Originals     []structuredOriginal  `json:"originals"`
 }
 type structuredDocument struct {
 	Schema      string             `json:"schema"`
@@ -378,6 +379,22 @@ func (s *server) liveStructuredResearchSnapshot(ctx context.Context, tx pgx.Tx, 
 	}
 	if originalCount > structuredLimit {
 		return d, exportInvalid("Original descriptor export limit or metadata invalid")
+	}
+	if run != "" {
+		outcomes, e := sourceHistory(ctx, tx, library, ids, "pdf")
+		if e != nil {
+			return d, e
+		}
+		for n := range d.Records {
+			o := outcomes[d.Records[n].SearchID]
+			d.Records[n].SourceOutcome = &o
+		}
+	} else {
+		for n := range d.Records {
+			r := &d.Records[n]
+			o := describeSource(format, sourceText(r.Acquisition.State), sourceText(r.Acquisition.Reason), false, false, false, sourceArticle(*r))
+			r.SourceOutcome = &o
+		}
 	}
 	return d, nil
 }

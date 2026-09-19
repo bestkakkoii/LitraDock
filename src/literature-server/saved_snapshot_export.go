@@ -61,6 +61,8 @@ func snapshotRows(d savedSnapshotDocument) ([]map[string]any, error) {
 		}
 		r := d.Research.Records[n]
 		row := map[string]any{"metadata": o.Metadata, "state": o.Item.Phase, "reason": o.Item.Reason, "original_hash": o.Item.OriginalHash, "run_ids": strings.Join(r.RunIDs, "; ")}
+		outcome := describeSource(sourceText(r.Acquisition.Format), sourceText(o.Item.AcquisitionState), o.Item.Reason, false, false, false, sourceArticle(r))
+		row["sourceOutcome"] = &outcome
 		for _, original := range r.Originals {
 			if original.SHA256 == o.Item.OriginalHash {
 				text := func(v *string) string {
@@ -109,7 +111,7 @@ func snapshotRows(d savedSnapshotDocument) ([]map[string]any, error) {
 func encodeSnapshotCSV(ctx context.Context, rows []map[string]any) ([]byte, error) {
 	var b structuredBuffer
 	w := csv.NewWriter(&b)
-	if e := w.Write(append(append([]string{}, workbookColumns...), snapshotExtraColumns...)); e != nil {
+	if e := w.Write(append(append(append([]string{}, workbookColumns...), snapshotExtraColumns...), sourceOutcomeColumns...)); e != nil {
 		return nil, e
 	}
 	for _, row := range rows {
@@ -135,6 +137,9 @@ func encodeSnapshotCSV(ctx context.Context, rows []map[string]any) ([]byte, erro
 		values = append(values, "", csvSafe(articleString(a, "DoiLinkState")))
 		for _, x := range row["snapshot_extra"].([]string) {
 			values = append(values, csvSafe(x))
+		}
+		for _, value := range outcomeValues(row) {
+			values = append(values, csvSafe(value))
 		}
 		if e := w.Write(values); e != nil {
 			return nil, e

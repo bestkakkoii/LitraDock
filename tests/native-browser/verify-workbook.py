@@ -24,7 +24,8 @@ HEADERS = ['Search ID', 'Title', 'Authors', 'Year', 'PMID', 'PMCID', 'DOI',
            'PubMed URL', 'PMC URL', 'DOI URL', 'Current item state', 'Reason',
            'Rights URI', 'Original SHA256', 'Acquisition URL', 'Repository datestamp',
            'Original format', 'Original version', 'Original bytes', 'Search Run ID',
-           'Batch ID', 'DOI link status']
+           'Batch ID', 'DOI link status', 'Source outcome', 'Source outcome detail',
+           'Next action', 'Outcome evidence', 'Source observed at', 'Outcome format']
 
 
 def verify(path, expected):

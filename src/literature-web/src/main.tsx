@@ -14,6 +14,7 @@ import {
   sessionGeneration,
 } from "./api";
 import { ArticleCard, SourceLinks } from "./components/ArticleCard";
+import { SourceOutcomeView } from "./components/SourceOutcome";
 import { canAdvanceRecords } from "./pagination";
 import { searchId, selectedSearchIds } from "./selection";
 import { useSavedSelection } from "./savedSelection";
@@ -923,6 +924,7 @@ function App() {
           {records.length ? (
             records.map((a, i) => (
               <ArticleCard
+                onOpenBatch={id => void openBatch(id)}
                 key={searchId(a) || `${String(a.Pmid)}-${i}`}
                 article={a}
                 selected={selected.has(searchId(a))}
@@ -1058,6 +1060,7 @@ function App() {
                     {item.reason ? ` · ${item.reason}` : ""}
                   </p>
                   <SourceLinks article={item.article} />
+                  <SourceOutcomeView outcome={item.sourceOutcome} />
                   {originalKind(item) && item.original_hash ? (
                     <>
                       <button

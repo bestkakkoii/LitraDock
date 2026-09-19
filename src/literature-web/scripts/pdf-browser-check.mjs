@@ -25,6 +25,21 @@ function syntheticPdf() {
 const pdf = syntheticPdf(), xml = Buffer.from("<synthetic>XML preservation control</synthetic>"), hash = digest(pdf);
 const manifest = Buffer.from(JSON.stringify({ synthetic: true, items: [{ id: "S0", file: "S0.pdf" }, { id: "S1", file: "S1.pdf" }, { id: "S2", state: "held", reason: "SYNTHETIC no permitted PDF" }] }));
 const zip = Buffer.from(zipSync({ "S0.pdf": pdf, "S1.pdf": pdf, "manifest.json": manifest }, { level: 0 }));
+function finalPackage(kind,id,ids,lost=false) {
+  const files={},items=ids.map(searchId=>{
+    const available=!lost&&Number(searchId.slice(1))<2;
+    const file=kind==='plan'?`originals/${hash}.pdf`:`originals/${searchId}-${hash}.pdf`;
+    if(available) files[file]=pdf;
+    return {searchId,available,...(available?{file,sha256:hash,bytes:pdf.length}:{}),sourceOutcome:{status:available?'ready':'restricted',requestedFormat:'pdf',label:available?'Original ready to save':'Stored original currently unavailable',detail:'SYNTHETIC final validation outcome',nextAction:'Open the article source links.',sourceLinks:{}}};
+  });
+  const included=items.filter(i=>i.available).length;
+  files['manifest.json']=Buffer.from(JSON.stringify({synthetic:true,items}));
+  files[kind==='plan'?'records.json':'records.csv']=Buffer.from('SYNTHETIC metadata');
+  const archive=included?Buffer.from(zipSync(files,{level:0})):Buffer.alloc(0);
+  const report=Buffer.from(JSON.stringify({schema:'litradock.pdf-download',schemaVersion:1,kind,id,runID:'R11',requestedFormat:'pdf',selectedCount:ids.length,includedRecords:included,unresolvedRecords:ids.length-included,archiveBytes:archive.length,archiveSha256:included?digest(archive):'',items}));
+  const prefix=Buffer.alloc(4);prefix.writeUInt32BE(report.length);
+  return Buffer.concat([prefix,report,archive]);
+}
 const server = await preview({ root, preview: { host: "127.0.0.1", port: 0, strictPort: true } });
 const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
 let browser;
@@ -35,7 +50,8 @@ try {
   const errors = [], downloads = [], posts = [], gets = [];
   page.on("pageerror", e => errors.push(String(e))); page.on("download", d => downloads.push(d));
   await page.addInitScript(installBodyGates, { mode: "pdf" });
-  let authenticated = false, pdfEnabled = true, lost = true, batchReads = 0;
+  let authenticated = false, pdfEnabled = true, lost = true, batchReads = 0, batchIDs = ['S0','S1','S2'];
+  let holdAdmission = false, releaseAdmission, losePackagePDFs=false;
   const article = i => ({ SearchId: `S${i}`, Title: `SYNTHETIC long α 中文 record ${i}`, Pmid: `99000${i}`, OriginalUri: `https://pubmed.ncbi.nlm.nih.gov/99000${i}/` });
   const run = n => ({ run_id: `R${n}`, input: `SYNTHETIC ${n} saved records; complex MeSH query`, total: 25001, fetched: n, state: "partial" });
   const plan = { planID: "PLN-00000000000000000000000000000001", runID: "R11", requestedFormat: "pdf", state: "complete", selectedCount: 11, createdAt: "2026-09-13", updatedAt: "2026-09-13", revision: 1, allowedActions: [], counts: { waiting: 0, queued: 0, running: 0, completed: 2, held: 9, retry: 0, paused: 0, cancelled: 0 }, admission: { admittedCount: 11, waitingCount: 0, blockedReasonCode: "", reason: "", retryAfter: null }, retryEligibleCount: 0 };
@@ -55,19 +71,26 @@ try {
       const n = Number(url.pathname.split("/R")[1]), offset = Number(url.searchParams.get("offset"));
       return reply({ run: run(n), records: Array.from({ length: Math.max(0, Math.min(5, n - offset)) }, (_, i) => article(offset + i)), total: n, offset, limit: 5 });
     }
-    if (url.pathname.endsWith("/batches") && method === "POST") { if (lost) { lost = false; return route.abort("failed"); } return reply({ id: "B1" }); }
+    if (url.pathname.endsWith("/batches") && method === "POST") { batchIDs = request.postDataJSON().searchIDs; if (lost) { lost = false; return route.abort("failed"); } if(holdAdmission) await new Promise(resolve=>{releaseAdmission=resolve;}); return reply({ id: "B1" }); }
     if (url.pathname.endsWith("/plans") && method === "POST") return reply({ planID: "PLN-00000000000000000000000000000001", revision: 1, selectedCount: 11, state: "active", affectedCount: 0 });
     if (url.pathname.endsWith("/plans")) return reply({ plans: [plan], total: 1, offset: 0, limit: 25 });
-    if (url.pathname.includes("/plans/PLN-00000000000000000000000000000001")) return reply({ plan, items: Array.from({ length: 11 }, (_, i) => ({ searchID: `S${i}`, rank: i + 1, childBatchID: "B1", phase: i < 2 ? "completed" : "held", acquisitionState: i < 2 ? "acquired" : "unavailable", reason: "SYNTHETIC rights decision", attempts: 1, retryEligible: false, downloadAvailable: i < 2, article: article(i), format: i < 2 ? "PDF" : "", mediaType: i < 2 ? "application/pdf" : "", original_hash: i < 2 ? hash : "", bytes: i < 2 ? pdf.length : 0 })), total: 11, offset: 0, limit: 25, nextPollAfterMs: 2000, policy: "SYNTHETIC" });
+    if (url.pathname.endsWith('/plans/PLN-00000000000000000000000000000001/exports')) {
+      if(request.postDataJSON().format==='pdf-download')return route.fulfill({status:200,contentType:'application/vnd.litradock.pdf-download',body:finalPackage('plan',plan.planID,Array.from({length:11},(_,i)=>`S${i}`),losePackagePDFs)});
+      return route.fulfill({status:200,contentType:'application/zip',body:Buffer.from(zipSync({'S0.pdf':pdf,'S1.pdf':pdf,'manifest.json':Buffer.from(JSON.stringify({synthetic:true,items:Array.from({length:11},(_,i)=>({id:`S${i}`,state:i<2?'included':'held'}))}))},{level:0}))});
+    }
+    if (url.pathname.includes("/plans/PLN-00000000000000000000000000000001")) return reply({ plan, items: Array.from({ length: 11 }, (_, i) => ({ searchID: `S${i}`, rank: i + 1, childBatchID: "B1", phase: i < 2 ? "completed" : "held", acquisitionState: i < 2 ? "acquired" : "unavailable", reason: "SYNTHETIC rights decision", attempts: 1, retryEligible: false, downloadAvailable: i < 2, article: article(i), format: i < 2 ? "PDF" : "", mediaType: i < 2 ? "application/pdf" : "", original_hash: i < 2 ? hash : "", bytes: i < 2 ? pdf.length : 0 })), total: 11, offset: 0, limit: Number(url.searchParams.get('limit')||25), nextPollAfterMs: 2000, policy: "SYNTHETIC" });
     if (url.pathname.includes("/batches/")) {
       const isXml = url.pathname.endsWith("XML1"), running = !isXml && ++batchReads === 1;
-      return reply({ requestedFormat: isXml ? "xml" : "pdf", batch: { batch_id: isXml ? "XML1" : "B1", state: running ? "running" : "partial", created_at: "2026-09-13" }, items: Array.from({ length: isXml ? 1 : 3 }, (_, i) => ({ search_id: `S${i}`, rank: i + 1, state: running ? "queued" : i < 2 ? "acquired" : "unavailable", reason: i < 2 ? "" : "SYNTHETIC no permitted PDF; source links remain", attempts: 1, article: article(i), downloadAvailable: !running && i < 2, original_hash: isXml ? digest(xml) : hash, format: running || i === 2 ? "" : isXml ? "XML" : "PDF", mediaType: running || i === 2 ? "" : isXml ? "application/xml" : "application/pdf", version: "SYNTHETIC deposit 1", depositVersion: isXml ? "" : "1", depositType: "published article", bytes: isXml ? xml.length : pdf.length })), total: isXml ? 1 : 3, counts: running ? { queued: 3 } : { acquired: 2, unavailable: 1 } });
+      return reply({ requestedFormat: isXml ? "xml" : "pdf", batch: { batch_id: isXml ? "XML1" : "B1", state: running ? "running" : "partial", created_at: "2026-09-13" }, items: (isXml ? ['S0'] : batchIDs).map((id,rank) => {const i=Number(id.slice(1));return { search_id: id, rank: rank + 1, state: running ? "queued" : i < 2 ? "acquired" : "unavailable", reason: i < 2 ? "" : "SYNTHETIC no permitted PDF; source links remain", attempts: 1, article: article(i), downloadAvailable: !running && i < 2, original_hash: isXml ? digest(xml) : hash, format: running || i >= 2 ? "" : isXml ? "XML" : "PDF", mediaType: running || i >= 2 ? "" : isXml ? "application/xml" : "application/pdf", version: "SYNTHETIC deposit 1", depositVersion: isXml ? "" : "1", depositType: "published article", bytes: isXml ? xml.length : pdf.length };}), total: isXml ? 1 : batchIDs.length, counts: running ? { queued: batchIDs.length } : { acquired: 2, unavailable: 1 } });
     }
     if (url.pathname.includes("/originals/")) {
       const isXml = url.pathname.endsWith(digest(xml));
       return route.fulfill({ status: 200, contentType: isXml ? "application/xml" : "application/pdf", body: isXml ? xml : pdf });
     }
-    if (url.pathname.endsWith("/exports")) return route.fulfill({ status: 200, contentType: "application/zip", body: zip });
+    if (url.pathname.endsWith("/exports")) {
+      if(request.postDataJSON().format==='pdf-download')return route.fulfill({status:200,contentType:'application/vnd.litradock.pdf-download',body:finalPackage('batch','B1',batchIDs,losePackagePDFs)});
+      return route.fulfill({ status: 200, contentType: "application/zip", body: zip });
+    }
     return reply({ error: "Synthetic route missing" }, 404);
   });
   const open = async n => {
@@ -89,7 +112,13 @@ try {
   await page.getByRole("button", { name: "Deselect all", exact: true }).click();
   for (let i = 0; i < 3; i++) await page.locator('.result-card input').nth(i).check();
   await page.getByRole("button", { name: "Download PDFs (3 selected)", exact: true }).click();
-  await page.getByRole("button", { name: "Retry same PDF request (3)", exact: true }).click();
+  const automaticZip=page.waitForEvent('download');
+  await page.getByRole("button", { name: "Retry same PDF request", exact: true }).click();
+  const primaryMembers=unzipSync(fs.readFileSync(await (await automaticZip).path()));
+  assert.deepEqual(Buffer.from(primaryMembers[`originals/S0-${hash}.pdf`]),pdf);assert.deepEqual(Buffer.from(primaryMembers[`originals/S1-${hash}.pdf`]),pdf);
+  assert.equal(JSON.parse(Buffer.from(primaryMembers['manifest.json']).toString()).items.length,3);
+  if(!await page.locator('.pdf-availability details').filter({has:page.locator('summary',{hasText:'Sources and download details'})}).evaluate(el=>el.open)) await page.locator('.pdf-availability summary').filter({hasText:'Sources and download details'}).click();
+  await page.getByRole('button',{name:'Open saved download details',exact:true}).click();
   await page.getByRole("button", { name: "Save PDF", exact: true }).last().waitFor();
   const admissions = posts.filter(p => p.path.endsWith("/batches")); assert.equal(admissions.length, 2); assert.deepEqual(admissions[0].body, admissions[1].body); assert.equal(admissions[0].body.format, "pdf");
   assert((await page.locator('.batch-item').last().innerText()).includes("no permitted PDF")); assert.equal(await page.locator('.batch-item').last().getByRole("button", { name: "Save PDF", exact: true }).count(), 0);
@@ -104,9 +133,39 @@ try {
   result.downloads.push({ name: zipDownload.suggestedFilename(), bytes: zipBytes.length, sha256: digest(zipBytes) });
   assert(gets.includes(`/api/libraries/L1/originals/S0/${hash}`));
   assert(gets.includes(`/api/libraries/L1/originals/S1/${hash}`));
-  assert.deepEqual(posts.find(p => p.path.endsWith("/exports")).body, { batchID: "B1", format: "zip" });
+  assert.deepEqual(posts.find(p => p.path.endsWith("/exports")).body, { batchID: "B1", format: "pdf-download" });
+  assert(posts.some(p => p.path.endsWith('/exports') && p.body.format === 'zip'));
   await page.locator('.batch-panel').screenshot({ path: path.join(out, "mixed-pdf-held-batch.png") });
-  await open(11); await page.getByRole("button", { name: "Download PDFs (11 selected)", exact: true }).click(); await page.getByRole("heading", { name: "Plan PLN-00000000000000000000000000000001", exact: true }).waitFor();
+  // The primary action now completes the file handoff in place. Keep the action
+  // at its existing viewport position: do not scroll to the status afterwards.
+  for(const width of [1280,390]) {
+    await page.setViewportSize({width,height:900}); await open(0); await open(1); holdAdmission=true; releaseAdmission=undefined;
+    const action=page.getByRole('button',{name:'Download PDFs (1 selected)',exact:true});
+    await action.evaluate(el=>window.scrollBy(0,el.getBoundingClientRect().top-220));
+    const y=await page.evaluate(()=>scrollY), beforeDownloads=downloads.length;
+    const next=page.waitForEvent('download'); await action.click();
+    await page.getByRole('button',{name:'Stop waiting',exact:true}).waitFor();
+    const geometry=await page.locator('.pdf-progress').boundingBox();
+    assert(geometry.y>=0&&geometry.y+geometry.height<900); assert(Math.abs((await page.evaluate(()=>scrollY))-y)<4);
+    await page.screenshot({path:path.join(out,`in-place-pending-${width}.png`)});
+    assert(releaseAdmission); holdAdmission=false; releaseAdmission();
+    const file=await next; assert.deepEqual(fs.readFileSync(await file.path()),pdf);
+    await page.getByRole('button',{name:'Save again',exact:true}).waitFor();
+    assert.equal(downloads.length,beforeDownloads+1);
+    await page.locator('.result-card input').first().uncheck();
+    assert.equal(downloads.length,beforeDownloads+1);
+    const retry=page.waitForEvent('download'); await page.getByRole('button',{name:'Save again',exact:true}).click();
+    assert.deepEqual(fs.readFileSync(await (await retry).path()),pdf);
+    const after=await page.locator('.pdf-progress').boundingBox(); assert(after.y>=0&&after.y+after.height<900);
+    await page.screenshot({path:path.join(out,`in-place-handoff-${width}.png`)});
+  }
+  await page.setViewportSize({width:1280,height:900});
+  await open(11); const planDownload=page.waitForEvent('download'); await page.getByRole("button", { name: "Download PDFs (11 selected)", exact: true }).click();
+  const planMembers=unzipSync(fs.readFileSync(await (await planDownload).path())); assert.equal(JSON.parse(Buffer.from(planMembers['manifest.json']).toString()).items.length,11);
+  assert.deepEqual(Buffer.from(planMembers[`originals/${hash}.pdf`]),pdf);
+  if(!await page.locator('.pdf-availability details').filter({has:page.locator('summary',{hasText:'Sources and download details'})}).evaluate(el=>el.open)) await page.locator('.pdf-availability summary').filter({hasText:'Sources and download details'}).click();
+  await page.getByRole('button',{name:'Open saved download details',exact:true}).click();
+  await page.getByRole("heading", { name: "Plan PLN-00000000000000000000000000000001", exact: true }).waitFor();
   assert.equal(posts.filter(p => p.path.endsWith("/plans")).length, 1); assert.equal(posts.find(p => p.path.endsWith("/plans")).body.format, "pdf");
   await page.getByRole("button", { name: "Open child batch B1", exact: true }).first().click();
   await page.evaluate(() => { window.__holdOriginal = true; });
@@ -117,13 +176,28 @@ try {
   await page.evaluate(() => { window.__holdOriginal = false; });
   await page.getByLabel("Saved batches", { exact: true }).selectOption("XML1");
   const xmlEvent = page.waitForEvent("download"); await page.getByRole("button", { name: "Save XML", exact: true }).click(); const xmlDownload = await xmlEvent; assert.deepEqual(fs.readFileSync(await xmlDownload.path()), xml); assert.equal(xmlDownload.suggestedFilename(), "S0.xml");
+  // The earlier GET still reports two ready. Final current validation can lose
+  // them both: neither the batch nor the plan primary action may hand off a ZIP.
+  losePackagePDFs=true;
+  for(const count of [10,11]) {
+    await open(0);await open(count);const before=downloads.length;
+    await page.getByRole('button',{name:`Download PDFs (${count} selected)`,exact:true}).click();
+    await page.getByText('No PDF remained available when the package was prepared.',{exact:false}).waitFor();
+    assert.equal(downloads.length,before);
+    assert((await page.locator('.pdf-progress').innerText()).includes(`0 ready · 0 pending · ${count} without an available PDF`));
+    assert(await page.locator('.pdf-results').evaluate(el=>el.open));
+    assert.equal(await page.locator('.pdf-availability').getByRole('button',{name:'Save again',exact:true}).count(),0);
+    assert.equal(await page.locator('.pdf-results').getByRole('link',{name:'Open PubMed',exact:true}).count(),count);
+    await page.locator('.pdf-availability').screenshot({path:path.join(out,`final-availability-loss-${count}.png`)});
+  }
+  losePackagePDFs=false;
   for (const width of [1280, 390]) { await page.setViewportSize({ width, height: 900 }); assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)); await page.locator('.selection-toolbar').screenshot({ path: path.join(out, `selection-${width}.png`) }); }
   pdfEnabled = false; await page.reload(); await open(1); assert(await page.getByRole("button", { name: "Download PDFs (1 selected)", exact: true }).isDisabled());
   await page.getByRole("button", { name: "Sign out", exact: true }).click(); await page.getByLabel("Login", { exact: true }).waitFor(); assert.equal(await page.locator('.batch-item,.plan-item').count(), 0);
   await page.getByLabel("Login", { exact: true }).fill("SYNTHETIC-B"); await page.getByLabel("Password", { exact: true }).fill("SYNTHETIC-B"); await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await open(1); assert((await page.locator('.selection-toolbar').innerText()).includes("1 selected of 1 retrieved"));
   assert.deepEqual(errors, []); assert.deepEqual(hashes(), before);
-  result.checks = ["0/1/10/11/100 default-all complete saved set, no provider selection or auto acquisition", "Manual subset and Deselect all persist across pagination", "One batch or plan format-bound POST, lost-response exact replay", "Mixed acquired PDF/held, two exact PDF downloads and valid synthetic ZIP members", "Held old-library PDF body produces no download; XML remains XML", "Policy disabled; readable desktop/narrow selection; logout clears data"];
+  result.checks = ["0/1/10/11/100 default-all complete saved set, no provider selection or auto acquisition", "Manual subset and Deselect all persist across pagination", "One batch or plan format-bound POST, lost-response exact replay", "Primary click hands off mixed PDF/held ZIP and complete 11-member plan ZIP with final result/hash binding", "Ready-to-unavailable final package controls for batch10 and plan11 update all counts/reasons/links without any handoff", "Slow admission and complete single original download feedback stay in action viewport at1280/390 without manual scrolling; explicit Save again", "Held old-library PDF body produces no download; XML remains XML", "Policy disabled; readable desktop/narrow selection; logout clears data"];
   result.pass = true;
 } catch (error) { result.pass = false; result.error = String(error); process.exitCode = 1; }
 finally { if (browser) await browser.close(); await new Promise(resolve => server.httpServer.close(resolve)); result.serverClosed = true; fs.writeFileSync(path.join(out, "result.json"), JSON.stringify(result, null, 2)); console.log(JSON.stringify({ ...result, receipt: out }, null, 2)); }

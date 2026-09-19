@@ -1,0 +1,14 @@
+[Unit]
+Description=Native literature paired recovery snapshot
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/usr/bin/python3 /opt/litradock-native-operations/native_ops.py backup --config /etc/litradock-native/operations.json
+TimeoutStartSec=180
+KillMode=control-group
+MemoryMax=96M
+MemorySwapMax=16M
+CPUQuota=25%
+TasksMax=16
+PrivateTmp=true
+NoNewPrivileges=true

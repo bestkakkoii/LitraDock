@@ -18,6 +18,7 @@ const planOriginalBytes = 32 * 1024 * 1024
 const planZIPBytes = 37 * 1024 * 1024
 
 type planExportItem struct {
+	SourceOutcome      *sourceOutcome      `json:"sourceOutcome,omitempty"`
 	SearchID           string              `json:"searchId"`
 	Rank               int                 `json:"rank"`
 	ChildBatchID       *string             `json:"childBatchId"`
@@ -66,17 +67,25 @@ func (s *server) planExportHTTP(w http.ResponseWriter, r *http.Request, ctx cont
 	if !decode(w, r, &input) {
 		return
 	}
-	if input.Format != "zip" && input.Format != "json" {
+	if input.Format != "zip" && input.Format != "json" && input.Format != "pdf-download" {
 		reply(w, 400, map[string]string{"error": "Choose ZIP originals or JSON metadata for the whole saved plan."})
 		return
 	}
-	if input.Format == "zip" {
+	format := input.Format
+	if format == "pdf-download" {
+		format = "zip"
+	}
+	if format == "zip" {
 		if !s.admitBundle(w) {
 			return
 		}
 		defer s.bundleBusy.Store(false)
 	}
-	data, err := s.exportPlan(ctx, library, plan, input.Format)
+	data, err := s.exportPlan(ctx, library, plan, format)
+	var report []byte
+	if err == nil && input.Format == "pdf-download" {
+		report, data, err = pdfDownloadPackage(data, "plan", plan)
+	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			reply(w, 404, map[string]string{"error": "Plan is unavailable in this library."})
@@ -99,6 +108,10 @@ func (s *server) planExportHTTP(w http.ResponseWriter, r *http.Request, ctx cont
 		return
 	}
 	defer release()
+	if input.Format == "pdf-download" {
+		writePDFDownload(w, report, data)
+		return
+	}
 	w.Header().Set("Content-Type", media)
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
 	_, _ = w.Write(data)
@@ -223,6 +236,9 @@ func (s *server) exportPlan(ctx context.Context, library, plan, format string) (
 		if entry.AvailabilityReason == nil && entry.Availability != "included" {
 			entry.AvailabilityReason = optionalText("No acquired original in this snapshot. Review the saved item status and source links.")
 		}
+		outcome := describeSource(p.RequestedFormat, sourceText(i.AcquisitionState), i.Reason, false, d.Revalidated, entry.Availability == "included", sourceArticle(*r))
+		entry.SourceOutcome = &outcome
+		r.SourceOutcome = &outcome
 		d.Items = append(d.Items, entry)
 	}
 	if d.Revalidated {

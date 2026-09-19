@@ -2,7 +2,7 @@ name: Native candidate
 on:
   workflow_dispatch:
   push:
-    branches: [native-demo-003, native-demo-004, native-demo-005, native-demo-006, native-demo-007, native-demo-008, native-demo-009, native-demo-010, native-demo-011, native-demo-012, native-demo-015, native-demo-016, native-demo-018]
+    branches: [native-demo-003, native-demo-004, native-demo-005, native-demo-006, native-demo-007, native-demo-008, native-demo-009, native-demo-010, native-demo-011, native-demo-012, native-demo-015, native-demo-016, native-demo-018, native-demo-021]
 permissions:
   contents: read
 jobs:
@@ -98,6 +98,9 @@ jobs:
       - name: Compiled PDF selection and download transport controls
         working-directory: src/literature-web
         run: node scripts/pdf-browser-check.mjs
+      - name: Compiled source outcomes and export scope
+        working-directory: src/literature-web
+        run: node scripts/source-outcome-browser-check.mjs
       - name: Compiled structured download transport controls
         working-directory: src/literature-web
         run: node scripts/structured-browser-check.mjs
