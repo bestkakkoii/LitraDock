@@ -101,8 +101,7 @@ try {
   });
   const open = async n => {
     await showWorkspace(page, "Saved searches"); await page.locator('.history-entry').filter({ has: page.locator('.history-id', { hasText: new RegExp(`R${n}$`) }) }).click();
-    await page.getByRole("button", { name: "Select all saved", exact: true }).waitFor();
-    await page.waitForFunction(() => ![...document.querySelectorAll('button')].find(b => b.textContent === "Select all saved").disabled);
+    await expect(page.getByRole("button", { name: "Select all saved", exact: true })).toBeEnabled();
   };
   await page.goto(origin); await page.getByLabel("Login", { exact: true }).fill("SYNTHETIC"); await page.getByLabel("Password", { exact: true }).fill("SYNTHETIC"); await page.getByRole("button", { name: "Sign in", exact: true }).click();
   for (const n of [0, 1, 10, 11, 100]) { await open(n); assert((await page.locator('.selection-toolbar').innerText()).includes(`${n} selected of ${n} saved`)); }
