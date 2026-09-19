@@ -108,7 +108,13 @@ try {
   await expect(button("Retry same search request")).toBeVisible(); await page.getByLabel("Search PubMed", { exact: true }).fill("SYNTHETIC changed query"); await expect(page.getByRole("region", { name: "PubMed search", exact: true }).getByRole("button", { name: "Working…", exact: true })).toBeDisabled();
   await button("Retry same search request").click(); await expect(button("Retry same search request")).toBeVisible();
   await button("Retry same search request").click(); await expect(button(`Reopen confirmed search ${id}`)).toBeVisible();
-  failGet = false; await button(`Reopen confirmed search ${id}`).click(); await expect(button("Select all")).toBeEnabled();
+  failGet = false; await button(`Reopen confirmed search ${id}`).click();
+  await expect(page.locator('.draft-notice')).toBeVisible();
+  await expect(page.getByLabel('Search PubMed', { exact: true })).toHaveValue('SYNTHETIC changed query');
+  await expect(button('Select all')).toBeDisabled();
+  await button('Restore active search').click();
+  await expect(page.getByLabel('Search PubMed', { exact: true })).toHaveValue(query);
+  await expect(button("Select all")).toBeEnabled();
   const searches = posts.filter(p => p.route.endsWith("/search")); assert.equal(searches.length, 3); searches.forEach(post => assert.deepEqual(post.body, searches[0].body)); assert.equal(searches[0].body.limit, 100);
   await openDisclosure(page, /^Search progress and query details/);
   await panel().getByText("Missing metadata identities (1)", { exact: true }).click(); await expect(panel().getByRole("link", { name: "PMID 99999999" })).toHaveAttribute("href", "https://pubmed.ncbi.nlm.nih.gov/99999999/");
