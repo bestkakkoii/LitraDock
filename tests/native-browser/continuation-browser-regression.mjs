@@ -66,7 +66,7 @@ try{
   await until(()=>fs.existsSync(inputPath+'.metadata-entered'),'held actual native source attempt');
   await until(async()=>(await panel.locator('[role=status] strong').innerText())==='running','published running revision before cancellation');
   await until(async()=>await panel.getByRole('button',{name:'Cancel metadata page',exact:true}).isEnabled(),'cancel running enabled');
-  await panel.getByRole('button',{name:'Cancel metadata page',exact:true}).click();await panel.getByRole('button',{name:'Confirm metadata cancellation',exact:true}).click();
+  await panel.getByRole('button',{name:'Cancel metadata page',exact:true}).click();await panel.getByRole('button',{name:'Confirm cancellation',exact:true}).click();
   await until(async()=>(await detail()).continuation.state==='cancelled','cancel persisted');
   fs.writeFileSync(inputPath+'.metadata-release','release synthetic response');
   await new Promise(r=>setTimeout(r,1000));let d=await detail();assert.equal(d.total,100);assert.equal(d.continuation.processedCount,100);

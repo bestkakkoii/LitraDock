@@ -129,7 +129,10 @@ try {
   await expect(button("Select all saved")).toBeEnabled();
   const searches = posts.filter(p => p.route.endsWith("/search")); assert.equal(searches.length, 3); searches.forEach(post => assert.deepEqual(post.body, searches[0].body)); assert.equal(searches[0].body.limit, 100);
   await openDisclosure(page, /^Search progress and query details/);
-  await panel().getByText("Missing metadata identities (1)", { exact: true }).click(); await expect(panel().getByRole("link", { name: "PMID 99999999" })).toHaveAttribute("href", "https://pubmed.ncbi.nlm.nih.gov/99999999/");
+  const missingSummary = panel().getByText("Missing metadata identities (1 shown of 1)", { exact: true });
+  await expect(missingSummary).toBeVisible(); await missingSummary.click();
+  await expect(panel().getByRole("link", { name: "PMID 99999999", exact: true })).toBeVisible();
+  await expect(panel().getByRole("link", { name: "PMID 99999999", exact: true })).toHaveAttribute("href", "https://pubmed.ncbi.nlm.nih.gov/99999999/");
   result.cases.push("Malformed source200 and actual truncated closed HTTP body preserve exact UUID/query/limit across three explicit application attempts despite edited draft; confirmed receipt+detail503 uses GET-only recovery");
   await expect(page.locator(".selection-toolbar")).toContainText("1 selected of 1"); await showWorkspace(page, "Research plans"); await button("Add checked records to basket (1)").click(); await showWorkspace(page, "Search & PDFs"); await button("Deselect all").click();
   await button("Retrieve next metadata page").focus(); await page.keyboard.press("Enter"); await expect(button("Retry same search request")).toBeVisible();
@@ -151,7 +154,7 @@ try {
   }
   state = "rate_wait"; attempts = 3; await refresh(); await expect(button("Retry metadata page")).toBeDisabled();
   attempts = 2; state = "failed"; await refresh(); await button("Retry metadata page").click(); await revealSettledProgress(); await expect(panel().getByRole("status").first()).toContainText("ready");
-  state = "running"; await refresh(); await button("Cancel metadata page").click(); await button("Confirm metadata cancellation").click(); await revealSettledProgress(); await expect(panel().getByRole("status").first()).toContainText("cancelled");
+  state = "running"; await refresh(); await button("Cancel metadata page").click(); await panel().getByRole("button", { name: "Confirm cancellation", exact: true }).click(); await revealSettledProgress(); await expect(panel().getByRole("status").first()).toContainText("cancelled");
   result.cases.push("All ten actual states, attempts3 denial, explicit retry and confirmed cancel; reads never admit pages");
   state = "ready"; count = 101; await refresh(); await openDisclosure(page.getByRole("region", { name: "Saved record selection" }), "Selection scope"); await button("Select page").click();
   await page.evaluate(() => { window.__ignoreAbort = true; });
@@ -175,7 +178,7 @@ try {
   await expect(page.locator(".selection-toolbar")).toContainText("25 selected of 101"); await openDisclosure(page.getByRole("region", { name: "Saved record selection" }), "Selection scope"); await expect(button("Select page")).toBeEnabled();
   await page.evaluate(() => { window.__ignoreAbort = false; });
   result.cases.push("Actual same-run delayed page and selection snapshot bodies cannot regress newer saved membership or widen the established checked subset");
-  for (const n of [0, 1, 100, 101, 1000]) { count = n; provider = n === 100 ? 10000 : 25001; state = n === 1000 ? "window_limited" : "ready"; await refresh(); await expect(panel()).toContainText(`${n} saved`); await expect(panel()).toContainText(`${provider.toLocaleString()} provider matches`); }
+  for (const n of [0, 1, 100, 101, 1000]) { count = n; provider = n === 100 ? 10000 : 25001; state = n === 1000 ? "window_limited" : "ready"; await refresh(); await expect(panel()).toContainText(`${n} saved`); await expect(panel()).toContainText(`${provider.toLocaleString()} initial provider matches`); }
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 1000 }); assert(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
     const geometry = await page.locator(".continuation, .result-card h3").evaluateAll(nodes => nodes.map(node => ({ width: node.getBoundingClientRect().width, height: node.getBoundingClientRect().height, text: node.textContent, title: node.tagName === "H3", lineHeight: parseFloat(getComputedStyle(node).lineHeight) })));
