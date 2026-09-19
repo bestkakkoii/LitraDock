@@ -60,6 +60,7 @@ const account = input.accounts[0];
 let capturedRunId = "";
 let capturedBatchId = "";
 let libraryId = '', searchPosts = 0, batchPosts = 0;
+const savedRunMembers = new Map(); // Independent saved-query membership, captured before each export.
 page.on('request', r => { if(r.method()==='POST' && r.url().endsWith('/search')) searchPosts++; if(r.method()==='POST' && r.url().endsWith('/batches')) batchPosts++; });
 const until = async (predicate, reason) => { const end=Date.now()+20000; while(Date.now()<end){if(await predicate())return;await new Promise(r=>setTimeout(r,150));}throw Error(reason); };
 let lastLoginCompleted = 0;
@@ -75,15 +76,23 @@ const verifyXlsx = async (label, selection) => {
   const columns = ['SearchId','Title','Authors','Year','Pmid','Pmcid','Doi','OriginalUri','PmcUri','DoiUri'];
   const rowKeys = ['state','reason','rights_uri','original_hash','source_uri','repository_stamp','format','version','bytes'];
   detail.items.forEach((item, i) => {
-    const values = [...columns.map(k => String(item.article[k] ?? '')), ...rowKeys.map(k => String(item[k] ?? '')), '', selection, String(item.article.DoiLinkState ?? '')];
-    values.forEach((v, column) => { const coordinate=String.fromCharCode(65+column)+(i+2);cells[coordinate]=v;
+    const runIDs = [...savedRunMembers].filter(([, ids]) => ids.has(item.article.SearchId)).map(([id]) => id).sort();
+    assert(runIDs.length > 0, 'every fixture item must belong to an independently captured saved run');
+    const outcome = item.sourceOutcome;
+    assert(['acquired','unavailable'].includes(item.state), 'workbook oracle requires settled fixture items');
+    assert.equal(outcome.status, item.state === 'acquired' ? 'ready' : 'restricted');
+    assert.equal(outcome.evidence, item.state === 'acquired' ? 'current_original_validation' : 'saved_item_outcome');
+    assert.equal(outcome.requestedFormat, 'xml');assert.equal(outcome.retryEligible, false);assert.equal(outcome.observedAt, null);
+    const values = [...columns.map(k => String(item.article[k] ?? '')), ...rowKeys.map(k => String(item[k] ?? '')), runIDs.join('; '), selection, String(item.article.DoiLinkState ?? ''), ...['status','detail','nextAction','evidence','observedAt','requestedFormat'].map(k => String(outcome[k] ?? ''))];
+    assert.equal(values.length,28);
+    values.forEach((v, column) => { const coordinate=(column < 26 ? String.fromCharCode(65+column) : 'A'+String.fromCharCode(65+column-26))+(i+2);cells[coordinate]=v;
       if ([7,8,9,12,14].includes(column) && v) { const u=new URL(v); if(u.protocol==='https:' && ['pubmed.ncbi.nlm.nih.gov','pmc.ncbi.nlm.nih.gov','doi.org','creativecommons.org'].includes(u.hostname) && !u.username && !u.password && !u.port && !u.hash) hyperlinks[coordinate]=v; }
     });
   });
   const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'native-workbook-'));
   try {
     const expected=path.join(temporary,'expected.json');fs.writeFileSync(expected,JSON.stringify({rows:detail.items.length+1,cells,hyperlinks}));
-    const result=execFileSync(process.env.NATIVE_WORKBOOK_PYTHON || 'python3',[fileURLToPath(new URL('./verify-workbook.py',import.meta.url)),await file.path(),'--expected',expected],{encoding:'utf8'});
+    const result=execFileSync(process.env.NATIVE_WORKBOOK_PYTHON || 'python3',[fileURLToPath(new URL('./verify-workbook.py',import.meta.url)),await file.path(),'--expected',expected],{encoding:'utf8',windowsHide:true});
     assert.equal(JSON.parse(result).rows,detail.items.length);
   } finally { fs.rmSync(temporary,{recursive:true,force:true}); }
 };
@@ -182,6 +191,7 @@ try {
     await page.getByRole('button', {name:'Deselect all', exact:true}).click();
     const runResponse = await page.request.get(`${target}/api/libraries/${libraryId}/runs/${capturedRunId}?limit=100`);
     assert.equal(runResponse.status(),200); const saved = await runResponse.json();
+    assert.equal(saved.records.length,saved.total);savedRunMembers.set(capturedRunId,new Set(saved.records.map(x=>x.SearchId)));
     const batchResponse = await page.request.get(`${target}/api/libraries/${libraryId}/batches/${capturedBatchId}`);
     assert.equal(batchResponse.status(),200); const batch = await batchResponse.json();
     const directory=fs.mkdtempSync(path.join(os.tmpdir(),'native-structured-'));
@@ -241,6 +251,11 @@ try {
       await page.getByRole('button',{name:'Search PubMed',exact:true}).click();
       await until(async()=>(await page.locator('body').innerText()).includes(`retrieved 12 of ${total}`),'synthetic saved/provider count distinction');
       assert.equal(await page.locator('input[type="checkbox"][aria-label^="Select "]').count(),12);
+      const runID = (await page.locator('.query-snapshot .small').innerText()).replace('Search Run ID: ', '');
+      const response = await page.request.get(`${target}/api/libraries/${libraryId}/runs/${runID}?limit=100`);
+      assert.equal(response.status(),200);const saved=await response.json();
+      assert.equal(saved.records.length,12);assert.equal(saved.total,12);assert.equal(saved.run.total,total);
+      savedRunMembers.set(runID,new Set(saved.records.map(x=>x.SearchId)));
     }
     const largeRun = (await page.locator(".query-snapshot .small").innerText()).replace("Search Run ID: ", "");
     for(const limit of ['0','101','bad','']) assert.equal((await page.request.get(`${target}/api/libraries/${libraryId}/runs/${largeRun}?limit=${limit}`)).status(),400);
