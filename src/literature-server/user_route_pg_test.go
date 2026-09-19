@@ -387,6 +387,175 @@ func TestUserRouteActualPostgres(t *testing.T) {
 		}
 	})
 
+	t.Run("concurrent-upload-expiry", func(t *testing.T) {
+		// 以 PostgreSQL 實際鎖等待證明重疊，不能把 goroutine 啟動當成已發生競爭。
+		// 三個有限排程共用合成資料；不使用來源網路或負載測試。
+		pool := func(label string) (*pgxpool.Pool, uint32) {
+			t.Helper()
+			c := pc.Copy()
+			c.MaxConns = 1
+			c.ConnConfig.RuntimeParams["application_name"] = "route059-" + label
+			p, err := pgxpool.NewWithConfig(ctx, c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(p.Close)
+			var pid uint32
+			if err = p.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&pid); err != nil {
+				t.Fatal(err)
+			}
+			return p, pid
+		}
+		uploadDB, uploadPID := pool("upload")
+		retireDB, retirePID := pool("retirement")
+		uploader := &server{native: true, continuation: true, userRoute: true, runSelection: true, savedSnapshots: true, bundles: true, db: uploadDB, cfg: s.cfg, provider: s.provider}
+		blocked := func(waiting, holding uint32) {
+			t.Helper()
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				var observed bool
+				if err := db.QueryRow(ctx, "SELECT $2::int=ANY(pg_blocking_pids($1::int))", waiting, holding).Scan(&observed); err != nil {
+					t.Fatal(err)
+				}
+				if observed {
+					t.Logf("Observed PostgreSQL overlap: waiting_pid=%d blocker_pid=%d", waiting, holding)
+					return
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			t.Fatalf("Actual lock overlap not observed: waiting=%d holding=%d", waiting, holding)
+		}
+		retire := func() error {
+			tx, err := retireDB.Begin(ctx)
+			if err != nil {
+				return err
+			}
+			defer tx.Rollback(context.Background())
+			if err = capacityLock(ctx, tx); err == nil {
+				err = retireExpiredUserRouteWork(ctx, tx)
+			}
+			if err != nil {
+				return err
+			}
+			return tx.Commit(ctx)
+		}
+		for _, order := range []string{"expired-retirement-first", "expired-upload-first", "valid-lease-upload"} {
+			t.Run(order, func(t *testing.T) {
+				id := queue("unkeyed")
+				initialAttempt := claimNext(id, sess)
+				initialReceipt := upload(id, initialAttempt, membership)
+				attempt := claimNext(id, sess)
+				var beforeSnapshot, beforeMetadata, beforeIdentifiers string
+				if err := db.QueryRow(ctx, "SELECT snapshot FROM ld_runs WHERE library_id=$1 AND run_id=$2", library, id).Scan(&beforeSnapshot); err != nil {
+					t.Fatal(err)
+				}
+				if err := db.QueryRow(ctx, "SELECT md5(string_agg(to_jsonb(t)::text,E'\\n' ORDER BY to_jsonb(t)::text)) FROM ld_records t").Scan(&beforeMetadata); err != nil {
+					t.Fatal(err)
+				}
+				if err := db.QueryRow(ctx, "SELECT md5(string_agg(to_jsonb(t)::text,E'\\n' ORDER BY to_jsonb(t)::text)) FROM ld_identifiers t").Scan(&beforeIdentifiers); err != nil {
+					t.Fatal(err)
+				}
+				expired := order != "valid-lease-upload"
+				if expired {
+					must("UPDATE ld_jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE library_id=$1 AND run_id=$2", library, id)
+					must("UPDATE native_user_route_attempts SET expires_at=clock_timestamp()-interval '1 second' WHERE library_id=$1 AND request_id=$2", library, attempt.AttemptID)
+				}
+				type result struct {
+					receipt continuationReceipt
+					err     error
+				}
+				uploadResult := make(chan result, 1)
+				startUpload := func() {
+					go func() {
+						r, err := uploader.submitUserRoute(ctx, library, id, userRouteUpload{AttemptID: attempt.AttemptID, Body: metadata}, sess)
+						uploadResult <- result{r, err}
+					}()
+				}
+				if order == "expired-retirement-first" {
+					tx, err := retireDB.Begin(ctx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer tx.Rollback(context.Background())
+					if err = capacityLock(ctx, tx); err != nil {
+						t.Fatal(err)
+					}
+					if err = retireExpiredUserRouteWork(ctx, tx); err != nil {
+						t.Fatal(err)
+					}
+					startUpload()
+					blocked(uploadPID, retirePID)
+					if err = tx.Commit(ctx); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					// 暫持 attempt 鎖，讓實際 upload 先取得 job 鎖，再啟動到期回收。
+					gate, err := db.Begin(ctx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer gate.Rollback(context.Background())
+					var gatePID uint32
+					if err = gate.QueryRow(ctx, "SELECT pg_backend_pid() FROM native_user_route_attempts WHERE library_id=$1 AND request_id=$2 FOR UPDATE", library, attempt.AttemptID).Scan(&gatePID); err != nil {
+						t.Fatal(err)
+					}
+					startUpload()
+					blocked(uploadPID, gatePID)
+					retired := make(chan error, 1)
+					go func() { retired <- retire() }()
+					if expired {
+						blocked(retirePID, uploadPID)
+					} else if err = <-retired; err != nil {
+						t.Fatal(err)
+					}
+					if err = gate.Commit(ctx); err != nil {
+						t.Fatal(err)
+					}
+					if expired {
+						if err = <-retired; err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				actual := <-uploadResult
+				if expired {
+					var refused *planError
+					if !errors.As(actual.err, &refused) || refused.Status != 409 {
+						t.Fatal("expired overlapping upload not explicitly refused", actual.err)
+					}
+				} else if actual.err != nil || actual.receipt.State != "ready" {
+					t.Fatal("valid lease positive control failed", actual.receipt, actual.err)
+				}
+				var snapshot, retainedMetadata, retainedIdentifiers, attemptState, rawReceipt, rawIDs string
+				var saved, bodyBytes int
+				if err := db.QueryRow(ctx, "SELECT r.snapshot,w.ids,r.fetched,a.state,COALESCE(octet_length(a.body),0),a.receipt FROM ld_runs r JOIN native_search_windows w USING(library_id,run_id) JOIN native_user_route_attempts a USING(library_id,run_id) WHERE r.library_id=$1 AND r.run_id=$2 AND a.request_id=$3", library, id, attempt.AttemptID).Scan(&snapshot, &rawIDs, &saved, &attemptState, &bodyBytes, &rawReceipt); err != nil {
+					t.Fatal(err)
+				}
+				if err := db.QueryRow(ctx, "SELECT md5(string_agg(to_jsonb(t)::text,E'\\n' ORDER BY to_jsonb(t)::text)) FROM ld_records t").Scan(&retainedMetadata); err != nil {
+					t.Fatal(err)
+				}
+				if err := db.QueryRow(ctx, "SELECT md5(string_agg(to_jsonb(t)::text,E'\\n' ORDER BY to_jsonb(t)::text)) FROM ld_identifiers t").Scan(&retainedIdentifiers); err != nil {
+					t.Fatal(err)
+				}
+				if snapshot != beforeSnapshot || rawIDs != `["990000001","990000002"]` || retainedMetadata != beforeMetadata || retainedIdentifiers != beforeIdentifiers || calls.Load() != 0 {
+					t.Fatal("concurrent reconciliation changed frozen/canonical data or used provider")
+				}
+				if expired && (saved != 0 || attemptState != "interrupted" || bodyBytes != 0 || rawReceipt != "") || !expired && (saved != 1 || attemptState != "completed" || bodyBytes != len(metadata) || rawReceipt == "") {
+					t.Fatal("overlap result persistence mismatch", saved, attemptState, bodyBytes)
+				}
+				if replay := upload(id, initialAttempt, membership); replay != initialReceipt {
+					t.Fatal("completed initial receipt changed during overlap")
+				}
+				if !expired {
+					if replay := upload(id, attempt, metadata); replay != actual.receipt {
+						t.Fatal("accepted-before-expiry receipt changed")
+					}
+				}
+				t.Logf("Committed overlap outcome: order=%s run=%s attempt=%s expired=%t saved=%d state=%s provider_calls=%d", order, id, attempt.AttemptID, expired, saved, attemptState, calls.Load())
+			})
+		}
+	})
+
 	t.Run("abandoned-admission-expiry-other-user-and-restart", func(t *testing.T) {
 		var retainedBefore, retainedAfter string
 		if e = db.QueryRow(ctx, "SELECT md5(string_agg(metadata,E'\\n' ORDER BY search_id)) FROM ld_records").Scan(&retainedBefore); e != nil {
