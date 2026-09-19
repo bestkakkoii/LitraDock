@@ -82,7 +82,7 @@ func (t exportFaultTx) Query(_ context.Context, q string, _ ...any) (pgx.Rows, e
 	}
 	if strings.HasPrefix(q, "SELECT run_id,input") {
 		stage = "queries"
-		values = []any{"RUN-synthetic", "SYNTHETIC", "partial", "cap", 25001, 1, 1, nil}
+		values = []any{"RUN-synthetic", "SYNTHETIC", "partial", "cap", 25001, 1, 1, nil, "{}"}
 	}
 	if strings.HasPrefix(q, "SELECT search_id,hash") {
 		stage = "originals"

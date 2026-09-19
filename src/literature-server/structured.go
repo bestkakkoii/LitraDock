@@ -38,15 +38,16 @@ type structuredCounts struct {
 	Retrieved *int `json:"retrievedRecords"`
 }
 type structuredQuery struct {
-	RunID       string     `json:"runId"`
-	Query       string     `json:"query"`
-	State       string     `json:"state"`
-	Reason      *string    `json:"reason"`
-	Provider    int        `json:"providerMatches"`
-	Retrieved   int        `json:"retrievedRecords"`
-	Limit       int        `json:"requestedLimit"`
-	Complete    bool       `json:"retrievalComplete"`
-	SubmittedAt *time.Time `json:"submittedAt"`
+	Provenance  *routeProvenance `json:"provenance,omitempty"`
+	RunID       string           `json:"runId"`
+	Query       string           `json:"query"`
+	State       string           `json:"state"`
+	Reason      *string          `json:"reason"`
+	Provider    int              `json:"providerMatches"`
+	Retrieved   int              `json:"retrievedRecords"`
+	Limit       int              `json:"requestedLimit"`
+	Complete    bool             `json:"retrievalComplete"`
+	SubmittedAt *time.Time       `json:"submittedAt"`
 }
 type structuredIDs struct {
 	PMID  *string `json:"pmid"`
@@ -91,6 +92,7 @@ type structuredOriginal struct {
 	Availability string    `json:"availability"`
 }
 type structuredRecord struct {
+	Provenance    *routeProvenance      `json:"provenance,omitempty"`
 	SourceOutcome *sourceOutcome        `json:"sourceOutcome,omitempty"`
 	SearchID      string                `json:"searchId"`
 	RunIDs        []string              `json:"runIds"`
@@ -159,6 +161,14 @@ func structuredArticle(id, raw string) (structuredRecord, error) {
 	}
 	links(linkInput)
 	r.Links = structuredLinks{optionalText(articleString(linkInput, "OriginalUri")), optionalText(articleString(linkInput, "PmcUri")), optionalText(articleString(linkInput, "DoiUri")), optionalText(articleString(linkInput, "DoiLinkState"))}
+	var provenanceInput map[string]any
+	if json.Unmarshal([]byte(raw), &provenanceInput) != nil {
+		return r, exportInvalid("Invalid stored source provenance")
+	}
+	var e error
+	if r.Provenance, e = checkedRouteProvenance(provenanceInput, false); e != nil {
+		return r, e
+	}
 	return r, nil
 }
 
@@ -329,14 +339,15 @@ func (s *server) liveStructuredSelectionSnapshot(ctx context.Context, tx pgx.Tx,
 	if queryBytes > 1024*1024 {
 		return d, exportInvalid("Query context export bound unavailable")
 	}
-	rows, err = tx.Query(ctx, `SELECT run_id,input,state,reason,total,fetched,requested_limit,(SELECT min(created_at) FROM ld_jobs j WHERE j.library_id=r.library_id AND j.run_id=r.run_id) FROM ld_runs r WHERE library_id=$1 AND run_id=ANY($2) ORDER BY run_id`, library, queryIDs)
+	rows, err = tx.Query(ctx, `SELECT run_id,input,state,reason,total,fetched,requested_limit,(SELECT min(created_at) FROM ld_jobs j WHERE j.library_id=r.library_id AND j.run_id=r.run_id),snapshot FROM ld_runs r WHERE library_id=$1 AND run_id=ANY($2) ORDER BY run_id`, library, queryIDs)
 	if err != nil {
 		return d, err
 	}
 	for rows.Next() {
 		var q structuredQuery
 		var reason string
-		if err = rows.Scan(&q.RunID, &q.Query, &q.State, &reason, &q.Provider, &q.Retrieved, &q.Limit, &q.SubmittedAt); err != nil {
+		var snapshot string
+		if err = rows.Scan(&q.RunID, &q.Query, &q.State, &reason, &q.Provider, &q.Retrieved, &q.Limit, &q.SubmittedAt, &snapshot); err != nil {
 			break
 		}
 		if q.Provider < 0 || q.Retrieved < 0 || q.Retrieved > q.Provider || q.Limit < 1 || !utf8.ValidString(q.Query) || !utf8.ValidString(reason) {
@@ -344,6 +355,9 @@ func (s *server) liveStructuredSelectionSnapshot(ctx context.Context, tx pgx.Tx,
 			break
 		}
 		q.Reason, q.Complete = optionalText(reason), q.State == "complete" && q.Retrieved == q.Provider
+		if q.Provenance, err = queryRouteProvenance(snapshot); err != nil {
+			break
+		}
 		d.Queries = append(d.Queries, q)
 	}
 	rows.Close()

@@ -71,6 +71,9 @@ func providerClient() *http.Client {
 	return &http.Client{Transport: tr, Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 func (s *server) request(ctx context.Context, path string, q url.Values) ([]byte, error) {
+	if s.cfg.UserRouteEnabled && (path == "esearch.fcgi" || path == "efetch.fcgi") {
+		return nil, &sourceError{"unavailable", "PubMed search and metadata require the user's browser route; server fallback is disabled."}
+	}
 	if path != "esearch.fcgi" && path != "efetch.fcgi" && path != "pmc-oai" && path != "pmc-cloud" {
 		return nil, &sourceError{"unsupported", "Unsupported metadata endpoint."}
 	}
@@ -364,6 +367,7 @@ func (n *node) directValue(name string) string {
 }
 
 type searchResult struct {
+	ClientSubmitted             bool
 	Window                      bool
 	Offset                      int
 	Total                       int
@@ -380,17 +384,23 @@ func normalizeDoi(value string) string {
 	return strings.ToLower(doiPrefix.ReplaceAllString(strings.TrimSpace(value), ""))
 }
 
-func (s *server) search(ctx context.Context, query string, limit int) (searchResult, error) {
-	r := searchResult{Started: time.Now().UTC().Format(time.RFC3339Nano), IDs: []string{}, Articles: []map[string]any{}}
+func normalizedPubMedQuery(query string) string {
 	query = strings.TrimSpace(query)
 	if match := pmidQuery.FindStringSubmatch(query); match != nil {
 		query = match[1]
 	}
 	if numeric.MatchString(query) {
-		query += "[uid]"
-	} else if strings.HasPrefix(normalizeDoi(query), "10.") {
-		query = "\"" + strings.ReplaceAll(normalizeDoi(query), "\"", "") + "\"[AID]"
+		return query + "[uid]"
 	}
+	if strings.HasPrefix(normalizeDoi(query), "10.") {
+		return "\"" + strings.ReplaceAll(normalizeDoi(query), "\"", "") + "\"[AID]"
+	}
+	return query
+}
+
+func (s *server) search(ctx context.Context, query string, limit int) (searchResult, error) {
+	r := searchResult{Started: time.Now().UTC().Format(time.RFC3339Nano), IDs: []string{}, Articles: []map[string]any{}}
+	query = normalizedPubMedQuery(query)
 	r.Query = query
 	b, err := s.request(ctx, "esearch.fcgi", url.Values{"term": {query}, "retmax": {fmt.Sprint(limit)}, "sort": {"relevance"}})
 	if err != nil {

@@ -16,6 +16,8 @@
   "PDFEnabled": false,
   "SavedSetEnabled": false,
   "SearchContinuationEnabled": false,
+	"UserRouteEnabled": false,
+	"PubMedDeveloperEmail": "",
   "BundleDeliveryEnabled": false,
   "SelectionWriteEnabled": false
 }

@@ -24,7 +24,8 @@ export function ArticleCard({ article, selected, onSelect, disabled = false, onO
     <p className="muted">{String(article.Authors ?? "Author metadata unavailable")} · {String(article.Year ?? "Year unavailable")} · {String(article.Journal ?? "Journal unavailable")}</p>
     <dl className="identifiers"><div><dt>DOI</dt><dd>{String(article.Doi ?? "—")}</dd></div><div><dt>PMID</dt><dd>{String(article.Pmid ?? "—")}</dd></div><div><dt>PMCID</dt><dd>{String(article.Pmcid ?? "—")}</dd></div></dl>
     <SourceLinks article={article} />
-    <details className="record-identity"><summary>Record details</summary><p>Search ID: {String(article.SearchId ?? "Unavailable")}</p></details>
+    <details className="record-identity"><summary>Record details{article.MetadataVerification === "client_submitted_parsed" ? " · Browser submitted" : ""}</summary><p>Search ID: {String(article.SearchId ?? "Unavailable")}</p>
+      {article.MetadataVerification === "client_submitted_parsed" && <p>PubMed metadata submitted from a user's browser and structurally checked. The server has not independently verified that NCBI issued this response. Check the source before relying on it; this does not establish full-text rights.</p>}</details>
     {typeof article.Abstract === "string" && article.Abstract && <details className="article-abstract"><summary>Abstract</summary><p>{article.Abstract}</p></details>}
     <SourceOutcomeView outcome={article.SourceOutcome} onOpenBatch={onOpenBatch} />
   </article>;

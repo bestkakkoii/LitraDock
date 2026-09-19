@@ -25,9 +25,14 @@ func (s *server) runMetadataRows(ctx context.Context, library, run string, revis
 		return nil, v, err
 	}
 	var fetched int
-	if err = tx.QueryRow(ctx, "SELECT fetched FROM ld_runs WHERE library_id=$1 AND run_id=$2", library, run).Scan(&fetched); errors.Is(err, pgx.ErrNoRows) {
+	var querySnapshot string
+	if err = tx.QueryRow(ctx, "SELECT fetched,snapshot FROM ld_runs WHERE library_id=$1 AND run_id=$2", library, run).Scan(&fetched, &querySnapshot); errors.Is(err, pgx.ErrNoRows) {
 		return nil, v, &planError{404, "Saved export run not found."}
 	} else if err != nil {
+		return nil, v, err
+	}
+	queryProvenance, err := queryRouteProvenance(querySnapshot)
+	if err != nil {
 		return nil, v, err
 	}
 	if revision > 0 {
@@ -80,6 +85,7 @@ func (s *server) runMetadataRows(ctx context.Context, library, run string, revis
 			break
 		}
 		row := map[string]any{"metadata": raw, "run_ids": run, "batch_id": "", "state": "", "reason": "", "rights_uri": "", "original_hash": ""}
+		row["queryRouteProvenance"] = queryProvenance
 		if revision > 0 {
 			row["snapshot_extra"] = []string{"selected_saved_records", strconv.Itoa(v.Revision), strconv.Itoa(v.SavedCount)}
 		}

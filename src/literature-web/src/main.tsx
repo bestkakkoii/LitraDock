@@ -30,6 +30,7 @@ import { SearchHistory } from "./components/SearchHistory";
 import { PdfAvailability } from "./components/PdfAvailability";
 import { Continuation } from "./continuation/api";
 import { SearchController, emptySearchState } from "./continuation/controller";
+import { UserRouteControls } from "./userRoute/Controls";
 import { ContinuationPanel } from "./continuation/ContinuationPanel";
 import { FilterChips, SearchFilters } from "./components/SearchFilters";
 import { composeSearch, emptyFilters, filterCount, restoreSearch } from "./searchFilters";
@@ -89,12 +90,16 @@ export function App() {
     [busy, setBusy] = useState(false),
     [message, setMessage] = useState(""),
     [error, setError] = useState("");
+  const [sessionCheckError, setSessionCheckError] = useState("");
+  const [sessionChecking, setSessionChecking] = useState(false);
   const [view, setView] = useState<WorkspaceView>("search");
   const [selectionReadVersion, setSelectionReadVersion] = useState(0);
   const [filters, setFilters] = useState(emptyFilters);
   const [pdfNotice, setPdfNotice] = useState({ library: "", runID: "", message: "" });
   const navigationTarget = useRef(readWorkspaceRoute());
+  const workspaceNavigation = useRef(0);
   const showView = (next: WorkspaceView) => {
+    workspaceNavigation.current++;
     if (next === "search" && view !== next) setSelectionReadVersion(value => value + 1);
     setView(next);
     writeWorkspaceRoute({ library, run: run?.run_id ?? "", view: next });
@@ -145,7 +150,7 @@ export function App() {
   };
   const [continuation, setContinuation] = useState<Continuation | null>(null);
   const [searchState, setSearchState] = useState(emptySearchState);
-  const searchBlocked = busy || searchState.busy || !!searchState.pending || !!searchState.confirmed;
+  const searchBlocked = busy || searchState.busy || !!searchState.pending || !!searchState.confirmed || !!searchState.browserPending;
   const draftChanged = !!run && (!!filterError || effectiveQuery.trim() !== snapshot);
   const activeSearchError = searchState.error || (run?.state === "error" ? stateLabel(run) : "");
   const activeSearchMessage = activeSearchError || searchState.notice || (searchState.pending
@@ -153,9 +158,11 @@ export function App() {
     : searchState.busy || searchState.confirmed || (run && ["queued", "running"].includes(run.state))
       ? "Search in progress. Results are not ready yet." : "");
   const applySearchPage = useRef<(page: RunPage) => void>(() => {});
+  const browserSourceEnabled = useRef(false);
+  browserSourceEnabled.current = serviceInfo?.userRouteEnabled === true;
   const searchController = useMemo(() => new SearchController(library, sessionGeneration(), setSearchState,
     page => applySearchPage.current(page), libraryPlanScope.current.signal,
-    () => { runGeneration.current++; retireRecordPage(); setBusy(false); }), [library, sessionGeneration(), libraryPlanScope.current.signal]);
+    () => { runGeneration.current++; retireRecordPage(); setBusy(false); }, () => browserSourceEnabled.current), [library, sessionGeneration(), libraryPlanScope.current.signal]);
   useLayoutEffect(() => {
     setSearchState(emptySearchState()); setContinuation(null);
     return () => searchController.dispose();
@@ -244,14 +251,18 @@ export function App() {
       setBusy(false);
     });
   }, []);
-  useEffect(() => {
-    api
-      .session()
-      .then(() => setSignedIn(true))
-      .catch(() => {
-        /* Anonymous sessions are expected on first load. */
-      });
-  }, []);
+  const checkSavedSession = async () => {
+    const expected = sessionGeneration();
+    setSessionChecking(true); setSessionCheckError("");
+    try { await api.session(); setSignedIn(true); }
+    catch (failure) {
+      // 401 is expected for an anonymous visitor. Busy/offline reads do not
+      // establish logout and must leave an explicit, read-only recovery action.
+      if (expected === sessionGeneration() && !(failure instanceof ApiError && failure.status === 401))
+        setSessionCheckError("Your sign-in status could not be checked. Wait briefly, then check again. Saved research remains on the server.");
+    } finally { setSessionChecking(false); }
+  };
+  useEffect(() => { void checkSavedSession(); }, []);
   useEffect(() => {
     if (signedIn) refresh().catch((e) => setError(e.message));
   }, [signedIn]);
@@ -393,7 +404,7 @@ export function App() {
       setError("Choose or create a library first.");
       return;
     }
-    if (busy || serviceInfo?.searchEnabled !== true || searchState.pending || searchState.confirmed || searchState.busy) return;
+    if (busy || serviceInfo?.searchEnabled !== true || searchState.pending || searchState.confirmed || searchState.busy || searchState.browserPending) return;
     if (filterError) { setError(filterError); return; }
     const submitted = effectiveQuery;
     setView("search"); setError(""); setMessage("");
@@ -467,6 +478,7 @@ export function App() {
   };
   const openSaved = async (id: string, offset = 0, size = pageSize, remember = true, nextView: WorkspaceView = "search") => {
     if (!id || !library) return;
+    const navigation = workspaceNavigation.current;
     retireRecordPage();
     searchController.navigate();
     const g = ++runGeneration.current;
@@ -493,8 +505,13 @@ export function App() {
       setContinuation(page.continuation ?? null);
       setSelectionReadVersion(value => value + 1);
       setSnapshot(page.run.input);
-      restoreQuery(page.run.input); setView(nextView);
-      if (remember) writeWorkspaceRoute({ library: savedLibrary, run: id, view: nextView });
+      restoreQuery(page.run.input);
+      // A delayed restore may publish its saved data, but cannot replace a
+      // workspace the researcher selected after this read started.
+      if (navigation === workspaceNavigation.current) {
+        setView(nextView);
+        if (remember) writeWorkspaceRoute({ library: savedLibrary, run: id, view: nextView });
+      }
       setRecords(page.records);
       setPageTotal(page.total);
       setRecordOffset(offset);
@@ -586,6 +603,7 @@ export function App() {
     };
     restore();
     const back = () => {
+      workspaceNavigation.current++;
       navigationTarget.current = readWorkspaceRoute();
       if (navigationTarget.current) restore();
     };
@@ -759,6 +777,8 @@ export function App() {
         </header>
         <section className="panel narrow">
           <h2>Sign in</h2>
+          {sessionCheckError && <div><p role="alert">{sessionCheckError}</p>
+            <button className="secondary" disabled={busy || sessionChecking} onClick={() => void checkSavedSession()}>Check sign-in again</button></div>}
           <form onSubmit={submitLogin}>
             <label>
               Login
@@ -779,7 +799,7 @@ export function App() {
                 required
               />
             </label>
-            <button disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
+            <button disabled={busy || sessionChecking}>{busy ? "Signing in…" : "Sign in"}</button>
           </form>
           {error && (
             <p className="error" role="alert">
@@ -847,6 +867,7 @@ export function App() {
               {[5, 10, 25, 50, 100].map(n => <option key={n}>{n}</option>)}
             </select></label>
           </details>
+          {serviceInfo?.userRouteEnabled === true && <UserRouteControls />}
         </section>
         <div className="research-grid">
           <SearchFilters filters={filters} onChange={setFilters} disabled={searchBlocked} appliedRun={run?.run_id} canSearch={!!library && !!query.trim() && serviceInfo?.searchEnabled === true} />

@@ -240,6 +240,8 @@ func (s *server) batchOne(parent context.Context) {
 		} else if !errors.Is(reuse, pgx.ErrNoRows) {
 			e = reuse
 		} else if format == "pdf" {
+			// 瀏覽器提交的識別碼僅供定位。既有固定 PMC 來源、版本中繼資料、
+			// JATS 文章層級權利與校驗碼驗證，仍必須全部通過才會下載 PDF。
 			data, info, e = s.acquirePDF(ctx, article)
 		} else {
 			var qErr error

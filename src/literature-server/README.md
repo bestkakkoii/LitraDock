@@ -153,3 +153,35 @@ After use, retain schema 9 and its compatible reader with selection writes
 disabled, preserving the data for a reviewed forward repair. An old schema-8
 binary cannot read schema 9. Never discard choices or restore an old dump over
 newer research to downgrade. See [ADR-0027](docs/adr/0027-durable-saved-run-selection.md).
+
+## Browser-origin PubMed (schema 10)
+
+`UserRouteEnabled` defaults to false. After a stopped-service paired backup and
+isolated restore check, `./server migrate-user-route` migrates schema 9 to 10.
+Enable it with `SearchEnabled` and `SearchContinuationEnabled` and the qualified
+compiled frontend. ESearch/EFetch form POSTs then originate in the user's
+supported browser. The backend refuses its own PubMed metadata transport and
+cannot claim browser-owned jobs. PMC original acquisition retains its separate
+fixed-source identity, rights and checksum rules.
+
+User keys are optional, tab-memory-only and sent only to NCBI. Server descriptors
+contain no key. Query membership and responses are untrusted client submissions,
+structurally validated and labelled in the UI and exports. Authenticated, CSRF
+protected `POST /api/libraries/{library}/runs/{run}/user-route/claim`, `upload`
+and `recover` use UUIDs and revisions; replayed claims never authorize a second
+provider request. A lost initial membership needs a new explicit search; a saved
+metadata window can be reconciled and retried explicitly. Saved selection is
+unchanged. Keep the tab open until persistence completes.
+
+HTTPS, Web Locks, streaming Fetch, AbortSignal.any and origin storage are needed.
+Per-session and profile pacing cannot control hospital NAT, other profiles or
+other applications. Unsupported browsers receive a limitation; there is no
+automatic server relay. Physical mobile devices and real personal keys require
+separate qualification. `PubMedDeveloperEmail`, if configured, must be a real
+operator-owned public NCBI tool contact, never an invented address or user secret.
+
+Empty-only rollback uses `./server rollback-empty-user-route`; it refuses any
+browser-owned run. After use, keep schema 10 and a qualified compatible runtime,
+and disable `UserRouteEnabled`, `SearchEnabled`, `SearchContinuationEnabled`
+together if containment is needed. Retain research, receipts and exports; never
+restore an older database over later work. See [ADR-0028](docs/adr/0028-browser-origin-pubmed.md).

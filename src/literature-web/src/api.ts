@@ -1,5 +1,6 @@
 import { readTransfer, TransferOptions } from "./transfer";
 import { Continuation, validateContinuation } from "./continuation/api";
+import { clearPubMedKey } from "./userRoute/credentials";
 export type Session = { csrf: string };
 export type SourceOutcome = {
   status: string; label: string; detail: string; nextAction: string;
@@ -48,6 +49,7 @@ export type LibraryPage = {
   limit: number;
 };
 export type ServiceInfo = {
+	userRouteEnabled?: boolean;
   durableSelectionEnabled?: boolean;
   selectionWriteEnabled?: boolean;
   selectionRecordLimit?: number;
@@ -132,11 +134,13 @@ export const onSessionInvalidated = (listener: () => void) => {
   };
 };
 export const clearSession = () => {
+	clearPubMedKey();
   generation += 1;
   csrf = "";
   sessionListeners.forEach((listener) => listener());
 };
 export const setSession = (value: Session) => {
+	clearPubMedKey();
   generation += 1;
   csrf = value.csrf;
 };

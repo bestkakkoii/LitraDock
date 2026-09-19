@@ -16,6 +16,7 @@ import time
 flags = {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--user-route', action='store_true', help='Run isolated browser-origin PubMed workflow')
 parser.add_argument('--bundles', action='store_true', help='Run isolated prepared bundle/byte-range browser workload')
 parser.add_argument('--plans', action='store_true', help='Run the focused processing-plan browser workload')
 parser.add_argument('--multirun', action='store_true', help='Run the focused multi-run saved-set browser workload')
@@ -54,6 +55,8 @@ if args.multirun:
     env['LITRADOCK_MULTIRUN_BROWSER_TEST'] = 'yes'
 if args.continuation:
     env['LITRADOCK_CONTINUATION_BROWSER_TEST'] = 'yes'
+if args.user_route:
+    env['LITRADOCK_USER_ROUTE_BROWSER_TEST'] = 'yes'
 binary = out/('browser-server.exe' if os.name == 'nt' else 'browser-server')
 with (out/'compile.log').open('wb') as log:
     subprocess.run(['go', 'test', '-c', '-o', str(binary)], cwd=repo/'src/literature-server', env=env, stdout=log, stderr=subprocess.STDOUT, check=True, **flags)
@@ -76,6 +79,8 @@ try:
                 command = [npm, 'run', 'test:bundles']
             if args.continuation:
                 command = [npm, 'run', 'test:continuation']
+            if args.user_route:
+                command = ['node', 'user-route-browser-regression.mjs']
             subprocess.run(command, cwd=repo/'tests/native-browser', env=env, stdout=log, stderr=subprocess.STDOUT, timeout=480, check=True, **flags)
         Path(str(input_file)+'.stop').touch()
         if process.wait(timeout=20) != 0:
@@ -84,6 +89,7 @@ try:
         receipt['multirun'] = args.multirun
         receipt['continuation'] = args.continuation
         receipt['bundles'] = args.bundles
+        receipt['user_route'] = args.user_route
         (out/'receipt.json').write_text(json.dumps(receipt, indent=2)+'\n', encoding='utf-8')
         print(json.dumps(receipt))
 finally:

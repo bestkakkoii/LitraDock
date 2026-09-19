@@ -118,7 +118,7 @@ func nativeOperator(ctx context.Context, verb string) error {
 			return e
 		}
 	}
-	if verb != "bootstrap" && verb != "provision" && verb != "transition-shared-trial" && verb != "migrate-plans" && verb != "rollback-empty-plans" && verb != "migrate-pdf" && verb != "rollback-empty-pdf" && verb != "migrate-multirun" && verb != "rollback-empty-multirun" && verb != "migrate-search-continuation" && verb != "rollback-empty-search-continuation" && verb != "migrate-bundles" && verb != "rollback-empty-bundles" && verb != "prune-bundle-snapshots" && verb != "migrate-saved-snapshots" && verb != "rollback-empty-saved-snapshots" && verb != "migrate-run-selection" && verb != "rollback-empty-run-selection" {
+	if verb != "bootstrap" && verb != "provision" && verb != "transition-shared-trial" && verb != "migrate-plans" && verb != "rollback-empty-plans" && verb != "migrate-pdf" && verb != "rollback-empty-pdf" && verb != "migrate-multirun" && verb != "rollback-empty-multirun" && verb != "migrate-search-continuation" && verb != "rollback-empty-search-continuation" && verb != "migrate-bundles" && verb != "rollback-empty-bundles" && verb != "prune-bundle-snapshots" && verb != "migrate-saved-snapshots" && verb != "rollback-empty-saved-snapshots" && verb != "migrate-run-selection" && verb != "rollback-empty-run-selection" && verb != "migrate-user-route" && verb != "rollback-empty-user-route" {
 		return errors.New("unsupported operator command")
 	}
 	tx, e := db.Begin(ctx)
@@ -138,6 +138,10 @@ func nativeOperator(ctx context.Context, verb string) error {
 			return errors.New("bootstrap requires empty dedicated database")
 		}
 		if _, e = tx.Exec(ctx, nativeSchema); e != nil {
+			return e
+		}
+	} else if verb == "migrate-user-route" || verb == "rollback-empty-user-route" {
+		if e = migrateUserRoute(ctx, tx, verb == "rollback-empty-user-route"); e != nil {
 			return e
 		}
 	} else if verb == "migrate-run-selection" || verb == "rollback-empty-run-selection" {
@@ -174,7 +178,7 @@ func nativeOperator(ctx context.Context, verb string) error {
 		}
 	} else {
 		var version int
-		if e = tx.QueryRow(ctx, "SELECT max(version) FROM native_schema").Scan(&version); e != nil || (version != 3 && version != 4 && version != 5 && version != 6 && version != 8 && version != 9 && !(verb == "transition-shared-trial" && (version == 1 || version == 2))) {
+		if e = tx.QueryRow(ctx, "SELECT max(version) FROM native_schema").Scan(&version); e != nil || (version != 3 && version != 4 && version != 5 && version != 6 && version != 8 && version != 9 && version != 10 && !(verb == "transition-shared-trial" && (version == 1 || version == 2))) {
 			return errors.New("native schema required")
 		}
 		if verb == "transition-shared-trial" {

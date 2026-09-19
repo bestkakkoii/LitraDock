@@ -59,6 +59,13 @@ func encodeWorkbook(ctx context.Context, rows []map[string]any, run, batch strin
 		return nil, errors.New("XLSX supports 1–1000 saved records; nothing truncated")
 	}
 	columns := append(append(append([]string{}, workbookColumns...), extraColumns...), sourceOutcomeColumns...)
+	hasRoute, e := hasRouteExport(rows)
+	if e != nil {
+		return nil, e
+	}
+	if hasRoute {
+		columns = append(columns, routeProvenanceColumns...)
+	}
 	values := make([][]string, 0, len(rows))
 	totalBytes := 0
 	for _, row := range rows {
@@ -98,6 +105,16 @@ func encodeWorkbook(ctx context.Context, rows []map[string]any, run, batch strin
 			v = append(v, extra...)
 		}
 		v = append(v, outcomeValues(row)...)
+		if hasRoute {
+			extra, e := routeExportValues(row)
+			if e != nil {
+				return nil, e
+			}
+			if extra == nil {
+				extra = make([]string, len(routeProvenanceColumns))
+			}
+			v = append(v, extra...)
+		}
 		for _, x := range v {
 			if !workbookText(x) {
 				return nil, errors.New("XLSX cell contains unsupported or excessive text; use source records, no truncated workbook returned")

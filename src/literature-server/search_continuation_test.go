@@ -287,7 +287,7 @@ func TestContinuationActualPostgres(t *testing.T) {
 	admissions := make(chan admission, 2)
 	startAdmissions := make(chan struct{})
 	for i := 0; i < 2; i++ {
-		next := continuationAction{newUUID(), v.Revision, "continue"}
+		next := continuationAction{RequestID: newUUID(), Revision: v.Revision, Action: "continue"}
 		go func() {
 			<-startAdmissions
 			r, e := s.controlContinuation(ctx, lib, run, next)
@@ -336,7 +336,7 @@ func TestContinuationActualPostgres(t *testing.T) {
 	if calls.Load() != before {
 		t.Fatal("automatic retry")
 	}
-	if _, e = s.controlContinuation(ctx, lib, run, continuationAction{newUUID(), v.Revision, "retry"}); e != nil {
+	if _, e = s.controlContinuation(ctx, lib, run, continuationAction{RequestID: newUUID(), Revision: v.Revision, Action: "retry"}); e != nil {
 		t.Fatal(e)
 	}
 	mode.Store(2)
@@ -348,7 +348,7 @@ func TestContinuationActualPostgres(t *testing.T) {
 	if !v.CanCancel {
 		t.Fatal("running cannot cancel")
 	}
-	if _, e = s.controlContinuation(ctx, lib, run, continuationAction{newUUID(), v.Revision, "cancel"}); e != nil {
+	if _, e = s.controlContinuation(ctx, lib, run, continuationAction{RequestID: newUUID(), Revision: v.Revision, Action: "cancel"}); e != nil {
 		t.Fatal(e)
 	}
 	close(release)
@@ -357,7 +357,7 @@ func TestContinuationActualPostgres(t *testing.T) {
 	if v.State != "cancelled" || v.Processed != 5 || v.Saved != 4 {
 		t.Fatalf("late page escaped cancellation %#v", v)
 	}
-	if _, e = s.controlContinuation(ctx, lib, run, continuationAction{newUUID(), v.Revision, "continue"}); e != nil {
+	if _, e = s.controlContinuation(ctx, lib, run, continuationAction{RequestID: newUUID(), Revision: v.Revision, Action: "continue"}); e != nil {
 		t.Fatal(e)
 	}
 	mode.Store(0)
@@ -366,7 +366,7 @@ func TestContinuationActualPostgres(t *testing.T) {
 	if v.Processed != 10 || v.Saved != 9 {
 		t.Fatalf("resume %#v", v)
 	}
-	if _, e = s.controlContinuation(ctx, lib, run, continuationAction{newUUID(), v.Revision, "continue"}); e != nil {
+	if _, e = s.controlContinuation(ctx, lib, run, continuationAction{RequestID: newUUID(), Revision: v.Revision, Action: "continue"}); e != nil {
 		t.Fatal(e)
 	}
 	work()
@@ -456,7 +456,7 @@ func TestContinuationActualPostgres(t *testing.T) {
 			t.Fatal("large persisted page", page, e, lv)
 		}
 		if page < 9 {
-			if _, e = s.controlContinuation(ctx, lib, large, continuationAction{newUUID(), lv.Revision, "continue"}); e != nil {
+			if _, e = s.controlContinuation(ctx, lib, large, continuationAction{RequestID: newUUID(), Revision: lv.Revision, Action: "continue"}); e != nil {
 				t.Fatal(e)
 			}
 		} else if lv.State != "window_limited" || lv.CanContinue || lv.Provider != 25000 {
@@ -477,14 +477,14 @@ func TestContinuationActualPostgres(t *testing.T) {
 			t.Fatal("wrong identity mutated", attempt, bv, e)
 		}
 		if attempt < 3 {
-			if _, e = s.controlContinuation(ctx, lib, bad, continuationAction{newUUID(), bv.Revision, "retry"}); e != nil {
+			if _, e = s.controlContinuation(ctx, lib, bad, continuationAction{RequestID: newUUID(), Revision: bv.Revision, Action: "retry"}); e != nil {
 				t.Fatal(e)
 			}
 		} else {
 			if bv.CanRetry {
 				t.Fatal("retry ceiling")
 			}
-			if _, e = s.controlContinuation(ctx, lib, bad, continuationAction{newUUID(), bv.Revision, "retry"}); e == nil {
+			if _, e = s.controlContinuation(ctx, lib, bad, continuationAction{RequestID: newUUID(), Revision: bv.Revision, Action: "retry"}); e == nil {
 				t.Fatal("ceiling admission")
 			}
 		}
@@ -499,7 +499,7 @@ func TestContinuationActualPostgres(t *testing.T) {
 	if e != nil || tv.State != "failed" || !tv.CanRetry || tv.Processed != 0 {
 		t.Fatal("transport failure stranded frozen membership", tv, e)
 	}
-	if _, e = s.controlContinuation(ctx, lib, transportRun, continuationAction{newUUID(), tv.Revision, "retry"}); e != nil {
+	if _, e = s.controlContinuation(ctx, lib, transportRun, continuationAction{RequestID: newUUID(), Revision: tv.Revision, Action: "retry"}); e != nil {
 		t.Fatal(e)
 	}
 	mode.Store(0)

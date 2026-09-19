@@ -72,6 +72,39 @@ func (s *server) exportRows(ctx context.Context, library, run, batch string) ([]
 		if len(links) > 10000 {
 			return nil, errors.New("Saved query association bound exceeded; no partial export")
 		}
+		// 每個查詢的成員來源與既有文章中繼資料分開保留，不能把批次中的
+		// 高信任既有文章誤當成該次瀏覽器查詢也已獲來源驗證。
+		runIDs := []string{}
+		seenRuns := map[string]bool{}
+		for _, link := range links {
+			id := link["run_id"].(string)
+			if !seenRuns[id] {
+				seenRuns[id] = true
+				runIDs = append(runIDs, id)
+			}
+		}
+		var snapshotBytes int64
+		if e = s.db.QueryRow(ctx, "SELECT COALESCE(sum(octet_length(snapshot)),0) FROM ld_runs WHERE library_id=$1 AND run_id=ANY($2)", library, runIDs).Scan(&snapshotBytes); e != nil {
+			return nil, e
+		}
+		if len(runIDs) > 200 || snapshotBytes > 4<<20 {
+			return nil, errors.New("Saved query provenance bound exceeded; no partial export")
+		}
+		queries, e := s.rows(ctx, "SELECT run_id,snapshot FROM ld_runs WHERE library_id=$1 AND run_id=ANY($2) ORDER BY run_id LIMIT 201", library, runIDs)
+		if e != nil {
+			return nil, e
+		}
+		if len(queries) != len(runIDs) {
+			return nil, errors.New("Saved query associations changed; no partial export")
+		}
+		provenance := map[string]*routeProvenance{}
+		for _, query := range queries {
+			p, err := queryRouteProvenance(query["snapshot"].(string))
+			if err != nil {
+				return nil, err
+			}
+			provenance[query["run_id"].(string)] = p
+		}
 		for _, link := range links {
 			row := byID[link["search_id"].(string)]
 			previous := row["run_ids"].(string)
@@ -79,6 +112,10 @@ func (s *server) exportRows(ctx context.Context, library, run, batch string) ([]
 				previous += "; "
 			}
 			row["run_ids"] = previous + link["run_id"].(string)
+			if p := provenance[link["run_id"].(string)]; p != nil {
+				associations, _ := row["queryRouteProvenanceByRun"].([]routeQueryAssociation)
+				row["queryRouteProvenanceByRun"] = append(associations, routeQueryAssociation{link["run_id"].(string), p})
+			}
 		}
 	}
 	return rows, nil
@@ -97,7 +134,15 @@ func encodeRecordCSV(ctx context.Context, rows []map[string]any, extraColumns ..
 	}
 	var b bytes.Buffer
 	w := csv.NewWriter(&b)
-	_ = w.Write(append(append(append([]string{"Search ID", "Title", "Authors", "Year", "PMID", "PMCID", "DOI", "PubMed URL", "PMC URL", "DOI URL", "Current item state", "Reason", "Rights URI", "Original SHA256"}, sourceOutcomeColumns...), "Search Run ID", "Batch ID"), extraColumns...))
+	hasRoute, e := hasRouteExport(rows)
+	if e != nil {
+		return nil, e
+	}
+	columns := append(append(append([]string{"Search ID", "Title", "Authors", "Year", "PMID", "PMCID", "DOI", "PubMed URL", "PMC URL", "DOI URL", "Current item state", "Reason", "Rights URI", "Original SHA256"}, sourceOutcomeColumns...), "Search Run ID", "Batch ID"), extraColumns...)
+	if hasRoute {
+		columns = append(columns, routeProvenanceColumns...)
+	}
+	_ = w.Write(columns)
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -125,6 +170,18 @@ func encodeRecordCSV(ctx context.Context, rows []map[string]any, extraColumns ..
 				return nil, errors.New("incomplete CSV scope detail")
 			}
 			for _, value := range extra {
+				out = append(out, csvSafe(value))
+			}
+		}
+		if hasRoute {
+			values, e := routeExportValues(row)
+			if e != nil {
+				return nil, e
+			}
+			if values == nil {
+				values = make([]string, len(routeProvenanceColumns))
+			}
+			for _, value := range values {
 				out = append(out, csvSafe(value))
 			}
 		}

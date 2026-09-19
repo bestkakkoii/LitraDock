@@ -78,23 +78,29 @@ func migrateContinuation(ctx context.Context, tx pgx.Tx, rollback bool) error {
 }
 
 type continuationView struct {
-	RunID        string     `json:"runID"`
-	Revision     int        `json:"revision"`
-	State        string     `json:"state"`
-	WindowLimit  int        `json:"windowLimit"`
-	WindowCount  int        `json:"windowCount"`
-	Processed    int        `json:"processedCount"`
-	Saved        int        `json:"savedCount"`
-	Missing      int        `json:"missingCount"`
-	MissingPMIDs []string   `json:"missingPMIDs"`
-	Provider     int        `json:"providerTotal"`
-	PageSize     int        `json:"pageSize"`
-	Attempts     int        `json:"attempts"`
-	CanContinue  bool       `json:"canContinue"`
-	CanRetry     bool       `json:"canRetry"`
-	CanCancel    bool       `json:"canCancel"`
-	Reason       string     `json:"reason"`
-	SnapshotAt   *time.Time `json:"snapshotAt"`
+	Execution        string     `json:"execution,omitempty"`
+	CredentialMode   string     `json:"credentialMode,omitempty"`
+	CanStart         bool       `json:"canStart,omitempty"`
+	CanRecover       bool       `json:"canRecover,omitempty"`
+	AttemptID        string     `json:"attemptID,omitempty"`
+	AttemptExpiresAt *time.Time `json:"attemptExpiresAt,omitempty"`
+	RunID            string     `json:"runID"`
+	Revision         int        `json:"revision"`
+	State            string     `json:"state"`
+	WindowLimit      int        `json:"windowLimit"`
+	WindowCount      int        `json:"windowCount"`
+	Processed        int        `json:"processedCount"`
+	Saved            int        `json:"savedCount"`
+	Missing          int        `json:"missingCount"`
+	MissingPMIDs     []string   `json:"missingPMIDs"`
+	Provider         int        `json:"providerTotal"`
+	PageSize         int        `json:"pageSize"`
+	Attempts         int        `json:"attempts"`
+	CanContinue      bool       `json:"canContinue"`
+	CanRetry         bool       `json:"canRetry"`
+	CanCancel        bool       `json:"canCancel"`
+	Reason           string     `json:"reason"`
+	SnapshotAt       *time.Time `json:"snapshotAt"`
 }
 type continuationReceipt struct {
 	RunID    string `json:"runID"`
@@ -102,9 +108,10 @@ type continuationReceipt struct {
 	State    string `json:"state"`
 }
 type continuationAction struct {
-	RequestID string `json:"requestID"`
-	Revision  int    `json:"revision"`
-	Action    string `json:"action"`
+	RequestID      string `json:"requestID"`
+	Revision       int    `json:"revision"`
+	Action         string `json:"action"`
+	CredentialMode string `json:"credentialMode,omitempty"`
 }
 
 func (s *server) queueContinuedSearch(ctx context.Context, library, query string, limit int, request string) (string, error) {
@@ -189,6 +196,24 @@ func (s *server) continuationStatusFrom(ctx context.Context, reader continuation
 	v.CanContinue = enabled && frozen && v.Processed < len(ii) && (v.State == "ready" || v.State == "cancelled") && v.Attempts < 3
 	v.CanRetry = enabled && frozen && v.Processed < len(ii) && (v.State == "failed" || v.State == "rate_wait" || v.State == "unavailable") && v.Attempts < 3
 	v.CanCancel = v.State == "queued" || v.State == "running"
+	if s.userRoute {
+		var mode, attempt string
+		var until *time.Time
+		var expired bool
+		err := reader.QueryRow(ctx, `SELECT u.credential_mode,COALESCE(j.lease_token::text,''),j.lease_until,COALESCE(j.lease_until<=clock_timestamp(),false) FROM native_user_route_runs u JOIN ld_jobs j USING(library_id,run_id) WHERE u.library_id=$1 AND u.run_id=$2`, library, run).Scan(&mode, &attempt, &until, &expired)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		if err == nil {
+			v.Execution, v.CredentialMode, v.AttemptID, v.AttemptExpiresAt = userRouteExecution, mode, attempt, until
+			v.CanStart = enabled && s.cfg.UserRouteEnabled && v.State == "queued"
+			v.CanRecover = v.State == "running" && expired
+			if !s.cfg.UserRouteEnabled {
+				v.CanContinue = false
+				v.CanRetry = false
+			}
+		}
+	}
 	return v, nil
 }
 
@@ -198,6 +223,12 @@ func (s *server) controlContinuation(ctx context.Context, library, run string, a
 		return out, &planError{400, "A run, request UUID, revision and supported action are required."}
 	}
 	intent := fmt.Sprintf("%s:%d:%s", run, a.Revision, a.Action)
+	if a.CredentialMode != "" {
+		if !validCredentialMode(a.CredentialMode) {
+			return out, &planError{400, "Invalid credential mode."}
+		}
+		intent += ":" + a.CredentialMode
+	}
 	tx, e := s.db.Begin(ctx)
 	if e != nil {
 		return out, e
@@ -205,6 +236,11 @@ func (s *server) controlContinuation(ctx context.Context, library, run string, a
 	defer tx.Rollback(context.Background())
 	if e = capacityLock(ctx, tx); e != nil {
 		return out, e
+	}
+	if s.userRoute {
+		if e = retireExpiredUserRouteWork(ctx, tx); e != nil {
+			return out, e
+		}
 	}
 	var old, receipt string
 	e = tx.QueryRow(ctx, "SELECT intent,receipt FROM native_search_actions WHERE library_id=$1 AND request_id=$2", library, a.RequestID).Scan(&old, &receipt)
@@ -269,9 +305,41 @@ func (s *server) controlContinuation(ctx context.Context, library, run string, a
 		if active >= 20 {
 			return out, &planError{409, "Shared search capacity is full; retry admission later."}
 		}
+		if s.userRoute {
+			var existingMode string
+			err := tx.QueryRow(ctx, "SELECT credential_mode FROM native_user_route_runs WHERE library_id=$1 AND run_id=$2", library, run).Scan(&existingMode)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return out, err
+			}
+			if err == nil && !s.cfg.UserRouteEnabled {
+				return out, &planError{409, "Browser source admission is disabled; no server fallback is available."}
+			}
+			if s.cfg.UserRouteEnabled {
+				if err == nil && a.CredentialMode != "" && a.CredentialMode != existingMode {
+					return out, &planError{409, "This run retains its original credential mode; no automatic identity change is allowed."}
+				}
+				if errors.Is(err, pgx.ErrNoRows) {
+					mode := a.CredentialMode
+					if mode == "" {
+						mode = "unkeyed"
+					}
+					if _, e = tx.Exec(ctx, "INSERT INTO native_user_route_runs VALUES($1,$2,$3)", library, run, mode); e != nil {
+						return out, e
+					}
+				}
+				if _, e = tx.Exec(ctx, "UPDATE ld_jobs SET kind='browser_search' WHERE library_id=$1 AND job_id=$2", library, job); e != nil {
+					return out, e
+				}
+			}
+		}
+	}
+	if s.userRoute && a.Action == "cancel" {
+		if _, e = tx.Exec(ctx, "UPDATE native_user_route_attempts SET state='interrupted' WHERE library_id=$1 AND run_id=$2 AND state='running'", library, run); e != nil {
+			return out, e
+		}
 	}
 	out = continuationReceipt{run, revision + 1, next}
-	if _, e = tx.Exec(ctx, "UPDATE ld_jobs SET state=$3,reason='',lease_token=NULL,lease_until=NULL WHERE library_id=$1 AND job_id=$2", library, job, next); e != nil {
+	if _, e = tx.Exec(ctx, "UPDATE ld_jobs SET state=$3,reason='',lease_token=NULL,lease_until=CASE WHEN kind='browser_search' AND $3='queued' THEN clock_timestamp()+interval '120 seconds' END WHERE library_id=$1 AND job_id=$2", library, job, next); e != nil {
 		return out, e
 	}
 	if _, e = tx.Exec(ctx, "UPDATE native_search_windows SET state=$3,revision=$4 WHERE library_id=$1 AND run_id=$2", library, run, next, out.Revision); e != nil {
@@ -474,15 +542,7 @@ func (s *server) finishSearchPage(ctx context.Context, tx pgx.Tx, c claim, r sea
 
 func (s *server) searchIDs(ctx context.Context, query string, limit int) (searchResult, error) {
 	r := searchResult{Started: time.Now().UTC().Format(time.RFC3339Nano), IDs: []string{}, Articles: []map[string]any{}}
-	query = strings.TrimSpace(query)
-	if match := pmidQuery.FindStringSubmatch(query); match != nil {
-		query = match[1]
-	}
-	if numeric.MatchString(query) {
-		query += "[uid]"
-	} else if strings.HasPrefix(normalizeDoi(query), "10.") {
-		query = "\"" + strings.ReplaceAll(normalizeDoi(query), "\"", "") + "\"[AID]"
-	}
+	query = normalizedPubMedQuery(query)
 	r.Query = query
 	b, e := s.request(ctx, "esearch.fcgi", url.Values{"term": {query}, "retmax": {fmt.Sprint(limit)}, "sort": {"relevance"}})
 	if e != nil {

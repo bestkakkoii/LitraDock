@@ -83,8 +83,9 @@ func TestBrowserServer(t *testing.T) {
 	if _, err = db.Exec(ctx, nativeSchema); err != nil {
 		t.Fatal(err)
 	}
+	userRoute := os.Getenv("LITRADOCK_USER_ROUTE_BROWSER_TEST") == "yes"
 	bundles := os.Getenv("LITRADOCK_BUNDLE_BROWSER_TEST") == "yes"
-	continuation := os.Getenv("LITRADOCK_CONTINUATION_BROWSER_TEST") == "yes" || bundles
+	continuation := os.Getenv("LITRADOCK_CONTINUATION_BROWSER_TEST") == "yes" || bundles || userRoute
 	multirun := os.Getenv("LITRADOCK_MULTIRUN_BROWSER_TEST") == "yes" || continuation
 	// All compiled clients use the current persistence capability. Feature flags
 	// still bound each browser workload; migrations do not enable source traffic.
@@ -97,7 +98,7 @@ func TestBrowserServer(t *testing.T) {
 			tx.Rollback(ctx)
 			t.Fatal(err)
 		}
-		for _, migrate := range []func(context.Context, pgx.Tx, bool) error{migrateContinuation, migrateBundles, migrateSavedSnapshots, migrateRunSelection} {
+		for _, migrate := range []func(context.Context, pgx.Tx, bool) error{migrateContinuation, migrateBundles, migrateSavedSnapshots, migrateRunSelection, migrateUserRoute} {
 			if err = migrate(ctx, tx, false); err != nil {
 				tx.Rollback(ctx)
 				t.Fatal(err)
@@ -131,6 +132,7 @@ func TestBrowserServer(t *testing.T) {
 	cfg.PlanEnabled = os.Getenv("LITRADOCK_PLAN_BROWSER_TEST") == "yes" || multirun
 	cfg.SavedSetEnabled = multirun
 	cfg.SearchContinuationEnabled = continuation
+	cfg.UserRouteEnabled = userRoute
 	cfg.BundleDeliveryEnabled = bundles
 	cfg.SelectionWriteEnabled = true
 	if bundles {
@@ -156,6 +158,10 @@ func TestBrowserServer(t *testing.T) {
 	}
 	planRateLimited := false
 	transport := nativeTransport(func(r *http.Request) (*http.Response, error) {
+		if userRoute {
+			t.Error("browser-owned workflow unexpectedly requested the server provider transport")
+			return nil, fmt.Errorf("all server source transport forbidden for browser-owned workload")
+		}
 		if continuation {
 			f, e := os.OpenFile(os.Getenv("NATIVE_BROWSER_INPUT")+".source-requests", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 			if e != nil {
@@ -269,6 +275,7 @@ func TestBrowserServer(t *testing.T) {
 	s.bundles = bundles
 	s.savedSnapshots = true
 	s.runSelection = true
+	s.userRoute = true
 	service := &http.Server{Handler: s, ReadHeaderTimeout: 5 * time.Second}
 	defer service.Close()
 	go s.worker(ctx)

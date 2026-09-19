@@ -55,7 +55,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'")
+	csp := "default-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'"
+	if s.userRoute && s.cfg.UserRouteEnabled {
+		csp += "; connect-src 'self' https://eutils.ncbi.nlm.nih.gov"
+	}
+	w.Header().Set("Content-Security-Policy", csp)
 	if s.cfg.FrontendDirectory != "" && r.Method == "GET" && (r.URL.Path == "/" || strings.HasPrefix(r.URL.Path, "/assets/")) {
 		name := "index.html"
 		if r.URL.Path != "/" {
@@ -102,6 +106,7 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			return 0
 		}(), "searchContinuationEnabled": s.continuation && s.cfg.SearchContinuationEnabled && s.cfg.SearchEnabled, "searchWindowLimit": searchWindowLimit,
+			"userRouteEnabled":        s.userRoute && s.cfg.UserRouteEnabled && s.cfg.SearchEnabled && s.cfg.SearchContinuationEnabled,
 			"durableSelectionEnabled": s.runSelection, "selectionWriteEnabled": s.runSelection && s.cfg.SelectionWriteEnabled, "selectionRecordLimit": runSelectionLimit,
 			"bundleDeliveryEnabled": s.bundles && s.cfg.BundleDeliveryEnabled, "bundleOriginalLimitBytes": bundleOriginalLimit, "bundlePartOriginalLimitBytes": bundlePartOriginalLimit, "pdfEnabled": s.native && s.cfg.PDFEnabled && s.cfg.AcquisitionEnabled, "pdfPolicySummary": pdfPolicySummary, "planEnabled": s.native && s.cfg.PlanEnabled, "savedSnapshotEnabled": s.native && s.savedSnapshots && s.cfg.SavedSetEnabled, "savedSetEnabled": s.native && s.cfg.PlanEnabled && s.cfg.SavedSetEnabled, "planSelectionLimit": 100, "planGroupLimit": 10, "acquisitionEnabled": s.cfg.AcquisitionEnabled, "source": s.cfg.Revision})
 		return
@@ -280,6 +285,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		reply(w, 404, nil)
 		return
 	}
+	if s.native && s.userRouteRoutes(w, r, ctx, library, parts, sess) {
+		return
+	}
 	if s.native && s.runSelectionRoute(w, r, ctx, library, parts) {
 		return
 	}
@@ -300,9 +308,10 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(parts) == 4 && parts[3] == "search" && r.Method == "POST" {
 		var input struct {
-			Query     string
-			Limit     int
-			RequestID string
+			Query          string
+			Limit          int
+			RequestID      string
+			CredentialMode string
 		}
 		if !decode(w, r, &input) {
 			return
@@ -311,7 +320,17 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			reply(w, 409, map[string]string{"error": "New searches are disabled; saved results remain available."})
 			return
 		}
-		id, e := s.queueSearch(ctx, library, input.Query, input.Limit, input.RequestID)
+		var id string
+		var e error
+		if s.cfg.UserRouteEnabled || input.CredentialMode != "" {
+			mode := input.CredentialMode
+			if mode == "" {
+				mode = "unkeyed"
+			}
+			id, e = s.queueUserSearch(ctx, library, input.Query, input.Limit, input.RequestID, mode)
+		} else {
+			id, e = s.queueSearch(ctx, library, input.Query, input.Limit, input.RequestID)
+		}
 		if e != nil {
 			if s.continuation && (s.cfg.SearchContinuationEnabled || input.RequestID != "") {
 				planReply(w, nil, e)

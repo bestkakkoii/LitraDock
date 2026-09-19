@@ -366,15 +366,15 @@ func TestRunSelectionActualPostgres(t *testing.T) {
 			}
 		}
 		// 僅接受已知相容版本；未知後續結構仍須拒絕，且不得先寫入計畫。
-		must("INSERT INTO native_schema(version) VALUES(10)")
-		defer must("DELETE FROM native_schema WHERE version=10")
+		must("INSERT INTO native_schema(version) VALUES(11)")
+		defer must("DELETE FROM native_schema WHERE version=11")
 		requestID := newUUID()
 		got := request("POST", endpoint, map[string]any{"requestID": requestID, "scopeKind": "saved_set", "members": members, "format": "xml"}, token, csrf)
 		var refusedCount int
 		if err = db.QueryRow(ctx, "SELECT count(*) FROM native_plans WHERE library_id=$1 AND request_id=$2", library, requestID).Scan(&refusedCount); err != nil || got.Code != 409 || !strings.Contains(got.Body.String(), "supported operator migration") || refusedCount != 0 {
 			t.Fatal("unknown schema was admitted or wrote a partial plan", got.Code, err)
 		}
-		t.Log("SYNTHETIC schema9 XML/PDF saved sets admitted; three records/five associations and disabled replay preserved; unknown schema10 refused before writes")
+		t.Log("SYNTHETIC schema9 XML/PDF saved sets admitted; three records/five associations and disabled replay preserved; unknown schema11 refused before writes")
 	})
 	selectionPath := "/api/libraries/" + library + "/runs/" + run + "/selection"
 	if got := request("GET", selectionPath, nil, token, csrf); got.Code != 200 {

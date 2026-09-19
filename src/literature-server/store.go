@@ -170,6 +170,11 @@ func (s *server) workOne(parent context.Context) {
 	if gate.QueryRow(ctx, "SELECT required FROM ld_recovery_guard WHERE singleton=true").Scan(&recoveryRequired) != nil || recoveryRequired {
 		return
 	}
+	if s.userRoute {
+		if err = s.retireUserRouteWork(ctx); err != nil {
+			return
+		}
+	}
 	// Shared database fence prevents a concurrent supported worker from re-claiming this running attempt.
 	_, err = s.db.Exec(ctx, "UPDATE ld_jobs SET state='queued',lease_token=NULL,lease_until=NULL WHERE kind='search' AND state='running' AND lease_until<now()")
 	if err != nil {
@@ -234,6 +239,14 @@ func (s *server) saveSearch(ctx context.Context, c claim, result searchResult) e
 		return err
 	}
 	defer tx.Rollback(context.Background())
+	if err = s.saveSearchTx(ctx, tx, c, result); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *server) saveSearchTx(ctx context.Context, tx pgx.Tx, c claim, result searchResult) error {
+	var err error
 	var job string
 	if err = tx.QueryRow(ctx, "SELECT job_id FROM ld_jobs WHERE library_id=$1 AND job_id=$2 AND lease_token=$3 AND state='running' AND lease_until>now() FOR UPDATE", c.Library, c.Job, c.Lease).Scan(&job); err != nil {
 		return err
@@ -271,6 +284,22 @@ func (s *server) saveSearch(ctx context.Context, c claim, result searchResult) e
 			var prior map[string]any
 			if json.Unmarshal([]byte(old), &prior) != nil {
 				return errors.New("stored metadata invalid")
+			}
+			if result.ClientSubmitted {
+				// A syntactically valid client assertion cannot add identifiers to,
+				// replace, or downgrade an existing canonical record. The complete
+				// incoming body stays in the immutable attempt for later review.
+				if articleString(prior, "Pmid") != articleString(a, "Pmid") {
+					return &planError{409, "Client-submitted identifiers conflict with an existing record; independent review is required."}
+				}
+				for kind, key := range map[string]string{"doi": "Doi", "pmid": "Pmid", "pmcid": "Pmcid"} {
+					value := articleString(prior, key)
+					if ids[kind] != "" && value != "" && ids[kind] != value {
+						return &planError{409, "Client-submitted identifiers conflict with an existing record; independent review is required."}
+					}
+					ids[kind] = value
+				}
+				a = prior
 			}
 			// Preserve fields unknown to the new backend and the established full-text/research metadata.
 			for k, v := range prior {
@@ -329,5 +358,5 @@ func (s *server) saveSearch(ctx context.Context, c claim, result searchResult) e
 	if err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	return nil
 }
