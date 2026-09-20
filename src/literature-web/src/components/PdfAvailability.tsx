@@ -111,7 +111,7 @@ export function PdfAvailability(props: Props) {
       {busy ? "Preparing PDFs…" : pending ? sent ? "Save again" : pending.confirmedID ? status?.pending || !status ? "Continue checking" : "Check and download again" : "Retry same PDF request" : `Download PDFs (${props.selectedCount} selected)`}
     </button>
     {busy && <button className="secondary" onClick={stopWaiting}>Stop waiting</button>}
-    <p className="pdf-scope">{pending ? `${pending.body.searchIDs.length} ${pending.body.searchIDs.length === 1 ? "record" : "records"} in this download` : `${props.selectedCount} selected saved ${props.selectedCount === 1 ? "record" : "records"}`}. Available originals: PDF or ZIP.</p>
+    <p className="pdf-scope">{pending && `${pending.body.searchIDs.length} ${pending.body.searchIDs.length === 1 ? "record" : "records"} in this download. `}Available originals: PDF or ZIP.</p>
     <div className="pdf-progress" aria-live="polite" aria-atomic="true">
       {message && <p role={error ? "alert" : "status"}>{message}</p>}
       {status && <p><strong>{status.ready} ready · {status.pending} pending · {status.unresolved} without an available PDF</strong> · {status.items.length} selected</p>}

@@ -223,6 +223,7 @@ jobs:
             ${{ runner.temp }}/native-capture-browser/browser.log
             ${{ runner.temp }}/native-capture-browser/server.log
             ${{ runner.temp }}/native-capture-browser/staged-query-*.png
+            ${{ runner.temp }}/native-capture-browser/staged-default-*.png
             ${{ runner.temp }}/native-capture-browser/staged-query-evidence.json
             ${{ runner.temp }}/native-user-route-browser/receipt.json
             ${{ runner.temp }}/native-user-route-browser/browser.log

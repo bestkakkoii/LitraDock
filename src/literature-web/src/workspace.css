@@ -15,6 +15,9 @@
 .search-options { margin-top: .5rem; font-size: .85rem; }
 .search-options label { display: flex; align-items: center; gap: .75rem; }
 .search-options select { width: 100px; }
+.search-option-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 .6rem; }
+.search-option-row > details { min-width: 0; }
+.search-option-row > details[open] { flex-basis: 100%; }
 .research-grid { display: grid; grid-template-columns: 235px minmax(0, 1fr); gap: 1.15rem; align-items: start; }
 .research-grid > *, .active-results { min-width: 0; }
 .search-filters { padding: .8rem; box-shadow: none; }
@@ -38,9 +41,11 @@ summary { cursor: pointer; }
 .filter-state { margin: 0 0 .35rem; color: #21583e; font-size: .82rem; font-weight: 650; }
 .draft-notice { background: #fff4d9; border-left: 3px solid #a87913; padding: .6rem; margin-top: .5rem; font-size: .85rem; }
 .draft-notice button { margin-left: .5rem; padding: .4rem; }
-.research-workspace .compact-result-head { margin: .45rem 0 .65rem; gap: .4rem; }
+.research-workspace .compact-result-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; margin: .45rem 0 .65rem; gap: .2rem .4rem; align-items: center; }
 .compact-result-head h2 { margin-bottom: .1rem; }
 .compact-result-head p { margin: 0; }
+/* 筆數獨占完整列，避免窄視窗將正確的擷取／儲存／可見範圍擠成多列。 */
+.compact-result-head .result-counts { grid-column: 1 / -1; }
 .result-display { display: flex; gap: .8rem; align-items: center; }
 .result-display label { display: flex; align-items: center; gap: .4rem; font-size: .8rem; }
 .result-display select { width: 70px; padding: .4rem; }
@@ -100,6 +105,10 @@ summary { cursor: pointer; }
   .workspace-nav { margin-bottom: .35rem; padding-bottom: .5rem; }
   .workspace-nav button { font-size: .82rem; padding: .6rem .7rem; }
   .research-workspace .search-panel { padding: .65rem; margin-bottom: .65rem; }
+  .search-option-row { column-gap: .4rem; }
+  .search-option-row > details:not([open]) { font-size: .75rem; }
+  .search-filters:not([open]) { padding: .3rem .65rem; }
+  .search-filters { margin-bottom: .45rem; }
   .research-workspace .query { min-width: 0; flex-basis: 0 !important; }
   .search-panel form > button { width: auto; align-self: end; padding-left: .85rem; padding-right: .85rem; }
   /* 固定兩欄的分配，避免系統字型較寬時將排序整組推到下一列。 */
@@ -113,7 +122,7 @@ summary { cursor: pointer; }
 }
 .research-workspace .compact-metadata-export { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; border: 0; padding: .35rem 0 0; background: transparent; }
 .compact-metadata-export > [role], .compact-metadata-export > div, .compact-metadata-export > p, .compact-metadata-export > details[open] { flex-basis: 100%; }
-.compact-metadata-export > button { max-width: 100%; white-space: normal; }
+.compact-metadata-export > button { flex: 1 1 190px; max-width: 100%; white-space: normal; }
 .metadata-export-options > summary { padding: .35rem 0; font-size: .82rem; }
 .pdf-selection-details > summary { padding: .5rem .85rem; font-size: .82rem; }
 .selection-limit-detail { margin: .5rem .85rem; }
@@ -122,3 +131,4 @@ summary { cursor: pointer; }
 .result-secondary-options { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 0 .65rem; }
 .result-secondary-options > details { flex: 1 1 160px; min-width: 0; margin: 0; }
 .result-secondary-options > details[open] { flex-basis: 100%; }
+.result-secondary-options > details > summary { padding-block: .25rem; }

@@ -870,6 +870,7 @@ export function App() {
             </div>
             <button disabled={searchBlocked || !library || serviceInfo?.searchEnabled !== true}>{searchBlocked ? "Working…" : <>Search<span className="sr-only"> PubMed</span></>}</button>
           </form>
+          <div className="search-option-row">
           <details className="search-options"><summary>Search options</summary>
             <p>Boolean and fielded queries are supported, for example <code>"heart failure"[Title] AND 2020:2024[dp]</code>. Shift+Enter adds a line.</p>
             <label>Records to retrieve per request <select aria-label="Retrieved limit" value={limit} onChange={e => setLimit(Number(e.target.value))}>
@@ -877,6 +878,7 @@ export function App() {
             </select></label>
           </details>
           {serviceInfo?.userRouteEnabled === true && <UserRouteControls />}
+          </div>
         </section>
         <div className="research-grid">
           <SearchFilters filters={filters} onChange={setFilters} disabled={searchBlocked} appliedRun={run?.run_id} canSearch={!!library && !!query.trim() && serviceInfo?.searchEnabled === true} />
@@ -888,14 +890,13 @@ export function App() {
             </div>}
             {serviceInfo?.searchEnabled === false && <p className="muted">New searches are temporarily disabled. Saved results remain available.</p>}
             <div className="result-head compact-result-head">
-              <div><h2 id="results-heading" tabIndex={-1}>Results <span className="count">{countLabel(run?.total ?? 0, continuation?.capture ? "initial match" : "match", continuation?.capture ? "initial matches" : "matches")}</span></h2>
-                <p className="muted small">{continuation?.capture ? `${countLabel(continuation.windowCount, "ID captured", "IDs captured")} · ${continuation.savedCount.toLocaleString()} saved` : `${run?.fetched ?? 0} loaded`} · {records.length ? recordOffset + 1 : 0}–{recordOffset + records.length} shown{run && !continuation?.capture ? ` · ${run.state}` : ''}</p>
-              </div>
-              <div className="result-display"><span className="small">{continuation?.capture && continuation.capture.state !== "not_started" ? "Order: saved sequence" : "Sort: PubMed relevance"}</span>
+              <h2 id="results-heading" tabIndex={-1}>Results <span className="count">{countLabel(run?.total ?? 0, continuation?.capture ? "initial match" : "match", continuation?.capture ? "initial matches" : "matches")}</span></h2>
+              <div className="result-display"><span className="small">{continuation?.capture && continuation.capture.state !== "not_started" ? "Order: saved sequence" : "PubMed relevance"}</span>
                 <label>Per page <select aria-label="Page size" value={pageSize} disabled={busy} onChange={e => { const size = Number(e.target.value); setPageSize(size); if (run) void openSaved(run.run_id, 0, size); }}>
                   {[5, 25, 50, 100].map(n => <option key={n}>{n}</option>)}
                 </select></label>
               </div>
+              <p className="muted small result-counts">{continuation?.capture ? `${countLabel(continuation.windowCount, "ID captured", "IDs captured")} · ${continuation.savedCount.toLocaleString()} saved` : `${run?.fetched ?? 0} loaded`} · {records.length ? recordOffset + 1 : 0}–{recordOffset + records.length} shown{run && !continuation?.capture ? ` · ${run.state}` : ''}</p>
             </div>
             {continuation?.capture && <CaptureControls status={continuation} state={searchState} controller={searchController}
               enabled={serviceInfo?.stagedQueryEnabled === true && serviceInfo?.userRouteEnabled === true} blocked={busy || draftChanged} />}

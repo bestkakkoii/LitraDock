@@ -124,6 +124,11 @@ async function defaultViewport(page, name) {
       };
       const section = document.querySelector('.active-results');
       return { viewport: { width: innerWidth, height: innerHeight }, scrollY,
+        font: getComputedStyle(document.documentElement).fontFamily,
+        header: rect(section.querySelector('.compact-result-head')),
+        counts: rect(section.querySelector('.result-counts')),
+        controls: rect(section.querySelector('.staged-actions')),
+        selection: rect(section.querySelector('.selection-and-pdfs')),
         firstResult: rect(section.querySelector('.result-card')),
         firstTitle: rect(section.querySelector('.result-card h3')),
         capture: rect([...section.querySelectorAll('button')].find(b => b.textContent === 'Find more results')),
