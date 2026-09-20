@@ -121,7 +121,9 @@ func TestNativeActualPostgres(t *testing.T) {
 	}
 	must("INSERT INTO ld_accounts VALUES($1,$2,$3,true),($4,$5,$3,true)", account, "synthetic-"+account, h, other, "synthetic-"+other)
 	defer func() {
-		c, done := context.WithTimeout(context.Background(), 15*time.Second)
+		// 此隔離案例含 20,000 筆合成資料；清理預算與受測 HTTP／取得逾時分開。
+		// CI 曾在 15 秒清理期限回滾，殘留 fixture 又污染後續共享容量檢查。
+		c, done := context.WithTimeout(context.Background(), 60*time.Second)
 		defer done()
 		tx, e := db.Begin(c)
 		if e != nil {
@@ -130,10 +132,13 @@ func TestNativeActualPostgres(t *testing.T) {
 		}
 		defer tx.Rollback(context.Background())
 		for _, table := range []string{"native_originals", "native_items", "native_batches", "ld_results", "ld_jobs", "ld_runs", "ld_identifiers", "ld_records"} {
-			if _, e = tx.Exec(c, "DELETE FROM "+table+" WHERE library_id IN(SELECT library_id FROM ld_libraries WHERE owner_id=ANY($1::uuid[]))", []string{account, other}); e != nil {
-				t.Error(e)
+			started := time.Now()
+			result, err := tx.Exec(c, "DELETE FROM "+table+" WHERE library_id IN(SELECT library_id FROM ld_libraries WHERE owner_id=ANY($1::uuid[]))", []string{account, other})
+			if err != nil {
+				t.Errorf("SYNTHETIC fixture cleanup %s: %v", table, err)
 				return
 			}
+			t.Logf("SYNTHETIC fixture cleanup %s: rows=%d elapsed=%s", table, result.RowsAffected(), time.Since(started))
 		}
 		for _, q := range []string{"DELETE FROM ld_sessions WHERE account_id=ANY($1::uuid[])", "DELETE FROM ld_libraries WHERE owner_id=ANY($1::uuid[])", "DELETE FROM ld_accounts WHERE account_id=ANY($1::uuid[])"} {
 			if _, e = tx.Exec(c, q, []string{account, other}); e != nil {
