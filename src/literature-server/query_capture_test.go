@@ -15,7 +15,7 @@ import (
 
 func syntheticCaptureXML(total, start, count int) []byte {
 	var body strings.Builder
-	fmt.Fprintf(&body, "<eSearchResult><Count>%d</Count><IdList>", total)
+	fmt.Fprintf(&body, "<eSearchResult><Count>%d</Count><RetMax>%d</RetMax><RetStart>0</RetStart><IdList>", total, count)
 	for i := 0; i < count; i++ {
 		fmt.Fprintf(&body, "<Id>%d</Id>", start+i)
 	}
@@ -23,26 +23,72 @@ func syntheticCaptureXML(total, start, count int) []byte {
 	return []byte(body.String())
 }
 
-func TestCaptureDocumentedBoundaryFixtures(t *testing.T) {
+func TestCaptureSupportedBoundaryFixtures(t *testing.T) {
 	for _, total := range []int{100, 1000, 9999, 10000, 10001, 20000, 20001} {
 		t.Run(fmt.Sprint(total), func(t *testing.T) {
-			body := syntheticCaptureXML(total, 900000001, min(total, 10000))
-			observed, ids, _, err := parseSearchMetadata(body, 10000)
-			if err != nil || observed != total || len(ids) != min(total, 10000) {
+			body := syntheticCaptureXML(total, 900000001, min(total, 9999))
+			observed, ids, _, err := parseCaptureSearchMetadata(body, 9999)
+			if err != nil || observed != total || len(ids) != min(total, 9999) {
 				t.Fatal("provider-boundary count lost", observed, len(ids), err)
 			}
 			if len(body) > 200000 {
 				t.Fatal("fixture response unexpectedly unbounded")
 			}
-			if total > 10000 && observed == len(ids) {
+			if total > 9999 && observed == len(ids) {
 				t.Fatal("beyond-boundary input falsely complete")
 			}
 		})
 	}
 	for _, body := range [][]byte{syntheticCaptureXML(10001, 1, 10001), []byte(`<eSearchResult><Count>2</Count><IdList><Id>1</Id><Id>1</Id></IdList></eSearchResult>`)} {
-		if _, _, _, err := parseSearchMetadata(body, 10000); err == nil {
+		if _, _, _, err := parseCaptureSearchMetadata(body, 9999); err == nil {
 			t.Fatal("excess or duplicate source membership accepted")
 		}
+	}
+}
+
+func TestCaptureWarningAndTruncationControls(t *testing.T) {
+	base := string(syntheticCaptureXML(1, 900000001, 1))
+	warning := `<WarningList><OutputMessage>Restrictions achieved. start and count adjusted to 0, 9999</OutputMessage></WarningList>`
+	known := strings.Replace(base, "</eSearchResult>", warning+"</eSearchResult>", 1)
+	spaced := strings.ReplaceAll(strings.ReplaceAll(known, "<IdList>", "<IdList>\n  "), "<WarningList>", "<WarningList>\n  ")
+	for _, body := range []string{base, known, spaced, string(syntheticCaptureXML(0, 900000001, 0))} {
+		if _, _, _, err := parseCaptureSearchMetadata([]byte(body), 9999); err != nil {
+			t.Fatal("complete supported response refused", err)
+		}
+	}
+	for name, body := range map[string]string{
+		"mixed warning text":        strings.Replace(known, "<WarningList>", "<WarningList>SYNTHETIC query terms were ignored.", 1),
+		"mixed identifier text":     strings.Replace(known, "<IdList>", "<IdList>SYNTHETIC omitted identities.", 1),
+		"mixed root text":           strings.Replace(known, "<eSearchResult>", "<eSearchResult>SYNTHETIC incomplete response.", 1),
+		"nested translation":        strings.Replace(base, "<QueryTranslation>", "<QueryTranslation><Unknown>SYNTHETIC</Unknown>", 1),
+		"unknown warning":           strings.Replace(known, "Restrictions achieved. start and count adjusted to 0, 9999", "SYNTHETIC query terms ignored", 1),
+		"field warning":             strings.Replace(known, "OutputMessage", "FieldNotFound", -1),
+		"multiple warnings":         strings.Replace(known, "</WarningList>", "<OutputMessage>SYNTHETIC other warning</OutputMessage></WarningList>", 1),
+		"error list":                strings.Replace(base, "</eSearchResult>", "<ErrorList><FieldNotFound>SYNTHETIC</FieldNotFound></ErrorList></eSearchResult>", 1),
+		"error message":             strings.Replace(base, "</eSearchResult>", "<ErrorMessage>SYNTHETIC error</ErrorMessage></eSearchResult>", 1),
+		"api error":                 strings.Replace(base, "</eSearchResult>", "<ERROR>SYNTHETIC error</ERROR></eSearchResult>", 1),
+		"wrong offset":              strings.Replace(base, "<RetStart>0</RetStart>", "<RetStart>1</RetStart>", 1),
+		"wrong returned count":      strings.Replace(base, "<RetMax>1</RetMax>", "<RetMax>2</RetMax>", 1),
+		"missing returned count":    strings.Replace(base, "<RetMax>1</RetMax>", "", 1),
+		"ambiguous returned count":  strings.Replace(base, "<RetMax>1</RetMax>", "<RetMax>1</RetMax><RetMax>1</RetMax>", 1),
+		"incomplete below boundary": string(syntheticCaptureXML(9999, 900000001, 9998)),
+		"incomplete above boundary": string(syntheticCaptureXML(10000, 900000001, 9998)),
+		"excessive IDs":             string(syntheticCaptureXML(10000, 900000001, 10000)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, _, err := parseCaptureSearchMetadata([]byte(body), 9999); err == nil {
+				t.Fatal("unsupported response accepted")
+			}
+		})
+	}
+	// 這是隔離的反例：相同完整 9,999 筆回應在舊 10,000 假設下被拒絕，
+	// 新界線保留 total=10,000，後续必須分段，不能把 9,999 筆前綴當完成。
+	body := syntheticCaptureXML(10000, 900000001, 9999)
+	if _, _, _, err := parseCaptureSearchMetadata(body, 10000); err == nil {
+		t.Fatal("old incomplete-boundary control unexpectedly complete")
+	}
+	if total, ids, _, err := parseCaptureSearchMetadata(body, 9999); err != nil || total != 10000 || len(ids) != 9999 {
+		t.Fatal("conservative boundary lost full provider count", total, len(ids), err)
 	}
 }
 

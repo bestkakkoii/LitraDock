@@ -5,7 +5,7 @@ import { Capture } from "./capture";
 
 export const runID = `RUN-${"1".repeat(32)}`;
 export const capture = (patch: Partial<Capture> = {}): Capture => ({ strategy: "create_date_v1", state: "ready", pendingSegments: 2,
-  completedSegments: 1, requests: 2, requestLimit: 256, membershipLimit: 20000, providerBoundary: 10000,
+  completedSegments: 1, requests: 2, requestLimit: 256, membershipLimit: 20000, providerBoundary: 9999,
   latestProviderTotal: 700, order: "initial_then_segment", canCapture: true, reason: "SYNTHETIC coverage", ...patch });
 export const continuation = (patch: Partial<Continuation> = {}): Continuation => ({ runID, revision: 7, state: "ready",
   execution: "user_browser", credentialMode: "unkeyed", canStart: false, canRecover: false, windowLimit: 20000,

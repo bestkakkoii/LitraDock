@@ -22,6 +22,8 @@ export function validateDescriptor(value: Descriptor, run: string): Descriptor {
   const p = value?.parameters;
   const common = ["db", "retmode", "tool", "email"];
   const keys = value?.stage === "esearch" ? [...common, "term", "retmax", "retstart", "sort"] : [...common, "id"];
+  // 舊 descriptor 僅供讀取與復原；fresh=false 仍禁止 fetchPubMed 重送來源。
+  const historicalCapture = value?.captureSegment !== undefined && value?.fresh === false && p?.retmax === "10000";
   if (!value || value.runID !== run || !/^RUN-[0-9a-f]{32}$/.test(run) || !/^[0-9a-f-]{36}$/.test(value.attemptID) ||
     !Number.isSafeInteger(value.revision) || value.revision < 2 || !["esearch", "efetch"].includes(value.stage) ||
     !["unkeyed", "personal_key"].includes(value.credentialMode) || value.maxBytes !== 8 * 1024 * 1024 ||
@@ -30,7 +32,7 @@ export function validateDescriptor(value: Descriptor, run: string): Descriptor {
     Object.keys(p).some(key => !keys.includes(key)) || Object.values(p).some(v => typeof v !== "string" || v.length > 20000) ||
     p.db !== "pubmed" || p.retmode !== "xml" || p.tool !== "LitraDock" ||
     (value.captureSegment !== undefined && (value.stage !== "esearch" || !Number.isSafeInteger(value.captureSegment) || value.captureSegment < 1 || value.captureSegment > 1024)) ||
-    (value.stage === "esearch" && (!p.term || p.retmax !== (value.captureSegment === undefined ? "1000" : "10000") || p.retstart !== "0" || p.sort !== "relevance")) ||
+    (value.stage === "esearch" && (!p.term || (!historicalCapture && p.retmax !== (value.captureSegment === undefined ? "1000" : "9999")) || p.retstart !== "0" || p.sort !== "relevance")) ||
     (value.stage === "efetch" && (!/^\d{1,20}(,\d{1,20}){0,99}$/.test(p.id ?? "") || new Set(p.id.split(",")).size !== p.id.split(",").length)))
     throw new Error("The source request descriptor was invalid; no provider request was sent.");
   return value;

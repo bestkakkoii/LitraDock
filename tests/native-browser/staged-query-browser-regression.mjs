@@ -45,19 +45,19 @@ async function context() {
     if (url.pathname.endsWith('esearch.fcgi')) {
       assert.equal(params.get('retstart'), '0'); assert.equal(params.get('sort'), 'relevance');
       const maximum = Number(params.get('retmax')), term = params.get('term');
-      assert([1000, 10000].includes(maximum));
+      assert([1000, 9999].includes(maximum));
       assert(term === query || term.startsWith(`(${query}) AND (`) || term.startsWith(`(${query}) NOT (`), 'original query retained as an exact operand');
       let found = ids(930000001, maximum), total = 10001;
-      if (maximum === 10000 && term !== query) {
+      if (maximum === 9999 && term !== query) {
         assert(term.includes('[crdt]'));
-        if (term.startsWith(`(${query}) NOT (`)) { found = ['930010001']; total = 1; }
-        else total = 10000;
+        if (term.startsWith(`(${query}) NOT (`)) { found = ['930010000', '930010001']; total = 2; }
+        else total = 9999;
       }
-      if (maximum === 10000 && term === query && holdRoot) {
+      if (maximum === 9999 && term === query && holdRoot) {
         holdRoot = false; rootEntered = true;
         await new Promise(resolve => { releaseRoot = resolve; });
       }
-      xml = `<eSearchResult><Count>${total}</Count><IdList>${found.map(id => `<Id>${id}</Id>`).join('')}</IdList><QueryTranslation>${xmlText(term)}</QueryTranslation></eSearchResult>`;
+      xml = `<eSearchResult><Count>${total}</Count><RetMax>${found.length}</RetMax><RetStart>0</RetStart><IdList>${found.map(id => `<Id>${id}</Id>`).join('')}</IdList><QueryTranslation>${xmlText(term)}</QueryTranslation></eSearchResult>`;
     } else {
       const requested = params.get('id').split(',');
       assert(requested.length >= 1 && requested.length <= 100); assert(requested.every(id => /^9300[0-9]{5}$/.test(id)));
@@ -201,7 +201,7 @@ try {
     await page.unroute('**/user-route/upload');
   });
   await check('beyond10000-complement-coverage-is-explicit-and-metadata-separate', async () => {
-    await findMore(page, library, run, 10000); await findMore(page, library, run, 10001);
+    await findMore(page, library, run, 9999); await findMore(page, library, run, 10001);
     let saved = await detail(page, library, run); assert.equal(saved.continuation.capture.state, 'complete'); assert.equal(saved.run.fetched, 99);
     assert.equal(saved.continuation.capture.latestProviderTotal, 10001); assert.equal((await selection(page, library, run)).selectedCount, 98);
     const before = requests.length;

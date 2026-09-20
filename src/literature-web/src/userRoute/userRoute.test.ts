@@ -168,8 +168,21 @@ it("queued browser work retains its recovery notice without a background polling
 function searchDescriptor(segment?: number): Descriptor {
   return d({ stage: "esearch", ...(segment === undefined ? {} : { captureSegment: segment }), parameters: {
     db: "pubmed", retmode: "xml", tool: "LitraDock", email: "synthetic@example.invalid", term: 'SYNTHETIC "治療"[Title]',
-    retmax: segment === undefined ? "1000" : "10000", retstart: "0", sort: "relevance" } });
+    retmax: segment === undefined ? "1000" : "9999", retstart: "0", sort: "relevance" } });
 }
+it("reads historical 10000-ID descriptors without allowing provider replay", async () => {
+  const current = searchDescriptor(1);
+  const legacy = { ...current, fresh: false, parameters: { ...current.parameters, retmax: "10000" } };
+  const fetch = vi.fn(); vi.stubGlobal("fetch", fetch);
+  for (const state of ["running", "completed", "failed", "interrupted"] as const) {
+    const retained = { ...legacy, state };
+    expect(validateDescriptor(retained, run)).toBe(retained);
+    await expect(fetchPubMed(retained, new AbortController().signal)).rejects.toThrow("not fresh");
+  }
+  expect(() => validateDescriptor({ ...legacy, fresh: true }, run)).toThrow();
+  expect(fetch).not.toHaveBeenCalled();
+  expect(validateDescriptor(current, run).parameters.retmax).toBe("9999");
+});
 it.each([1, 1024])("accepts the bounded capture segment %i while rejecting capacity or stage substitution", segment => {
   expect(validateDescriptor(searchDescriptor(segment), run).captureSegment).toBe(segment);
   for (const patch of [{ captureSegment: 0 }, { captureSegment: 1025 }, { captureSegment: 1.5 }, { captureSegment: null },

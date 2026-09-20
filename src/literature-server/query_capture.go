@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,7 +14,10 @@ import (
 )
 
 const captureMembershipLimit = 20000
-const captureProviderBoundary = 10000
+
+// NLM 文件建議每段少於 10,000 筆；實際保留回應也曾將 10,000 調整為 9,999。
+// 採保守操作界線，不能把該次單筆回應宣稱為大量來源容量驗證。
+const captureProviderBoundary = 9999
 const captureRequestLimit = 256
 
 const queryCaptureSchema = `
@@ -180,7 +184,7 @@ func splitCaptureSegment(plan *queryCapturePlan, segment captureSegment) ([]capt
 		return children, nil
 	}
 	if segment.Kind != "range" || segment.Start == segment.End {
-		return nil, errors.New("This single-day or outside-range segment exceeds PubMed's 10,000-ID boundary. Its membership remains unresolved; no partial segment was accepted.")
+		return nil, errors.New("This single-day or outside-range segment exceeds the supported 9,999-ID segment limit. Its membership remains unresolved; no partial segment was accepted.")
 	}
 	start, e1 := time.Parse("2006-01-02", segment.Start)
 	end, e2 := time.Parse("2006-01-02", segment.End)
@@ -212,6 +216,10 @@ func (s *server) captureView(ctx context.Context, reader continuationReader, lib
 		if p.Active {
 			w.CanContinue = false
 			w.CanRetry = false
+			if w.State != "queued" && w.State != "running" {
+				// 僅修正讀取投影；既有中斷憑證與歷史 reason 不回寫或偽造完成。
+				w.Reason = "ID capture is unfinished. Saved records and selection remain available; retry this capture explicitly when available."
+			}
 		}
 	}
 	return v, nil
@@ -318,6 +326,65 @@ SELECT $1,$2,id,n,0,n FROM unnest($3::text[]) WITH ORDINALITY AS x(id,n)`, libra
 	return out, tx.Commit(ctx)
 }
 
+// 每一段只接受從零開始、身分數完整且警告語意已知的回應。
+// 特定 count-clamp 警告不改寫查詢；其他警告可能改變查詢意義，不能默默忽略。
+// 原始 bytes 仍由 user-route attempt 保存；既有 10,000 筆歷史列與 descriptor 不重寫。
+func parseCaptureSearchMetadata(body []byte, maximum int) (int, []string, string, error) {
+	total, ids, translation, err := parseSearchMetadata(body, maximum)
+	if err != nil {
+		return 0, nil, "", err
+	}
+	doc, err := parseXML(body)
+	if err != nil {
+		return 0, nil, "", err
+	}
+	invalid := func() (int, []string, string, error) {
+		return 0, nil, "", &sourceError{"failed", "Unsupported, incomplete or ambiguous PubMed capture response; no membership was appended."}
+	}
+	if len(doc.all("ErrorList")) > 0 || len(doc.all("ErrorMessage")) > 0 || len(ids) != min(total, maximum) {
+		return invalid()
+	}
+	// 共用 XML 節點的 Text 含子節點文字；依序扣掉子節點，再驗證容器只剩空白。
+	// 不修改共用解析器，避免影響既有多語文獻的混合內容保留行為。
+	containerOnlyChildren := func(n *node) bool {
+		remaining := n.Text
+		for _, child := range n.Children {
+			position := strings.Index(remaining, child.Text)
+			if position < 0 || strings.TrimSpace(remaining[:position]) != "" {
+				return false
+			}
+			remaining = remaining[position+len(child.Text):]
+		}
+		return strings.TrimSpace(remaining) == ""
+	}
+	if !containerOnlyChildren(doc) || !containerOnlyChildren(doc.child("IdList")) {
+		return invalid()
+	}
+	if translated := doc.child("QueryTranslation"); translated != nil && len(translated.Children) != 0 {
+		return invalid()
+	}
+	for name, expected := range map[string]int{"RetStart": 0, "RetMax": len(ids)} {
+		if len(doc.direct(name)) != 1 || len(doc.child(name).Children) != 0 {
+			return invalid()
+		}
+		value, e := strconv.Atoi(doc.directValue(name))
+		if e != nil || value != expected {
+			return invalid()
+		}
+	}
+	warnings := doc.all("WarningList")
+	if len(warnings) > 0 {
+		if len(warnings) != 1 || len(doc.direct("WarningList")) != 1 || len(warnings[0].Children) != 1 || !containerOnlyChildren(warnings[0]) {
+			return invalid()
+		}
+		message := warnings[0].Children[0]
+		if message.Name != "OutputMessage" || len(message.Children) != 0 || strings.TrimSpace(message.Text) != "Restrictions achieved. start and count adjusted to 0, 9999" || maximum > captureProviderBoundary {
+			return invalid()
+		}
+	}
+	return total, ids, translation, nil
+}
+
 func (s *server) finishQueryCapture(ctx context.Context, tx pgx.Tx, library, run, job string, d userRouteDescriptor, body []byte) (continuationReceipt, error) {
 	out := continuationReceipt{}
 	p, err := readCapturePlan(ctx, tx, library, run)
@@ -334,10 +401,10 @@ func (s *server) finishQueryCapture(ctx context.Context, tx pgx.Tx, library, run
 		return out, err
 	}
 	query, err := segmentQuery(normalizedPubMedQuery(input), segment)
-	if err != nil || query != d.Parameters["term"] || d.Parameters["retmax"] != "10000" || d.Parameters["retstart"] != "0" || d.Parameters["sort"] != "relevance" {
+	if err != nil || query != d.Parameters["term"] || d.Parameters["retmax"] != fmt.Sprint(captureProviderBoundary) || d.Parameters["retstart"] != "0" || d.Parameters["sort"] != "relevance" {
 		return out, errors.New("capture descriptor does not match the saved segment")
 	}
-	total, ids, translation, err := parseSearchMetadata(body, captureProviderBoundary)
+	total, ids, translation, err := parseCaptureSearchMetadata(body, captureProviderBoundary)
 	if err != nil || total > 2147483647 || len(translation) > 262144 || len(ids) != min(total, captureProviderBoundary) || !validWindowIDs(ids) {
 		return out, &planError{400, "Invalid or incomplete capture response; the saved frontier and IDs were not changed."}
 	}
@@ -356,7 +423,7 @@ func (s *server) finishQueryCapture(ctx context.Context, tx pgx.Tx, library, run
 			p.State, p.Reason, disposition = "limited", splitErr.Error(), "provider_boundary"
 		} else {
 			p.Frontier = append(children, p.Frontier[1:]...)
-			p.Reason = "This segment exceeds 10,000 matches. Its complete date partitions are saved; capture the next stage explicitly."
+			p.Reason = "This segment exceeds the supported 9,999-ID limit. Its complete date partitions are saved; capture the next stage explicitly."
 			disposition = "split"
 		}
 	} else {

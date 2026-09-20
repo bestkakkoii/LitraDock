@@ -208,20 +208,37 @@ func TestQueryCaptureActualPostgres(t *testing.T) {
 		t.Fatal("stale revision won")
 	}
 	d := claim(run)
-	if d.CaptureSegment != 1 || d.Parameters["retmax"] != "10000" || d.Parameters["term"] != query || d.Parameters["retstart"] != "0" || d.Parameters["sort"] != "relevance" {
+	if d.CaptureSegment != 1 || d.Parameters["retmax"] != "9999" || d.Parameters["term"] != query || d.Parameters["retstart"] != "0" || d.Parameters["sort"] != "relevance" {
 		t.Fatal("capture changed meaning", d)
 	}
-	if _, err = s.submitUserRoute(ctx, library, run, userRouteUpload{AttemptID: d.AttemptID, Body: syntheticCaptureXML(10001, 900000001, 10000)}, other); err == nil {
+	if _, err = s.submitUserRoute(ctx, library, run, userRouteUpload{AttemptID: d.AttemptID, Body: syntheticCaptureXML(10001, 900000001, 9999)}, other); err == nil {
 		t.Fatal("foreign session upload accepted")
 	}
 	action(run, "cancel")
-	if _, err = s.submitUserRoute(ctx, library, run, userRouteUpload{AttemptID: d.AttemptID, Body: syntheticCaptureXML(10001, 900000001, 10000)}, sess); err == nil {
+	if _, err = s.submitUserRoute(ctx, library, run, userRouteUpload{AttemptID: d.AttemptID, Body: syntheticCaptureXML(10001, 900000001, 9999)}, sess); err == nil {
 		t.Fatal("late cancelled capture accepted")
 	}
 	action(run, "capture")
 	d = claim(run)
-	rootReceipt := upload(run, d, syntheticCaptureXML(10001, 900000001, 10000))
-	if again := upload(run, d, syntheticCaptureXML(10001, 900000001, 10000)); again != rootReceipt {
+	for _, invalid := range [][]byte{
+		syntheticCaptureXML(10001, 900000001, 9998),
+		bytes.Replace(syntheticCaptureXML(10001, 900000001, 9999), []byte("</eSearchResult>"), []byte("<WarningList><PhraseNotFound>SYNTHETIC</PhraseNotFound></WarningList></eSearchResult>"), 1),
+		bytes.Replace(syntheticCaptureXML(10001, 900000001, 9999), []byte("</eSearchResult>"), []byte("<ErrorList><FieldNotFound>SYNTHETIC</FieldNotFound></ErrorList></eSearchResult>"), 1),
+		bytes.Replace(syntheticCaptureXML(10001, 900000001, 9999), []byte("</eSearchResult>"), []byte("<WarningList>SYNTHETIC query terms were ignored.<OutputMessage>Restrictions achieved. start and count adjusted to 0, 9999</OutputMessage></WarningList></eSearchResult>"), 1),
+		bytes.Replace(syntheticCaptureXML(10001, 900000001, 9999), []byte("<IdList>"), []byte("<IdList>SYNTHETIC omitted identities."), 1),
+	} {
+		if _, e := s.submitUserRoute(ctx, library, run, userRouteUpload{AttemptID: d.AttemptID, Body: invalid}, sess); e == nil {
+			t.Fatal("invalid capture committed")
+		}
+		if got := status(run); got.WindowCount != 1000 || got.Revision != d.Revision || got.Capture.PendingSegments != 1 {
+			t.Fatal("refused capture changed membership, revision or frontier", got)
+		}
+		if chosen, e := s.readRunSelection(ctx, library, run); e != nil || chosen.SelectedCount != 98 || slices.Contains(chosen.SelectedIDs, excluded) {
+			t.Fatal("refused capture changed the saved exact exclusion", e)
+		}
+	}
+	rootReceipt := upload(run, d, syntheticCaptureXML(10001, 900000001, 9999))
+	if again := upload(run, d, syntheticCaptureXML(10001, 900000001, 9999)); again != rootReceipt {
 		t.Fatal("upload replay changed progress")
 	}
 	if status(run).WindowCount != 1000 || status(run).Capture.PendingSegments != 2 {
@@ -230,13 +247,13 @@ func TestQueryCaptureActualPostgres(t *testing.T) {
 	// Complete date partitions can cover >10000; retained initial IDs are deduped.
 	action(run, "capture")
 	d = claim(run)
-	upload(run, d, syntheticCaptureXML(10000, 900000001, 10000))
+	upload(run, d, syntheticCaptureXML(9999, 900000001, 9999))
 	action(run, "capture")
 	d = claim(run)
 	if !strings.Contains(d.Parameters["term"], " NOT (1800/01/01:") {
 		t.Fatal("outside-range residual omitted")
 	}
-	upload(run, d, syntheticCaptureXML(1, 900010001, 1))
+	upload(run, d, syntheticCaptureXML(2, 900010000, 2))
 	v = status(run)
 	if v.WindowCount != 10001 || v.Saved != 99 || v.Missing != 1 || v.Capture.State != "complete" || v.Capture.CanCapture {
 		t.Fatal("beyond-boundary capture counts", v)
@@ -339,21 +356,21 @@ func TestQueryCaptureActualPostgres(t *testing.T) {
 		action(r, "cancel")
 		action(r, "capture")
 		desc := claim(r)
-		upload(r, desc, syntheticCaptureXML(count, 900000001, min(count, 10000)))
+		upload(r, desc, syntheticCaptureXML(count, 900000001, min(count, 9999)))
 		got := status(r)
-		if count <= 10000 && (got.WindowCount != count || got.Capture.State != "complete") {
+		if count <= 9999 && (got.WindowCount != count || got.Capture.State != "complete") {
 			t.Fatal("boundary membership", count, got)
 		}
-		if count > 10000 && (got.WindowCount != 1000 || got.Capture.State != "ready") {
+		if count > 9999 && (got.WindowCount != 1000 || got.Capture.State != "ready") {
 			t.Fatal("oversized capture silently complete", count, got)
 		}
 		if count == 20001 {
 			action(r, "capture")
-			upload(r, claim(r), syntheticCaptureXML(10000, 900001001, 10000))
+			upload(r, claim(r), syntheticCaptureXML(9999, 900001001, 9999))
 			action(r, "capture")
-			upload(r, claim(r), syntheticCaptureXML(10000, 900011001, 10000))
+			upload(r, claim(r), syntheticCaptureXML(9999, 900011000, 9999))
 			got = status(r)
-			if got.WindowCount != 11000 || got.Capture.State != "limited" || !strings.Contains(got.Capture.Reason, "20,000") {
+			if got.WindowCount != 10999 || got.Capture.State != "limited" || !strings.Contains(got.Capture.Reason, "20,000") {
 				t.Fatal("local capacity silently dropped part of a leaf", got)
 			}
 		}
@@ -368,6 +385,16 @@ func TestQueryCaptureActualPostgres(t *testing.T) {
 	must("UPDATE ld_jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE library_id=$1 AND run_id=$2", library, interrupted)
 	if _, e := s.recoverUserRoute(ctx, library, interrupted, pending.AttemptID); e != nil {
 		t.Fatal("expired capture recovery", e)
+	}
+	// 模擬舊版保留的 metadata-only 說明；新讀取投影辨識 capture，原列仍保留。
+	legacyReason := "Browser attempt ended without a saved response. Explicitly retry only the frozen metadata page."
+	must("UPDATE ld_runs SET reason=$3 WHERE library_id=$1 AND run_id=$2", library, interrupted, legacyReason)
+	if recovered := status(interrupted); !strings.Contains(recovered.Reason, "ID capture is unfinished") || !recovered.Capture.CanCapture || recovered.CanRetry {
+		t.Fatal("interrupted capture was mislabeled as a metadata retry", recovered)
+	}
+	var retainedReason string
+	if e := db.QueryRow(ctx, "SELECT reason FROM ld_runs WHERE library_id=$1 AND run_id=$2", library, interrupted).Scan(&retainedReason); e != nil || retainedReason != legacyReason {
+		t.Fatal("reading recovery rewrote the retained historical reason", e)
 	}
 	if _, e := s.submitUserRoute(ctx, library, interrupted, userRouteUpload{AttemptID: pending.AttemptID, Body: syntheticCaptureXML(10, 900000001, 10)}, sess); e == nil {
 		t.Fatal("late interrupted capture committed")
@@ -393,11 +420,15 @@ func TestQueryCaptureActualPostgres(t *testing.T) {
 	large := queue(20000)
 	action(large, "cancel")
 	action(large, "capture")
-	upload(large, claim(large), syntheticCaptureXML(20000, 900000001, 10000))
+	upload(large, claim(large), syntheticCaptureXML(20000, 900000001, 9999))
 	action(large, "capture")
-	upload(large, claim(large), syntheticCaptureXML(10000, 900000001, 10000))
+	upload(large, claim(large), syntheticCaptureXML(19998, 900000001, 9999))
 	action(large, "capture")
-	upload(large, claim(large), syntheticCaptureXML(10000, 900010001, 10000))
+	upload(large, claim(large), syntheticCaptureXML(9999, 900000001, 9999))
+	action(large, "capture")
+	upload(large, claim(large), syntheticCaptureXML(9999, 900010000, 9999))
+	action(large, "capture")
+	upload(large, claim(large), syntheticCaptureXML(2, 900019999, 2))
 	if status(large).WindowCount != 20000 || status(large).Capture.State != "complete" {
 		t.Fatal("20000-ID complete bounded fixture")
 	}

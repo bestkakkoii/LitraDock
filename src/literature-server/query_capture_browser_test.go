@@ -59,11 +59,15 @@ func seedQueryCaptureBrowser(t *testing.T, ctx context.Context, s *server, login
 	t.Log("SYNTHETIC large fixture initial membership saved")
 	action("cancel")
 	action("capture")
-	upload(20000, 920000001, 10000)
+	upload(20000, 920000001, 9999)
 	action("capture")
-	upload(10000, 920000001, 10000)
+	upload(19998, 920000001, 9999)
 	action("capture")
-	upload(10000, 920010001, 10000)
+	upload(9999, 920000001, 9999)
+	action("capture")
+	upload(9999, 920010000, 9999)
+	action("capture")
+	upload(2, 920019999, 2)
 	if v := status(); v.WindowCount != 20000 || v.Capture.State != "complete" {
 		t.Fatal("large fixture membership incomplete")
 	}

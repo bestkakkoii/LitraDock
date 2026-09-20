@@ -316,7 +316,7 @@ func userRouteFailure(code string) (string, string, time.Duration, bool) {
 	case "cancelled":
 		return "cancelled", "Browser request cancelled; saved work retained and late responses refused.", 0, true
 	case "interrupted":
-		return "failed", "Browser request was interrupted. Reconcile saved status before explicitly retrying metadata.", 30 * time.Second, true
+		return "failed", "Browser request was interrupted. Reconcile saved status before explicitly retrying the current stage.", 30 * time.Second, true
 	default:
 		return "", "", 0, false
 	}
@@ -602,7 +602,7 @@ func (s *server) retireUserRouteWork(ctx context.Context) error {
 
 func interruptedUserRouteState(frozen bool) (string, string) {
 	if frozen {
-		return "failed", "Browser attempt ended without a saved response. Explicitly retry only the frozen metadata page."
+		return "failed", "Browser attempt ended without a saved response. Review saved progress before explicitly retrying the current stage."
 	}
 	return "expired", "Initial membership is unknown after browser interruption. Submit a separate new search; this run will not be silently repeated."
 }

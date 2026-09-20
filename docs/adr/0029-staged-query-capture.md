@@ -1,6 +1,6 @@
 # ADR-0029 — deliberate PubMed capture stages
 
-Status: PROPOSED_DEFAULT; implementation and independent qualification pending.
+Status: IMPLEMENTED; LIVE001 conservative-boundary correction under qualification.
 Input: accepted native023a plus CHG-0059, `b29b728a2182d52af7d81d79be2046b93a06dcd1`.
 
 PubMed ESearch returns at most the first 10,000 matches. Increasing `retstart`
@@ -10,7 +10,7 @@ advice alone does not fulfil the continued saved-query requirement.
 
 Choose an explicit, durable Create Date partition plan. Each researcher action
 authorizes one browser-owned ESearch with a frozen segment, `retstart=0`,
-`retmax=10000`, and the existing relevance sort. A root query retains the exact
+`retmax=9999`, and the existing relevance sort. A root query retains the exact
 normalized submitted query. Oversized root coverage becomes a date range from
 1800-01-01 through the plan's UTC day plus its Boolean complement. Oversized date
 ranges split into adjacent day intervals, newer first. The complement retains
@@ -30,6 +30,18 @@ transactional snapshot. [NLM ESearch](https://www.ncbi.nlm.nih.gov/books/NBK2549
 [Create Date](https://pubmed.ncbi.nlm.nih.gov/help/#crdt) and
 [usage policy](https://www.ncbi.nlm.nih.gov/books/NBK25497/) were revalidated on
 2026-09-20 Asia/Taipei without calling Eutils.
+
+LIVE001 amendment: the one separately authorized genuine ESearch used the earlier
+`retmax=10000` and returned the complete single PMID plus a count-adjustment
+warning to 9999. The strict verification helper rejected all warnings and blocked
+upload, so that attempt is retained as interrupted and the allowance is exhausted.
+The one-record observation cannot establish a measured 9,999-record provider
+ceiling. NLM's current documentation recommends segments smaller than 10,000;
+new requests therefore adopt 9,999 as a conservative operating limit. Unknown
+warnings and API errors fail closed; the exact known count-adjustment warning
+requires complete IDs, matching return count and zero offset. Original query
+translation and raw response provenance remain preserved. Historical 10,000-ID
+rows and nonfresh descriptors remain readable without source replay or migration.
 
 Metadata advances separately in pages of 1–100 with the existing 32 MiB saved-run,
 8 MiB browser body and 128 MiB browser-response storage bounds. A failed or

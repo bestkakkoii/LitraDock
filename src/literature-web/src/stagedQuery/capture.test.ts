@@ -10,7 +10,7 @@ it.each([100, 1000, 9999, 10000, 20000])("permits %i captured IDs above the init
 });
 it.each([
   { strategy: "unknown" }, { state: "working" }, { pendingSegments: -1 }, { completedSegments: 1.1 }, { requests: 257 },
-  { requestLimit: 300 }, { membershipLimit: 30000 }, { providerBoundary: 20000 }, { latestProviderTotal: -1 },
+  { requestLimit: 300 }, { membershipLimit: 30000 }, { providerBoundary: 20000 }, { providerBoundary: 10000 }, { latestProviderTotal: -1 },
   { latestProviderTotal: NaN }, { order: "global_relevance" }, { canCapture: "yes" }, { reason: null },
   { state: "complete", canCapture: true }, { state: "limited", canCapture: true }, { requests: 256, canCapture: true },
 ])("rejects malformed capture %j before admitting work", patch => {
