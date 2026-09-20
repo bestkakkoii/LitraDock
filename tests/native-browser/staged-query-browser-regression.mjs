@@ -110,12 +110,17 @@ async function openSaved(page, library, label) {
 async function defaultViewport(page, name) {
   // Secondary disclosures grow legitimately; inspect the actual default view
   // without locator clicks or automatic scrolling concealing action placement.
-  await page.evaluate(() => document.querySelectorAll('details').forEach(details => {
-    const summary = details.querySelector(':scope > summary');
-    if (summary && !summary.hidden) details.open = false;
-  }));
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 850 });
+    // Observe the responsive filter state instead of sampling during its change.
+    // The real desktop sidebar stays open; the narrow panel must close itself.
+    await page.waitForFunction(wide => window.matchMedia('(min-width: 900px)').matches === wide
+      && document.querySelector('.search-filters')?.open === wide, width >= 900, { timeout: 5000 });
+    await page.evaluate(() => document.querySelectorAll('details').forEach(details => {
+      if (details.classList.contains('search-filters')) return;
+      const summary = details.querySelector(':scope > summary');
+      if (summary && !summary.hidden) details.open = false;
+    }));
     await page.evaluate(() => scrollTo(0, 0));
     const bounds = await page.evaluate(() => {
       const rect = element => {
@@ -124,6 +129,8 @@ async function defaultViewport(page, name) {
       };
       const section = document.querySelector('.active-results');
       return { viewport: { width: innerWidth, height: innerHeight }, scrollY,
+        filterOpen: document.querySelector('.search-filters').open,
+        wide: window.matchMedia('(min-width: 900px)').matches,
         font: getComputedStyle(document.documentElement).fontFamily,
         header: rect(section.querySelector('.compact-result-head')),
         counts: rect(section.querySelector('.result-counts')),
@@ -135,7 +142,11 @@ async function defaultViewport(page, name) {
         metadata: rect([...section.querySelectorAll('button')].find(b => b.textContent === 'Download selected metadata ZIP')) };
     });
     await page.screenshot({ path: path.join(output, `staged-default-${name}-${width}.png`) });
-    checks.push({ name: `default-${name}-${width}`, bounds });
+    const afterScreenshot = await page.evaluate(() => ({ filterOpen: document.querySelector('.search-filters').open,
+      titleBottom: document.querySelector('.active-results .result-card h3').getBoundingClientRect().bottom }));
+    checks.push({ name: `default-${name}-${width}`, bounds, afterScreenshot });
+    assert.equal(bounds.filterOpen, width >= 900); assert.equal(afterScreenshot.filterOpen, bounds.filterOpen);
+    assert(Math.abs(afterScreenshot.titleBottom - bounds.firstTitle.bottom) < .5, 'measurement and screenshot show the same settled viewport');
     assert.equal(bounds.scrollY, 0); assert(bounds.firstTitle && bounds.firstTitle.bottom <= bounds.viewport.height, 'first result title visible in default viewport');
     if (name === 'large') assert(bounds.metadata && bounds.metadata.top >= 0 && bounds.metadata.bottom <= bounds.viewport.height, 'large metadata action visible without scrolling');
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
